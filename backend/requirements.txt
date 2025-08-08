@@ -5,3 +5,4 @@ openai
 requests
 python-multipart
 ffmpeg-python
+cohere
