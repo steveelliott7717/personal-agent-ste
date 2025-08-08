@@ -1,45 +1,78 @@
 # backend/agents/router_agent.py
-from typing import Callable, Dict, Tuple, Any
-from agents.meals_agent import handle_meals
-from agents.finance_agent import handle_finance
-try:
-    from agents.workouts_agent import handle_workouts
-except Exception:
-    def handle_workouts(q: str):  # optional
-        return {"agent":"workouts","intent":"help","message":"Workouts agent not configured yet."}
-try:
-    from agents.grooming_agent import handle_grooming
-except Exception:
-    def handle_grooming(q: str):
-        return {"agent":"grooming","intent":"help","message":"Grooming agent not configured yet."}
+from __future__ import annotations
+from typing import Tuple
+import re
+import traceback
 
-ROUTES: Dict[str, Callable[[str], Any]] = {
-    "meals": handle_meals,
-    "finance": handle_finance,
-    "expenses": handle_finance,  # alias
-    "workouts": handle_workouts,
-    "grooming": handle_grooming,
+# import your agents
+from .finance_agent import handle_finance
+from .meals_agent import handle_meals
+from .workouts_agent import handle_workouts
+from .grooming_agent import handle_grooming
+# add others as you have them
+
+ROUTER_VERSION = "2025-08-08-logging"
+print(f"[router] loaded version={ROUTER_VERSION}")
+
+# --- helpers ---------------------------------------------------------
+
+FINANCE_KEYWORDS = {
+    "market", "stock", "stocks", "ticker", "price", "quote", "portfolio", "index",
+    "sp500", "s&p", "snp", "s&p500", "s&p 500", "spx", "spy", "nasdaq", "dow",
+    "earnings", "buy", "sell", "trade", "option", "call", "put",
+    "expense", "expenses", "purchase", "purchased", "spend", "spent", "budget",
 }
 
-KEYWORDS = {
-    "meals": ["meal", "breakfast", "lunch", "dinner", "calories", "ate", "food"],
-    "expenses": ["expense", "expenses", "spend", "spent", "purchase", "bill"],
-    "workouts": ["workout", "run", "lift", "gym", "exercise"],
-    "grooming": ["groom", "shampoo", "rinse", "deodorant", "sunscreen", "moisturizer", "lotion", "beard", "trim", "nails", "hair style"],
-}
+MEALS_KEYWORDS = {"meal", "meals", "breakfast", "lunch", "dinner", "calories", "food", "diet"}
+WORKOUTS_KEYWORDS = {"workout", "workouts", "gym", "run", "lift", "strength", "cardio", "exercise"}
+GROOMING_KEYWORDS = {"groom", "grooming", "shower", "skincare", "haircut", "clip", "trim"}
 
-def route_request(query: str):
-    q = query.lower()
+import re
 
-    # Finance direct patterns
-    if any(pat in q for pat in ["list expenses", "show expenses", "log expense"]):
-        return "finance", handle_finance(query)
+def _normalize(q: str) -> str:
+    q = (q or "").strip().lower()
+    q = q.replace("^&", "&")  # windows-escaped
+    q = q.replace("&", " & ") # ensure tokenization
+    q = re.sub(r"[^a-z0-9 &]+", " ", q)  # drop odd punctuation
+    q = re.sub(r"\s+", " ", q)
+    return q
 
-    # Keyword routing
-    for agent, kws in KEYWORDS.items():
-        if any(kw in q for kw in kws):
-            handler = ROUTES.get(agent) or ROUTES["meals"]
-            return agent, handler(query)
 
-    # Default to meals (or a generic agent)
-    return "meals", ROUTES["meals"](query)
+def _contains_any(q: str, words: set[str]) -> bool:
+    qn = _normalize(q)
+    return any(w in qn for w in words)
+
+# --- main router -----------------------------------------------------
+
+def route_request(query: str) -> Tuple[str, dict | str]:
+    q = _normalize(query)
+    print(f"[router] incoming={q!r}")
+
+    try:
+        if _contains_any(q, FINANCE_KEYWORDS):
+            print("[router] -> finance (keyword match)")
+            return "finance", handle_finance(query)
+
+        if _contains_any(q, MEALS_KEYWORDS):
+            print("[router] -> meals")
+            return "meals", handle_meals(query)
+
+        if _contains_any(q, WORKOUTS_KEYWORDS):
+            print("[router] -> workouts")
+            return "workouts", handle_workouts(query)
+
+        if _contains_any(q, GROOMING_KEYWORDS):
+            print("[router] -> grooming")
+            return "grooming", handle_grooming(query)
+
+        if any(phrase in q for phrase in ["most expensive", "purchase", "spent", "spend", "lowest expense"]):
+            print("[router] -> finance (heuristic match)")
+            return "finance", handle_finance(query)
+
+    except Exception as e:
+        print("[router] ERROR in routing:")
+        traceback.print_exc()  # <––– will dump full stack trace to logs
+        raise
+
+    print("[router] -> default meals")
+    return "meals", handle_meals(query)

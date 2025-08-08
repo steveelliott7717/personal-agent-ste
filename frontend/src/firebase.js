@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBVZuGwmpcEXa8M10f4zeKIrHm01P5kGRw",
+  apiKey: process.env.FIREBASE_API_KEY,
 
   authDomain: "personal-agent-ste.firebaseapp.com",
 
