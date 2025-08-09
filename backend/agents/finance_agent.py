@@ -1,185 +1,438 @@
 # backend/agents/finance_agent.py
 from __future__ import annotations
-from typing import Dict, List, Tuple
-from datetime import datetime
-import traceback
-import logging
+from typing import Any, Dict, List, Optional
+from decimal import Decimal
+import json, logging, re
+from datetime import datetime, timezone
 
 from services.supabase_service import supabase
-from utils.agent_protocol import make_response
-from utils.nl_formatter import register_formatter
-from reasoner.policy import reason_with_memory  # Cohere-based reasoning
+from utils.agent_protocol import make_response, AgentResponse
+from reasoner.policy import reason_with_memory
 
 logger = logging.getLogger("finance")
-# --------------------------
-# DB helpers
-# --------------------------
-def _fetch_all_expenses() -> List[Dict]:
-    """Return all rows from finance_ledger (id, description, amount, created_at)."""
-    res = (
-        supabase.table("finance_ledger")
-        .select("id, description, amount, created_at")
-        .order("created_at", desc=False)
-        .execute()
-    )
-    return res.data or []
 
-def _insert_expense(description: str, amount: float) -> None:
-    """Insert a single expense row."""
-    supabase.table("finance_ledger").insert(
-        {"description": description, "amount": amount}
-    ).execute()
+# ------------------------------------------------------------------------------
+# Agent metadata (used for self-registration + router discovery)
+# ------------------------------------------------------------------------------
+AGENT_META = {
+    "slug": "finance",
+    "title": "Finance",
+    "description": "Personal finance: expenses, budgets, hypothetical changes, ledger queries.",
+    "handler_key": "finance.handle",          # maps to router HANDLERS registry
+    "namespaces": ["expenses"],
+    "capabilities": [
+        "List and search transactions",
+        "Summarize spending by time window",
+        "Propose hypothetical budgets",
+        "Insert/update/delete ledger rows",
+    ],
+    "keywords": ["expense","expenses","spend","spent","budget","purchase","money","cost"],
+    "status": "enabled",
+}
 
-def _most_expensive_row() -> Dict | None:
-    """Safely get the single most expensive purchase (or None)."""
+# ------------------------------------------------------------------------------
+# Utilities for safe self-registration
+# ------------------------------------------------------------------------------
+def _table_columns(table: str) -> List[str]:
+    try:
+        sample = supabase.table(table).select("*").limit(1).execute().data or []
+        return list(sample[0].keys()) if sample else []
+    except Exception:
+        return []
+
+def _payload_with_existing_cols(table: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    cols = set(_table_columns(table))
+    if not cols:
+        # best-effort defaults for common columns
+        cols = {"slug","title","description","handler_key","status"}
+    return {k: v for k, v in payload.items() if k in cols}
+
+def _register_agent_if_needed() -> None:
+    """Idempotent agent registration that only inserts columns that exist."""
+    try:
+        slug = AGENT_META["slug"]
+        exists = supabase.table("agents").select("id").eq("slug", slug).limit(1).execute().data
+        if exists:
+            return
+        payload = _payload_with_existing_cols("agents", {
+            "slug": slug,
+            "title": AGENT_META["title"],
+            "description": AGENT_META["description"],
+            "handler_key": AGENT_META["handler_key"],
+            "namespaces": AGENT_META.get("namespaces"),
+            "capabilities": AGENT_META.get("capabilities"),
+            "keywords": AGENT_META.get("keywords"),
+            "status": AGENT_META.get("status", "enabled"),
+        })
+        supabase.table("agents").insert(payload).execute()
+        logger.info("[finance] self-registered agent in Supabase")
+    except Exception:
+        logger.exception("[finance] agent self-registration failed (safe to ignore in dev)")
+
+# Call once on import
+_register_agent_if_needed()
+
+# ------------------------------------------------------------------------------
+# Instruction loading (core + optional tags) from Supabase
+# ------------------------------------------------------------------------------
+FALLBACK_SYSTEM = """You are a finance operator with autonomy to plan and act on the database.
+Return ONLY minified JSON with keys: "thoughts", "operations", and optional "response_template".
+Supported ops: select/update/insert/delete/upsert with fields: op, table, where (dict or simple AND string), order, limit, values, set.
+Use amount < 0 to mean expenses. Do NOT refer to a 'category' column unless it exists in the schema hint.
+When inferring recurrence: weekly/biweekly/monthly/bimonthly/quarterly/semiannual/annual by gaps across 6–12 months; only update when confident.
+"""
+
+def _get_instruction_row(agent_name: str, tag: str) -> Optional[str]:
     try:
         res = (
-            supabase.table("finance_ledger")
-            .select("description, amount, created_at")
-            .order("amount", desc=True)
+            supabase.table("agent_instructions")
+            .select("instructions")
+            .eq("agent_name", agent_name)
+            .eq("tag", tag)
+            .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
-        rows = res.data or []
-        return rows[0] if rows else None
-    except Exception as e:
-        return {"error": f"DB error: {e}"}
+        if res.data:
+            return res.data[0]["instructions"]
+    except Exception:
+        logger.exception("[finance] load instructions failed")
+    return None
 
+def _get_core_instructions() -> str:
+    return _get_instruction_row("finance", "core") or FALLBACK_SYSTEM
 
-# --------------------------
-# Intent parsing
-# --------------------------
-def _parse_log_intent(q: str) -> Tuple[bool, str, float]:
-    """
-    Very simple parser:
-      "log expense coffee 4.50"  -> (True, "coffee", 4.50)
-      "add expense dinner 12.00" -> (True, "dinner", 12.00)
-    Anything else -> (False, "", 0.0)
-    """
-    lowered = (q or "").lower().strip()
-    if lowered.startswith("log expense") or lowered.startswith("add expense"):
-        parts = q.split()
-        try:
-            amt = float(parts[-1].replace("$", ""))
-            # use the first occurrence of the token "expense"
-            idx = parts.index("expense")
-            description = " ".join(parts[idx + 1 : -1]).strip() or "Unlabeled"
-            return True, description.strip('"\' '), amt
-        except Exception:
-            return False, "", 0.0
-    return False, "", 0.0
-
-
-# --------------------------
-# Main handler
-# --------------------------
-def handle_finance(query: str):
-    logging.info(f"[finance] handling query: {query}")
+def _choose_extra_tags(user_text: str) -> List[str]:
+    """Lightweight LLM assist to choose up to 3 extra instruction tags."""
     try:
-        """
-        Handles:
-        - "log expense <desc> <amount>"
-        - "list expenses" / "show expenses"
-        - freeform questions via Cohere reasoning over 'expenses' memory
-        - never crashes the API (safeguards in place)
-        """
-        q = (query or "").strip()
-        q_lower = q.lower()
+        prompt = f"""You are selecting instruction tags for the finance agent.
+User query: {user_text}
 
-        # 1) Explicit: logging an expense
-        is_log, desc, amt = _parse_log_intent(q)
-        if is_log:
-            try:
-                _insert_expense(desc, amt)
-                return make_response(
-                    agent="finance",
-                    intent="log_expense",
-                    message=f"Logged expense: {desc} (${amt:,.2f}).",
-                    data={"description": desc, "amount": amt},
-                )
-            except Exception as e:
-                return make_response(
-                    agent="finance",
-                    intent="error",
-                    message=f"Failed to log expense: {e}",
-                )
+Given tags: ["recurring-expenses","categorization","budgets","grooming-link","query-parsing","reporting"]
+Return ONLY a comma-separated list (0-3 items)."""
+        raw = reason_with_memory(agent_name="router", query=prompt, namespace="routing", k=2)
+        if not isinstance(raw, str):
+            return []
+        tags = [t.strip() for t in raw.split(",") if t.strip()]
+        allowed = {"recurring-expenses","categorization","budgets","grooming-link","query-parsing","reporting"}
+        return [t for t in tags if t in allowed][:3]
+    except Exception:
+        logger.exception("[finance] tag selection failed")
+        return []
 
-        # 2) Explicit: list expenses
-        if any(p in q_lower for p in ["list expenses", "show expenses", "expenses", "list expense", "show expense"]):
-            try:
-                rows = _fetch_all_expenses()
-                return make_response(agent="finance", intent="list_expenses", data=rows)
-            except Exception as e:
-                return make_response(agent="finance", intent="error", message=f"List error: {e}")
+def _get_relevant_instructions(user_text: str) -> str:
+    core = _get_core_instructions()
+    extras: List[str] = []
+    for tag in _choose_extra_tags(user_text):
+        row = _get_instruction_row("finance", tag)
+        if row:
+            extras.append(row)
+    return core + ("\n\n" + "\n\n".join(extras) if extras else "")
 
-        # 3) Common finance Q: most expensive purchase (DB direct, fast path)
-        if "most expensive" in q_lower or ("highest" in q_lower and "purchase" in q_lower):
-            row = _most_expensive_row()
-            if not row:
-                return make_response(agent="finance", intent="answer", message="No expenses found yet.")
-            if isinstance(row, dict) and "error" in row:
-                return make_response(agent="finance", intent="error", message=row["error"])
-            return make_response(
-                agent="finance",
-                intent="answer",
-                message=f"Most expensive: {row.get('description','(no description)')} — ${float(row.get('amount') or 0):,.2f} on {row.get('created_at')}",
-                data=row,
-            )
-
-        # 4) Freeform: let the reasoner think with memory — SAFEGUARDED
+# ------------------------------------------------------------------------------
+# Schema hint (ONLY real columns you actually have)
+# ------------------------------------------------------------------------------
+def _introspect_schema_hint() -> str:
+    def cols(table: str):
         try:
-            semantic_answer = reason_with_memory(
-                agent_name="finance",
-                query=query,
-                namespace="expenses",
-                k=10
-            )
-            if semantic_answer:
-                # keep this shape so the NL middleware can render it naturally
-                return {"agent": "finance", "final_answer": semantic_answer}
-        except Exception as e:
-            # Do not 500; report a friendly, debuggable error
-            return make_response(
-                agent="finance",
-                intent="error",
-                message=f"Reasoner error: {e}"
-            )
+            sample = supabase.table(table).select("*").limit(1).execute().data or []
+            return list(sample[0].keys()) if sample else []
+        except Exception:
+            return []
 
-        # 5) Fallback help
-        return make_response(
-            agent="finance",
-            intent="help",
-            message="Finance agent. Try: ‘log expense coffee 4.50’, ‘list expenses’, or ask a question like ‘What was my most expensive purchase this month?’",
-        )
+    hint = {
+        "tables": {
+            "finance_ledger": {"columns": cols("finance_ledger")},
+            "budgets": {"columns": cols("budgets")},
+        }
+    }
+    return json.dumps(hint)
+
+
+
+def _hint_columns(table: str) -> List[str]:
+    try:
+        hint = json.loads(_introspect_schema_hint())
+        return (hint.get("tables", {}).get(table, {}) or {}).get("columns", []) or []
+    except Exception:
+        return []
+
+def _real_columns(table: str) -> List[str]:
+    cols = _table_columns(table)
+    return cols if cols else _hint_columns(table)
+
+# ------------------------------------------------------------------------------
+# WHERE helpers (accept dict / list / simple string)
+# ------------------------------------------------------------------------------
+def _prune_where(where: Any, columns: List[str]) -> Any:
+    if not where or not columns:
+        return where
+    cols = set(columns)
+
+    if isinstance(where, str):
+        parts = re.split(r"\s+and\s+", where, flags=re.I)
+        kept = []
+        for cond in parts:
+            m = re.match(r"\s*([a-zA-Z0-9_]+)\s*=\s*(.+)\s*$", cond)
+            if m and m.group(1) in cols:
+                kept.append(cond)
+        return " AND ".join(kept) if kept else None
+
+    if isinstance(where, list):
+        pruned = [w for w in (_prune_where(w, columns) for w in where) if w]
+        return pruned or None
+
+    if isinstance(where, dict):
+        out = {}
+        for k, v in where.items():
+            if k in cols:
+                out[k] = v
+        return out or None
+
+    return None
+
+def _apply_where(q, where: Any):
+    if not where:
+        return q
+
+    if isinstance(where, str):
+        parts = re.split(r"\s+and\s+", where, flags=re.I)
+        for cond in parts:
+            m = re.match(r"\s*([a-zA-Z0-9_]+)\s*=\s*(.+)\s*$", cond)
+            if not m:
+                continue
+            key, val = m.group(1), m.group(2).strip()
+            if (val.startswith("'") and val.endswith("'")) or (val.startswith('"') and val.endswith('"')):
+                val = val[1:-1]
+            q = q.eq(key, val)
+        return q
+
+    if isinstance(where, list):
+        for w in where:
+            q = _apply_where(q, w)
+        return q
+
+    if isinstance(where, dict):
+        for k, v in where.items():
+            if isinstance(v, dict):
+                for oper, val in v.items():
+                    o = str(oper).strip()
+                    if o == ">=": q = q.gte(k, val)
+                    elif o == "<=": q = q.lte(k, val)
+                    elif o == ">":  q = q.gt(k, val)
+                    elif o == "<":  q = q.lt(k, val)
+                    elif o == "!=": q = q.neq(k, val)
+                    elif o == "like": q = q.like(k, val)
+                    else: q = q.eq(k, val)
+            else:
+                q = q.eq(k, v)
+        return q
+
+    return q
+
+# ------------------------------------------------------------------------------
+# Transform helper (e.g., {"set":{"amount__mul":0.9}})
+# ------------------------------------------------------------------------------
+def _apply_transforms(table: str, step: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    setv = dict(step.get("set") or {})
+    for k in list(setv.keys()):
+        if k.endswith("__mul"):
+            field = k[:-5]
+            factor = Decimal(str(setv.pop(k)))
+            rows = supabase.table(table).select("*").execute().data or []
+            updates = []
+            for r in rows:
+                if field in r and r[field] is not None:
+                    new_val = float(Decimal(str(r[field])) * factor)
+                    updates.append({"op":"update","table":table,"where":{"id":r["id"]},"set":{field:new_val}})
+            return updates
+    return None
+
+# ------------------------------------------------------------------------------
+# DB op executor (select / update / insert / delete / upsert)
+# ------------------------------------------------------------------------------
+def _execute_ops(ops: List[Dict[str, Any]]) -> List[Any]:
+    out: List[Any] = []
+    for step in ops:
+        op = (step.get("op") or "").lower()
+        table = step.get("table")
+        if not op or not table:
+            out.append({"error": "missing op/table", "step": step})
+            continue
+
+        # Expand abstract transforms
+        if op == "update" and "set" in step:
+            expanded = _apply_transforms(table, step)
+            if expanded is not None:
+                out.extend(_execute_ops(expanded))
+                continue
+
+        cols = _real_columns(table)
+        where = _prune_where(step.get("where"), cols)
+
+        if op == "select":
+            q = supabase.table(table).select("*")
+            q = _apply_where(q, where or {})
+            for pair in (step.get("order") or []):
+                if isinstance(pair, list) and len(pair) == 2:
+                    q = q.order(pair[0], desc=(str(pair[1]).lower() == "desc"))
+            if step.get("limit"):
+                q = q.limit(int(step["limit"]))
+            res = q.execute()
+            out.append(res.data or [])
+            continue
+
+        if op == "update":
+            q = supabase.table(table).update(step.get("set") or {})
+            q = _apply_where(q, where or {})
+            res = q.execute()
+            out.append(res.data or [])
+            continue
+
+        if op == "insert":
+            values = step.get("values")
+            if values and isinstance(values, dict):
+                values = [values]
+            res = supabase.table(table).insert(values or []).execute()
+            out.append(res.data or [])
+            continue
+
+        if op == "delete":
+            q = supabase.table(table).delete()
+            q = _apply_where(q, where or {})
+            res = q.execute()
+            out.append(res.data or [])
+            continue
+
+        if op == "upsert":
+            values = step.get("values")
+            if values and isinstance(values, dict):
+                values = [values]
+            res = supabase.table(table).upsert(values or []).execute()
+            out.append(res.data or [])
+            continue
+
+        out.append({"error": f"unsupported op {op}", "step": step})
+    return out
+
+# ------------------------------------------------------------------------------
+# Build prompt (dynamic instructions + schema hint + user request)
+# ------------------------------------------------------------------------------
+def _build_action_prompt(user_text: str) -> str:
+    system = _get_relevant_instructions(user_text)
+    schema_hint = _introspect_schema_hint()
+    return (
+        f"{system}\n\n"
+        "SCHEMA_HINT:\n"
+        f"{schema_hint}\n\n"
+        "USER_REQUEST:\n"
+        f"{user_text}\n\n"
+        "Return ONLY the JSON Action Plan."
+    )
+
+# ------------------------------------------------------------------------------
+# Main agent entry
+# ------------------------------------------------------------------------------
+def run_finance_agent(user_text: str) -> AgentResponse:
+    prompt = _build_action_prompt(user_text)
+
+    try:
+        plan_raw = reason_with_memory(agent_name="finance", query=prompt, namespace="expenses", k=8)
     except Exception as e:
-        logging.error(f"[finance] ERROR: {e}\n{traceback.format_exc()}")
-        return {"intent": "error", "message": f"Finance agent failed: {e}"}
+        logger.exception("reason_with_memory failed")
+        return make_response(agent="finance", intent="error", data={"message": f"reasoner error: {e}"})
 
-# --------------------------
-# Formatters
-# --------------------------
-def _finance_list_formatter(resp):
-    rows = resp.get("data") or []
-    if not rows:
-        resp["message"] = "No expenses yet. Try: ‘log expense coffee 4.50’."
+    # Robust JSON extraction
+    if not isinstance(plan_raw, str) or not plan_raw.strip():
+        return make_response(agent="finance", intent="error", data={"message": "LLM returned empty plan", "raw": str(plan_raw)})
+
+    s = plan_raw.strip()
+    if s.startswith("```"):
+        s = s.strip("`")
+        lines = s.splitlines()
+        if lines and lines[0].lower().startswith("json"):
+            s = "\n".join(lines[1:])
+    start = s.find("{"); end = s.rfind("}")
+    candidate = s[start:end+1] if (start != -1 and end != -1 and end > start) else s
+
+    try:
+        plan = json.loads(candidate)
+    except Exception as e:
+        logger.exception("LLM plan parse failed")
+        return make_response(agent="finance", intent="error", data={"message": f"Could not parse LLM plan: {e}", "raw": plan_raw})
+
+    ops: List[Dict[str, Any]] = plan.get("operations", [])
+    try:
+        results = _execute_ops(ops)
+    except Exception as e:
+        logger.exception("execution failed")
+        return make_response(agent="finance", intent="error", data={"message": f"execution error: {e}", "operations": ops})
+
+    return make_response(
+        agent="finance",
+        intent="auto",
+        data={
+            "thoughts": plan.get("thoughts"),
+            "operations": ops,
+            "results": results,
+            "response_template": plan.get("response_template")
+        }
+    )
+
+# ------------------------------------------------------------------------------
+# Public wrapper for router
+# ------------------------------------------------------------------------------
+def handle_finance(query: str) -> AgentResponse:
+    return run_finance_agent(query)
+
+# ------------------------------------------------------------------------------
+# Optional UI formatter registration (returns AgentResponse, not a string)
+# ------------------------------------------------------------------------------
+try:
+    from utils.nl_formatter import register_formatter
+
+    def _fmt_auto(resp: AgentResponse) -> AgentResponse:
+        # Ensure dict shape
+        if not isinstance(resp, dict):
+            return make_response(agent="finance", intent="auto", message=str(resp), data={"raw": resp})
+
+        data = resp.get("data") or {}
+        if not isinstance(data, dict):
+            return make_response(agent="finance", intent="auto", message=str(data), data=data)
+
+        ops = data.get("operations") or []
+        results = data.get("results") or []
+
+        lines = ["Plan:"]
+        for i, step in enumerate(ops, 1):
+            try:
+                lines.append(f"{i}. {json.dumps(step, separators=(',',':'))}")
+            except Exception:
+                lines.append(f"{i}. {repr(step)}")
+
+        lines.append("Results (first item only per step):")
+        for i, r in enumerate(results, 1):
+            summary = r[0] if isinstance(r, list) and r else r
+            try:
+                lines.append(f"{i}. {json.dumps(summary, separators=(',',':'))}")
+            except Exception:
+                lines.append(f"{i}. {repr(summary)}")
+
+        resp["message"] = "\n".join(lines)
         return resp
 
-    total = sum(float(r.get("amount") or 0.0) for r in rows)
-    recent = rows[-5:]
+    def _fmt_error(resp: AgentResponse) -> AgentResponse:
+        msg = None
+        if isinstance(resp, dict):
+            msg = resp.get("message") or resp.get("error") or resp.get("detail")
+        if not msg:
+            msg = "An error occurred."
+        resp = resp if isinstance(resp, dict) else make_response(agent="finance", intent="error", data={"raw": str(resp)})
+        resp["message"] = f"Error: {msg}"
+        return resp
 
-    def line(r):
-        dt = r.get("created_at")
-        try:
-            # coerce to readable local-ish string
-            dtp = datetime.fromisoformat(str(dt).replace("Z", "+00:00"))
-            ds = dtp.strftime("%Y-%m-%d %H:%M")
-        except Exception:
-            ds = str(dt)
-        return f"{r.get('description','Item')} (${float(r.get('amount') or 0):,.2f} on {ds})"
-
-    preview = "; ".join(line(x) for x in recent)
-    more = f" …and {len(rows) - 5} more." if len(rows) > 5 else ""
-    resp["message"] = f"You have {len(rows)} expense(s) totaling ${total:,.2f}. Recent: {preview}{more}"
-    return resp
-
-register_formatter("finance", "list_expenses", _finance_list_formatter)
+    register_formatter("finance", "auto", _fmt_auto)
+    register_formatter("finance", "error", _fmt_error)
+except Exception:
+    # Formatter is best-effort; never fail agent import
+    pass
