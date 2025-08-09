@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
-from services.supabase_service import supabase
-from semantics.store import embed_text  # embed_text lives in store.py right now
+from backend.services.supabase_service import supabase
+from backend.semantics.store import embed_text  # embed_text lives in store.py right now
 
 def search(namespace: str, query: str, k: int = 10) -> List[Dict[str, Any]]:
     qemb = embed_text(query)

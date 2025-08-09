@@ -1,6 +1,6 @@
 import json
-from semantics.retriever import search
-from services.supabase_service import supabase
+from backend.semantics.retriever import search
+from backend.services.supabase_service import supabase
 import cohere
 import os
 

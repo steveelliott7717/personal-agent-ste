@@ -10,9 +10,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agents.router_agent import route_request
-from utils.nl_formatter import ensure_natural
-from utils.agent_protocol import AgentResponse
+# ✅ package-qualified imports (works when running: uvicorn backend.main:app)
+from backend.agents.router_agent import route_request
+from backend.utils.nl_formatter import ensure_natural
+from backend.utils.agent_protocol import AgentResponse
 
 app = FastAPI(title="Personal Agent API")
 
