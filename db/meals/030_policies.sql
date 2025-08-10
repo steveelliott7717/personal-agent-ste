@@ -1,0 +1,4 @@
+-- No RLS yet. When you’re ready, enable like:
+-- ALTER TABLE meals.meal_plan ENABLE ROW LEVEL SECURITY;
+-- CREATE POLICY meal_plan_owner ON meals.meal_plan
+--   FOR ALL USING (auth.uid() = (calc owner field));
