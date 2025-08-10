@@ -1,7 +1,7 @@
 import os
 from typing import Iterable, Dict, Any
-from services.supabase_service import supabase
-from semantics.store import upsert
+from backend.service.supabase_service import supabase
+from backend.semantic.store import upsert
 
 def fetch_finance() -> Iterable[Dict[str, Any]]:
     rows = (supabase.table("finance_ledger")

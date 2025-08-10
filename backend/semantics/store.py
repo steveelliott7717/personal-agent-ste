@@ -1,10 +1,10 @@
 from typing import Any, Dict
 try:
-    from semantics.embedding import embed_text
+    from backend.semantics.embeddings import embed_text
 except Exception:
-    from semantics.embeddings import embed_text
+    from backend.semantics.embeddings import embed_text
 
-from services.supabase_service import supabase
+from backend.services.supabase_service import supabase
 
 def upsert(namespace: str, doc_id: str, text: str, metadata: Dict[str, Any] | None = None):
     emb = embed_text(text)

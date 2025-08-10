@@ -1,7 +1,7 @@
 # backend/agents/bootstrap.py
 import pkgutil, importlib, inspect, logging
 from typing import Optional, Dict, Any
-from utils.agent_registry import register_agent
+from backend.util.agent_registry import register_agent
 
 logger = logging.getLogger("agent-bootstrap")
 

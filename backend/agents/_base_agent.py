@@ -2,9 +2,9 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 import json, logging, inspect
-from services.supabase_service import supabase
-from utils.agent_protocol import make_response, AgentResponse
-from reasoner.policy import reason_with_memory
+from backend.services.supabase_service import supabase
+from backend.utils.agent_protocol import make_response, AgentResponse
+from backend.reasoner.policy import reason_with_memory
 from ._op_engine import execute_ops, table_columns  # shared CRUD executor
 
 log = logging.getLogger("agent")

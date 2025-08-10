@@ -1,7 +1,7 @@
 # backend/agents/_op_engine.py
 from typing import Any, Dict, List
 import re, json
-from services.supabase_service import supabase
+from backend.services.supabase_service import supabase
 
 def table_columns(table: str) -> List[str]:
     try:

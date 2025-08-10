@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from importlib import import_module
-from services.supabase_service import supabase
+from backend.service.supabase_service import supabase
 
 # --- tiny event emitter (idempotent by key) ---
 def emit(topic: str, payload: dict, source_agent: str, idem_key: Optional[str] = None):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Callable
 from importlib import import_module
-from services.supabase_service import supabase
+from backend.service.supabase_service import supabase
 
 CONSUMER = "nutrition"  # set per process/env
 

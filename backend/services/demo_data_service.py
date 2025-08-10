@@ -1,7 +1,7 @@
 # backend/services/demo_data_service.py
 from typing import List, Dict
 from postgrest import APIError
-from services.supabase_service import supabase
+from backend.services.supabase_service import supabase
 
 def _table_count(table: str) -> int:
     """

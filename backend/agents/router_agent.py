@@ -26,6 +26,8 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
     rows = []
     try:
         res = supabase.table("agents").select("*").eq("status", "enabled").execute()
+        print("[router] fetched agents:", [ (r.get("slug"), r.get("module_path"), r.get("callable_name"), r.get("status")) for r in rows ])
+
         rows = getattr(res, "data", None) or []
     except Exception:
         logger.exception("[router] failed to read agents table")
@@ -34,8 +36,10 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
     reg: Dict[str, Dict[str, Any]] = {}
     for r in rows:
         slug = (r.get("slug") or "").strip().lower()
-        module_path = r.get("module_path") or f"agents.{slug}_agent"
+        module_path = r.get("module_path") or f"backend.agents.{slug}_agent"
         callable_name = r.get("callable_name") or f"handle_{slug}"
+        if module_path.startswith("agents."):
+            module_path = "backend." + module_path
         try:
             mod = importlib.import_module(module_path)
             if callable_name.startswith("class:"):
@@ -66,13 +70,36 @@ def _catalog() -> Dict[str, Any]:
 
 # ----- LLM prompt -----
 ROUTER_SYSTEM = """You are the routing coordinator for a personal-agents app.
-Choose an agent from AGENT_CATALOG, or ask to clarify, or answer directly.
 
-Return ONLY minified JSON. Schemas:
-1) {"agent":"<slug>","reason":"...","confidence":0.0-1.0,"rewrite":"...optional..."}
-2) {"agent":"none","response":"...","reason":"...","confidence":0.0-1.0}
-3) {"agent":"clarify","question":"one short question","options":[<slugs>],"reason":"...","confidence":0.0-1.0,"rewrite":"...optional..."}
+You MUST choose an agent from AGENT_CATALOG when a user request is task-like or data-related
+and any catalog agent plausibly fits. Only use {"agent":"none", ...} for small-talk, greetings,
+or purely informational questions you can answer in one short sentence without calling an agent.
+
+Return ONLY minified JSON in one of these schemas:
+
+1) Route to agent:
+{"agent":"<slug>","reason":"short reason","confidence":0.0-1.0,"rewrite":"optional concise task phrasing"}
+
+2) Answer directly (no agent call):
+{"agent":"none","response":"short answer","reason":"why no agent is needed","confidence":0.0-1.0}
+
+3) Ask the user to choose (you are unsure which agent fits):
+{"agent":"clarify","question":"one short disambiguating question","options":[<slugs>],
+ "reason":"why you asked","confidence":0.0-1.0,"rewrite":"optional best-guess task phrasing"}
+
+Hard rules:
+- If at least one agent in AGENT_CATALOG plausibly matches the user task, DO NOT choose agent="none".
+- Prefer routing even if your confidence is moderate; use "clarify" only when you cannot pick between agents.
+- Use "rewrite" to turn vague user text into a crisp, actionable task for the chosen agent.
+
+Guidance (examples):
+- "show today's meals" -> route to the agent whose description/capabilities mention meals/meal planning/meal logs.
+- "mark lunch done" -> route to that same meals agent; include a rewrite like "mark today's lunch complete".
+- "log today's workout" -> route to workouts agent.
+- "how much did I spend last week?" -> route to finance agent.
+- "hi", "thanks", "tell me a joke" -> agent="none".
 """
+
 
 def _build_prompt(user_text: str, user_id: str) -> str:
     return (

@@ -1,4 +1,4 @@
-from services.supabase_service import supabase
+from backend.services.supabase_service import supabase
 
 def handle_recurring(query: str):
     if "add" in query or "log" in query:
