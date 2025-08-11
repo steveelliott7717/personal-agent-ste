@@ -12,12 +12,24 @@
       <button :disabled="loading">{{ loading ? 'Working…' : 'Send' }}</button>
     </form>
 
+    <div class="row" style="display:flex;gap:16px;align-items:center;">
+      <label class="ck">
+        <input type="checkbox" v-model="shorthandEnabled" />
+        Shorthand (S/G/Q)
+      </label>
+    </div>
+
     <div class="row">
       <label class="ck">
         <input type="checkbox" v-model="demoMode" @change="persistDemoMode" />
         Demo mode
       </label>
     </div>
+
+    <details v-if="preview" style="margin: 6px 0 10px;">
+      <summary style="cursor:pointer">Expanded prompt preview</summary>
+      <pre style="white-space:pre-wrap;background:#f6f6f8;padding:8px;border-radius:6px;margin-top:6px">{{ preview }}</pre>
+    </details>
 
     <section v-if="error" class="error">{{ error }}</section>
 
@@ -44,6 +56,7 @@
 
 <script>
 import { sendQuery } from './api'
+import { expandShorthand } from './utils/expandShorthand'
 
 const DEMO_KEY = 'demoMode'
 
@@ -55,7 +68,9 @@ export default {
       loading: false,
       error: '',
       response: null,
-      demoMode: loadDemo()
+      demoMode: loadDemo(),
+      shorthandEnabled: false,
+      preview: null
     }
   },
   mounted() {
@@ -83,7 +98,10 @@ export default {
 
       try {
         this.loading = true
-        const json = await sendQuery(q)
+        const expanded = this.shorthandEnabled ? expandShorthand(q) : q
+        this.preview = expanded !== q ? expanded : null
+
+        const json = await sendQuery(expanded, { prompt_director: this.shorthandEnabled })
         // Always prefer the human-friendly message; fallback to JSON if missing
         this.response = {
           agent: json.agent || 'router',
