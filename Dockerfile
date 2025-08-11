@@ -1,14 +1,22 @@
-# ---- Frontend build ----
-FROM node:20-alpine AS frontend-builder
+# --- Stage 1: Build the Vue frontend (Debian base avoids musl quirks) ---
+FROM node:20-bullseye AS fe-build
 WORKDIR /app/frontend
 
 # Install deps
 COPY frontend/package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
+# Work around npm optional-deps issue cleanly:
+# 1) Try npm ci; if it fails on optional deps, fall back to npm install without lock.
+RUN npm ci || (rm -rf node_modules package-lock.json && npm install)
+
+# Copy sources
+COPY frontend/ ./
+
+# Force Rollup to skip native binary and use JS fallback
+ENV ROLLUP_SKIP_NODE_BINARY=1
 
 # Build
-COPY frontend/ .
 RUN npm run build
+
 
 
 # ---- Backend runtime ----
