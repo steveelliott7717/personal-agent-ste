@@ -1,17 +1,25 @@
-# syntax=docker/dockerfile:1.6
-
-# --- Stage 1: Build the Vue frontend (Debian base avoids musl quirks) ---
+# --- Stage 1: Build the Vue frontend (robust against Rollup native issues) ---
 FROM node:20-bullseye AS fe-build
 WORKDIR /app/frontend
 
-# Install deps (fallback if npm ci hits optional-deps bug)
+# Install deps from lockfile
 COPY frontend/package*.json ./
-RUN npm ci || (rm -rf node_modules package-lock.json && npm install)
+RUN npm ci
 
-# Copy sources and build with JS fallback (skip native rollup binary)
+# Copy sources
 COPY frontend/ ./
+
+# Ensure Rollup's platform-specific native package is present.
+# If it's missing (npm optional-deps quirk), install the EXACT matching version.
+RUN node -e "try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}" \
+ || sh -lc "ROLLUP_VER=$(node -p \"require('./node_modules/rollup/package.json').version\"); npm install --no-save @rollup/rollup-linux-x64-gnu@${ROLLUP_VER}"
+
+# (Extra guard) allow JS fallback if native still not present for any reason
 ENV ROLLUP_SKIP_NODE_BINARY=1
+
+# Build
 RUN npm run build
+
 
 # --- Stage 2: FastAPI runtime serving SPA + API ---
 FROM python:3.11-slim AS runtime
