@@ -4,6 +4,8 @@
 \i db/public/020_router.sql
 \i db/public/030_data_bus.sql
 \i db/public/040_embeddings.sql
+\i db/public/045_embeddings_fix.sql
+\i db/public/046_embeddings_rpc.sql
 
 \i db/meals/000_schema.sql
 \i db/meals/010_tables.sql

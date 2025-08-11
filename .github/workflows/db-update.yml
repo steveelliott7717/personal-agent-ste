@@ -1,0 +1,26 @@
+name: Run Supabase SQL
+
+on:
+  workflow_dispatch: # allows you to trigger it manually
+  push:
+    paths:
+      - "migrations/**.sql" # run only if SQL files change
+
+jobs:
+  update-db:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run SQL on Supabase
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          for f in migrations/*.sql; do
+            echo "Running $f..."
+            psql "$DB_URL" -f "$f"
+          done

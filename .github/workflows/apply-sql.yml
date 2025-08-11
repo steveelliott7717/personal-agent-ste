@@ -1,0 +1,48 @@
+name: Apply SQL to Supabase
+
+on:
+  workflow_dispatch: {}         # <-- gives you the “Run workflow” button
+  push:
+    paths:
+      - "db/migrations/**.sql"
+      - "db/apply_all.sql"
+      - "db/seed.sql"
+
+jobs:
+  apply-sql:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Sanity check connection
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select 1;"
+
+      - name: Apply apply_all.sql (if present)
+        if: hashFiles('db/apply_all.sql') != ''
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f db/apply_all.sql
+
+      - name: Apply seed.sql (if present)
+        if: hashFiles('db/seed.sql') != ''
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f db/seed.sql
+
+      - name: Apply migration files (if any)
+        if: hashFiles('db/migrations/**.sql') != ''
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          for f in $(ls -1 db/migrations/*.sql | sort); do
+            echo "---- Running $f ----"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
