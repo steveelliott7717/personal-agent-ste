@@ -5,17 +5,29 @@ import os
 import json
 from typing import Any, Dict, Tuple
 
-from fastapi import FastAPI, Form, Body, Request
+from fastapi import FastAPI, Form, Body, Request, HTTPException
+
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, FileResponse
+from pathlib import Path
+
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # ✅ package-qualified imports (works when running: uvicorn backend.main:app)
 from backend.agents.router_agent import route_request
 from backend.utils.nl_formatter import ensure_natural
 from backend.utils.agent_protocol import AgentResponse
+from dotenv import load_dotenv
+load_dotenv()
+
 
 app = FastAPI(title="Personal Agent API")
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 
 # -------------------- Middleware --------------------
 class NaturalLanguageMiddleware(BaseHTTPMiddleware):
@@ -100,10 +112,15 @@ def health():
 
 # -------------------- Universal request endpoint --------------------
 @app.post("/api/request")
+@app.post("/app/api/request")
+@app.post("/api/route")       # alias to support earlier clients/tests
+@app.post("/app/api/route")   # alias to support earlier clients/tests
 async def handle_request(
     query: str | None = Form(default=None),
     body: Dict[str, Any] | None = Body(default=None),
 ):
+    ...
+
     q, _ = _extract_query(query, body)
     if not q:
         return JSONResponse(
@@ -129,6 +146,28 @@ async def handle_request(
 
 # -------------------- Static frontend (optional) --------------------
 static_dir = os.path.join(os.path.dirname(__file__), "static")
+
 if os.path.isdir(static_dir):
+    INDEX_FILE = Path(static_dir) / "index.html"
+
+    # Serve the SPA at /app (and optionally /)
     app.mount("/app", StaticFiles(directory=static_dir, html=True), name="static")
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static_root")
+    # If you also want the root to serve the SPA, uncomment the next line:
+    # app.mount("/", StaticFiles(directory=static_dir, html=True), name="static_root")
+
+    @app.get("/app", include_in_schema=False, response_class=HTMLResponse)
+    @app.get("/app/", include_in_schema=False, response_class=HTMLResponse)
+    def serve_index():
+        if INDEX_FILE.exists():
+            return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404, detail="Frontend build not found.")
+
+    # SPA fallback: return index.html for any /app/* path that isn't a real file
+    @app.get("/app/{path:path}", include_in_schema=False, response_class=HTMLResponse)
+    def spa_fallback(path: str):
+        candidate = Path(static_dir) / path
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        if INDEX_FILE.exists():
+            return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
+        raise HTTPException(status_code=404, detail="Frontend build not found.")
