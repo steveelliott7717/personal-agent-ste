@@ -1,8 +1,9 @@
 name: Apply SQL to Supabase (API)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch: {}                 # manual “Run workflow” button
   push:
+    branches: [ main ]                  # change if your default branch is different
     paths:
       - "db/migrations/**.sql"
       - "db/apply_all.sql"
@@ -12,7 +13,7 @@ jobs:
   apply-sql:
     runs-on: ubuntu-latest
     env:
-      PROJECT_REF: umlhceqkwdkpfcdjpueq   # <-- your project id
+      PROJECT_REF: umlhceqkwdkpfcdjpueq   # your Supabase Project ID
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,7 +21,16 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Run db/apply_all.sql if present
+      - name: Sanity check (show first 80 chars of SQL files changed)
+        run: |
+          git diff --name-only HEAD~1..HEAD | grep -E '^db/.*\.sql$' || true
+          for f in $(git diff --name-only HEAD~1..HEAD | grep -E '^db/.*\.sql$' || true); do
+            echo "---- $f ----"
+            head -c 80 "$f" || true
+            echo
+          done
+
+      - name: Apply apply_all.sql (if present)
         if: hashFiles('db/apply_all.sql') != ''
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -31,7 +41,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"query\": $SQL_JSON}"
 
-      - name: Run db/seed.sql if present
+      - name: Apply seed.sql (if present)
         if: hashFiles('db/seed.sql') != ''
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -42,7 +52,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"query\": $SQL_JSON}"
 
-      - name: Run each migration in order (if any)
+      - name: Apply migration files (if any)
         if: hashFiles('db/migrations/**.sql') != ''
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
