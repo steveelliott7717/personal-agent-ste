@@ -1,4 +1,6 @@
-# --- Stage 1: Build the Vue frontend (robust against Rollup native issues) ---
+# syntax=docker/dockerfile:1.6
+
+# --- Stage 1: Build the Vue frontend (robust against Rollup optional-deps) ---
 FROM node:20-bullseye AS fe-build
 WORKDIR /app/frontend
 
@@ -9,33 +11,35 @@ RUN npm ci
 # Copy sources
 COPY frontend/ ./
 
-# Ensure Rollup's platform-specific native package is present.
-# If it's missing (npm optional-deps quirk), install the EXACT matching version.
-RUN node -e "try{require('@rollup/rollup-linux-x64-gnu');process.exit(0)}catch(e){process.exit(1)}" \
- || sh -lc "ROLLUP_VER=$(node -p \"require('./node_modules/rollup/package.json').version\"); npm install --no-save @rollup/rollup-linux-x64-gnu@${ROLLUP_VER}"
+# Ensure the platform-specific rollup package exists; if missing, install the exact matching version.
+# Using a heredoc avoids fragile shell quoting.
+RUN node - <<'NODE'
+const { execSync } = require('node:child_process');
+try {
+  require('@rollup/rollup-linux-x64-gnu');
+  process.exit(0);
+} catch (e) {
+  const v = require('./node_modules/rollup/package.json').version;
+  console.log(`[fix] Installing @rollup/rollup-linux-x64-gnu@${v}`);
+  execSync(`npm install --no-save @rollup/rollup-linux-x64-gnu@${v}`, { stdio: 'inherit' });
+}
+NODE
 
-# (Extra guard) allow JS fallback if native still not present for any reason
+# (Optional) Also allow JS fallback if native still gets skipped
 ENV ROLLUP_SKIP_NODE_BINARY=1
 
 # Build
 RUN npm run build
 
-
 # --- Stage 2: FastAPI runtime serving SPA + API ---
 FROM python:3.11-slim AS runtime
 WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PORT=8080
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8080
 
-# Python deps
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
-# App code
 COPY . /app
-
-# Bring built SPA into backend/static (served at /app/)
 COPY --from=fe-build /app/frontend/dist/ /app/backend/static/
 
 EXPOSE 8080
