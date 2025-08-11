@@ -1,7 +1,7 @@
-name: Apply SQL to Supabase
+name: Apply SQL to Supabase (API)
 
 on:
-  workflow_dispatch: {}         # <-- gives you the “Run workflow” button
+  workflow_dispatch: {}
   push:
     paths:
       - "db/migrations/**.sql"
@@ -11,38 +11,47 @@ on:
 jobs:
   apply-sql:
     runs-on: ubuntu-latest
+    env:
+      PROJECT_REF: umlhceqkwdkpfcdjpueq   # <-- your project id
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Sanity check connection
-        env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select 1;"
-
-      - name: Apply apply_all.sql (if present)
+      - name: Run db/apply_all.sql if present
         if: hashFiles('db/apply_all.sql') != ''
         env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f db/apply_all.sql
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          SQL_JSON=$(jq -Rs . < db/apply_all.sql)
+          curl -sS -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/sql" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\": $SQL_JSON}"
 
-      - name: Apply seed.sql (if present)
+      - name: Run db/seed.sql if present
         if: hashFiles('db/seed.sql') != ''
         env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f db/seed.sql
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          SQL_JSON=$(jq -Rs . < db/seed.sql)
+          curl -sS -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/sql" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\": $SQL_JSON}"
 
-      - name: Apply migration files (if any)
+      - name: Run each migration in order (if any)
         if: hashFiles('db/migrations/**.sql') != ''
         env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           for f in $(ls -1 db/migrations/*.sql | sort); do
             echo "---- Running $f ----"
-            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+            SQL_JSON=$(jq -Rs . < "$f")
+            curl -sS -X POST "https://api.supabase.com/v1/projects/$PROJECT_REF/sql" \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\": $SQL_JSON}"
           done
