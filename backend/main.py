@@ -8,6 +8,8 @@ from typing import Any, Dict, Tuple
 from fastapi import FastAPI, Form, Body, Request, HTTPException
 
 from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse
+
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pathlib import Path
@@ -28,6 +30,9 @@ app = FastAPI(title="Personal Agent API")
 def health():
     return {"status": "ok"}
 
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    return RedirectResponse(url="/app/")
 
 # -------------------- Middleware --------------------
 class NaturalLanguageMiddleware(BaseHTTPMiddleware):
