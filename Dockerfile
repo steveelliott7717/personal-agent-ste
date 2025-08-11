@@ -1,49 +1,34 @@
+# syntax=docker/dockerfile:1.6
+
 # --- Stage 1: Build the Vue frontend (Debian base avoids musl quirks) ---
 FROM node:20-bullseye AS fe-build
 WORKDIR /app/frontend
 
-# Install deps
+# Install deps (fallback if npm ci hits optional-deps bug)
 COPY frontend/package*.json ./
-# Work around npm optional-deps issue cleanly:
-# 1) Try npm ci; if it fails on optional deps, fall back to npm install without lock.
 RUN npm ci || (rm -rf node_modules package-lock.json && npm install)
 
-# Copy sources
+# Copy sources and build with JS fallback (skip native rollup binary)
 COPY frontend/ ./
-
-# Force Rollup to skip native binary and use JS fallback
 ENV ROLLUP_SKIP_NODE_BINARY=1
-
-# Build
 RUN npm run build
 
-
-
-# ---- Backend runtime ----
-FROM python:3.11-slim AS backend
+# --- Stage 2: FastAPI runtime serving SPA + API ---
+FROM python:3.11-slim AS runtime
 WORKDIR /app
-
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
- && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080
 
 # Python deps
-COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
-# Copy backend AS A PACKAGE
-COPY backend ./backend
+# App code
+COPY . /app
 
-# Place built frontend where backend expects it
-COPY --from=frontend-builder /app/frontend/dist ./backend/static
+# Bring built SPA into backend/static (served at /app/)
+COPY --from=fe-build /app/frontend/dist/ /app/backend/static/
 
-# Optional start script
-COPY backend/start.sh ./start.sh
-RUN chmod +x ./start.sh
-
-ENV PYTHONPATH=/app
-ENV PORT=8080
 EXPOSE 8080
-
-# Start the app from the backend package
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8080"]
