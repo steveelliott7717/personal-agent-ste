@@ -18,7 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # ✅ package-qualified imports (works when running: uvicorn backend.main:app)
 from backend.agents.router_agent import route_request
-from agents.repo_agent import propose_changes
+from backend.agents.repo_agent import propose_changes
 
 from backend.utils.nl_formatter import ensure_natural
 from backend.utils.agent_protocol import AgentResponse
