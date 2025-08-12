@@ -18,6 +18,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # ✅ package-qualified imports (works when running: uvicorn backend.main:app)
 from backend.agents.router_agent import route_request
+from agents.repo_agent import propose_changes
+
 from backend.utils.nl_formatter import ensure_natural
 from backend.utils.agent_protocol import AgentResponse
 from dotenv import load_dotenv
@@ -25,6 +27,27 @@ load_dotenv()
 
 
 app = FastAPI(title="Personal Agent API")
+
+@app.post("/app/api/repo/plan")
+def repo_plan(payload: dict):
+    task = payload.get("task")
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task'")
+
+    repo   = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix")  # e.g., "backend/" or "frontend/"
+    k      = int(payload.get("k", 12))
+
+    out = propose_changes(
+        task,
+        repo=repo,
+        branch=branch,
+        commit="HEAD",
+        k=k,
+        path_prefix=prefix
+    )
+    return out
 
 @app.get("/health")
 def health():
