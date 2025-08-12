@@ -144,12 +144,20 @@ def health():
 @app.post("/api/route")       # alias to support earlier clients/tests
 @app.post("/app/api/route")   # alias to support earlier clients/tests
 async def handle_request(
-    query: str | None = Form(default=None),
+    request: Request,
     body: Dict[str, Any] | None = Body(default=None),
 ):
-    ...
+    # Accept JSON body if provided, otherwise fall back to form fields
+    form_query: str | None = None
+    if body is None:
+        try:
+            form = await request.form()
+            if form:
+                form_query = form.get("query") or form.get("prompt") or form.get("q")  # type: ignore[assignment]
+        except Exception:
+            form_query = None
 
-    q, _ = _extract_query(query, body)
+    q, _ = _extract_query(form_query, body)
     if not q:
         return JSONResponse(
             {"agent": "system", "intent": "error", "message": "Missing 'query' in form or JSON body"},
@@ -171,6 +179,7 @@ async def handle_request(
         }
 
     return JSONResponse(natural)
+
 
 # -------------------- Static frontend (optional) --------------------
 static_dir = os.path.join(os.path.dirname(__file__), "static")
