@@ -143,11 +143,18 @@ def health():
 @app.post("/app/api/request")
 @app.post("/api/route")       # alias to support earlier clients/tests
 @app.post("/app/api/route")   # alias to support earlier clients/tests
-async def handle_request(
-    request: Request,
-    body: Dict[str, Any] | None = Body(default=None),
-):
-    # Accept JSON body if provided, otherwise fall back to form fields
+async def handle_request(request: Request):
+    # Try JSON first (don’t declare Body param so form requests don’t get validated as JSON)
+    body: Dict[str, Any] | None = None
+    try:
+        if request.headers.get("content-type", "").lower().startswith("application/json"):
+            body = await request.json()
+            if not isinstance(body, dict):
+                body = None
+    except Exception:
+        body = None
+
+    # Fall back to form fields
     form_query: str | None = None
     if body is None:
         try:
@@ -179,6 +186,7 @@ async def handle_request(
         }
 
     return JSONResponse(natural)
+
 
 
 # -------------------- Static frontend (optional) --------------------
