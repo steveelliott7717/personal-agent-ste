@@ -1,0 +1,9 @@
+{
+  "name": "Personal Agent",
+  "short_name": "Agent",
+  "start_url": "/app/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": []
+}
