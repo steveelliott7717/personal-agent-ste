@@ -1,19 +1,29 @@
-export async function sendQuery(query, audioBlob = null) {
-  const form = new FormData()
-  form.append('query', query)
-  if (audioBlob) {
-    form.append('audio', audioBlob, 'note.webm')
-  }
+// frontend/src/api.js
+const API_BASE = (
+    import.meta.env.PROD
+        ? '/app/api'
+        : (import.meta.env.VITE_API_BASE_URL || '/app/api')
+).replace(/\/+$/, '')
 
-  const res = await fetch('/api/request', {
-    method: 'POST',
-    body: form
-  })
+async function _json(url, body) {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {})
+    })
+    if (!res.ok) {
+        const txt = await res.text().catch(() => '')
+        throw new Error(`HTTP ${res.status}: ${txt || res.statusText}`)
+    }
+    return res.json()
+}
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`API ${res.status}: ${text || 'Request failed'}`)
-  }
+export async function sendRequest(query, extra = {}) {
+    return _json(`${API_BASE}/request`, { query, ...extra })
+}
 
-  return res.json()
+export async function repoQuery(taskOrQuestion, extra = {}) {
+    // task/question/q accepted; defaults k=8
+    const body = { task: taskOrQuestion, k: 8, ...extra }
+    return _json(`${API_BASE}/repo/query`, body)
 }
