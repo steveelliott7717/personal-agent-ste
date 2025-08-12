@@ -43,7 +43,6 @@ def propose_changes(task: str, *, repo: str, branch: str, commit: str = "HEAD",
         messages=[
             {"role": "system", "content": "Follow RESPONSE SHAPE exactly; produce minimal, safe diffs."},
             {"role": "user", "content": prompt},
-        ],
-        temperature=0.2,
+        ]
     )
     return {"hits": hits, "draft": resp.choices[0].message.content, "prompt": prompt}
