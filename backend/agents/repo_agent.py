@@ -1,76 +1,115 @@
 # backend/agents/repo_agent.py
 from __future__ import annotations
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import os
+import re
+import time
 
 from openai import OpenAI
 
-# RMS helpers
-from backend.services.rms import repo_search, format_citation
+from backend.rms import repo_search, repo_search_raw
+from backend.services.supabase_service import supabase
+from backend.services.conversation import append_message, get_session_n
+from backend.services.supabase_service import supabase
 
-# Embeddings
-from backend.semantics.embeddings import embed_text
 
-# Conversation memory (SQLite-backed)
-from backend.services.conversation import (
-    append_message,
-    get_messages,     # <- renamed
-    get_session_n,
-    default_n,
-)
+# ---------- Config ----------
 
-EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
-CHAT_MODEL  = os.getenv("CHAT_MODEL", "gpt-5")
+REPO_SLUG = os.getenv("RMS_REPO", "personal-agent-ste")
+REPO_BRANCH = os.getenv("RMS_BRANCH", "main")
+EMBED_MODEL = os.getenv("RMS_EMBED_MODEL", "text-embedding-3-small")
+CHAT_MODEL = os.getenv("RMS_CHAT_MODEL", "gpt-5")  # keep placeholder; you can change later
 
-SYSTEM_PLAN = (
-    "ROLE\n"
-    "You are a senior engineer operating inside {REPO}@{BRANCH}@{COMMIT}.\n"
-    "You MUST rely ONLY on the RMS context provided here; do not invent unseen code.\n"
-    "Cite every code reference as [n] path:start–end@sha.\n\n"
-    "MISSION\n"
-    "Complete the TASK below with minimal, safe changes. If context is missing, STOP and list files/lines to recall.\n\n"
-    "RESPONSE SHAPE\n"
-    "1) TL;DR\n2) PLAN\n3) PATCH(ES) — unified diff with [n] citations\n4) TESTS\n5) NOTES\n"
-)
+_openai = OpenAI()
+
+
+def _last_n_messages(session: str, n: int = 10) -> list[dict]:
+    """
+    Fallback: read the most recent n conversation rows for a session.
+    Returns list of dicts sorted ascending by id: [{role, content, created_at}, ...]
+    """
+    try:
+        res = (
+            supabase.table("conversations")
+            .select("role,content,created_at")
+            .eq("session", session)
+            .order("id", desc=True)
+            .limit(n)
+            .execute()
+        )
+        rows = res.data or []
+        rows.reverse()  # oldest → newest
+        return rows
+    except Exception:
+        return []
+
+# ---------- Utilities ----------
 
 def _embed(text: str) -> List[float]:
-    return embed_text(text)
+    resp = _openai.embeddings.create(model=EMBED_MODEL, input=text)
+    return resp.data[0].embedding  # list[float]
 
-def repo_search_raw(params: Dict[str, Any], dims: int) -> List[Dict[str, Any]]:
+
+def _format_citation(idx: int, path: str, start: int, end: int, commit_sha: Optional[str]) -> str:
+    sha = (commit_sha or "HEAD")[:7]
+    return f"[{idx}] {path}:{start}–{end}@{sha}"
+
+
+# ---------- Minimal “session memory” helpers ----------
+
+_TOKEN_STORE_RE = re.compile(r"(?:^|\b)TOKEN::\s*([A-Za-z0-9._\-]+)", re.IGNORECASE)
+_TOKEN_NATURAL_STORE_RE = re.compile(
+    r"(?:remember\s+this\s+token\s*:?\s*)([A-Za-z0-9._\-]+)", re.IGNORECASE
+)
+_TOKEN_RECALL_RE = re.compile(r"what\s+token\s+do\s+you\s+remember", re.IGNORECASE)
+
+
+def _store_session_token(session: Optional[str], text: str) -> Optional[str]:
     """
-    Raw call to the dimensioned Supabase RPC, picking 1024 vs 1536 by vector length.
+    Extract a token from user text and persist it into conversations.
+    Returns the token if one was stored.
     """
-    import json
-    from urllib.request import Request, urlopen
-    from urllib.error import HTTPError
+    m = _TOKEN_STORE_RE.search(text) or _TOKEN_NATURAL_STORE_RE.search(text)
+    if not m:
+        return None
+    token = m.group(1).strip()
 
-    base = os.environ["SUPABASE_URL"]
-    force = os.getenv("RMS_FORCE_DIMS", "").strip()
-    if force == "1536":
-        fn = "repo_search_1536"
-    elif force == "1024":
-        fn = "repo_search_1024"
-    else:
-        fn = "repo_search_1024" if dims == 1024 else "repo_search_1536"
+    # Conversations constraint usually allows roles: 'user','assistant','system'
+    # Use 'assistant' to record server-side memory writes.
+    if session:
+        try:
+            append_message(session=session, role="assistant", content=f"MEMORY token={token}")
+        except Exception:
+            # best-effort; don't crash the request flow
+            pass
+    return token
 
-    url = f"{base}/rest/v1/rpc/{fn}"
-    body = json.dumps(params).encode("utf-8")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE") or os.environ["SUPABASE_KEY"]
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-    }
-    req = Request(url, data=body, headers=headers, method="POST")
+
+def _recall_session_token(session: Optional[str]) -> Optional[str]:
+    if not session:
+        return None
     try:
-        with urlopen(req) as resp:
-            return json.loads(resp.read().decode("utf-8")) or []
-    except HTTPError as he:
-        detail = he.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"HTTP {he.code} {he.reason} at RPC {fn}\n{detail}")
+        rows = _last_n_messages(session=session, n=50)  # newest last or newest first depending on service
+    except Exception:
+        rows = []
 
-# ---------- Repo planning (produces diffs) ----------
+    # Normalize to iterate newest → oldest
+    rows = list(rows) if isinstance(rows, list) else []
+    if rows and isinstance(rows[0], dict) and "created_at" in rows[0]:
+        # sort ascending on created_at, then reverse so we scan newest-first
+        rows = sorted(rows, key=lambda r: r.get("created_at") or "")[::-1]
+    else:
+        rows = rows[::-1]
+
+    for r in rows:
+        content = (r.get("content") or "") if isinstance(r, dict) else str(r)
+        mm = re.search(r"MEMORY\s+token=([A-Za-z0-9._\-]+)", content)
+        if mm:
+            return mm.group(1)
+    return None
+
+
+# ---------- “Propose changes” (kept minimal for completeness) ----------
 
 def propose_changes(
     task: str,
@@ -80,60 +119,26 @@ def propose_changes(
     commit: str = "HEAD",
     k: int = 12,
     path_prefix: Optional[str] = None,
-    session: Optional[str] = None,
-    thread_n: Optional[int] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
+    """
+    Generates a draft diff (very light-weight stub).
+    Keeps the function signature so backend.main import works.
+    """
     vec = _embed(task)
     hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
 
-    # RMS context (citable)
     ctx_parts: List[str] = []
     for i, h in enumerate(hits, start=1):
-        cite = format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
+        cite = _format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
         ctx_parts.append(f"{cite}\n```\n{h['content']}\n```")
 
-    # Chat history (non-citable)
-    effective_n = None
-    history_text = "(none)"
-    if session:
-        effective_n = int(thread_n) if (thread_n is not None and str(thread_n).isdigit()) else (get_session_n(session) or default_n())
-        msgs = get_messages(session, limit=effective_n) or []
-        if msgs:
-            history_text = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
+    # You can later swap to a full “planning” prompt. For now, just echo.
+    draft = "No automatic changes proposed in this stub."
+    return {"hits": hits, "draft": draft, "prompt": f"TASK\n{task}\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")}
 
-    prompt = (
-        SYSTEM_PLAN.format(REPO=repo, BRANCH=branch, COMMIT=commit)
-        + "\nTASK\n" + task
-        + "\n\nCHAT HISTORY (recent; do not cite):\n" + history_text
-        + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")
-    )
 
-    client = OpenAI()
-    resp = client.chat.completions.create(
-        model=CHAT_MODEL,
-        messages=[
-            {"role": "system", "content": "Follow RESPONSE SHAPE exactly; produce minimal, safe diffs."},
-            {"role": "user", "content": prompt},
-        ],
-    )
-    draft = resp.choices[0].message.content or ""
-
-    if session:
-        try:
-            append_message(session, "user", task)
-            append_message(session, "assistant", draft)
-        except Exception:
-            pass
-
-    return {
-        "hits": hits,
-        "draft": draft,
-        "prompt": prompt,
-        "session": session,
-        "thread_n": effective_n,
-    }
-
-# ---------- Repo Q&A helper (bypasses router) ----------
+# ---------- Repo Q&A / Endpoint handler ----------
 
 def answer_about_repo(
     question: str,
@@ -145,83 +150,117 @@ def answer_about_repo(
     commit: Optional[str] = None,
     session: Optional[str] = None,
     thread_n: Optional[int] = None,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
+    """
+    Primary entry the HTTP route uses. It also handles ping + session memory.
+    Returns a dict with (at least): agent, intent, answer, session, thread_n.
+    """
 
-    # Embed & dims
-    vec = _embed(question)
-    if not isinstance(vec, list) or not vec or not isinstance(vec[0], (int, float)):
-        raise ValueError("bad embedding vector: expected list[float]")
-    dims_env = os.getenv("RMS_FORCE_DIMS", "").strip()
-    dims = int(dims_env) if dims_env.isdigit() else len(vec)
-    used_rpc = "repo_search_1024" if dims == 1024 else "repo_search_1536"
+    q = (question or "").strip()
 
-    # --- Call search via the stable wrapper (handles RPC details) ---
+    # --- Health check: no RMS calls
+    if q.lower() == "ping":
+        return {
+            "agent": "repo",
+            "intent": "pong",
+            "answer": "pong",
+            "session": session,
+            "thread_n": thread_n,
+        }
+
+    # --- Session memory: explicit store
+    token = _store_session_token(session, q)
+    if token:
+        return {
+            "agent": "repo",
+            "intent": "memory.store",
+            "answer": "Acknowledged. I’ll remember this for this session.",
+            "session": session,
+            "thread_n": thread_n,
+        }
+
+    # --- Session memory: recall
+    if _TOKEN_RECALL_RE.search(q):
+        recalled = _recall_session_token(session)
+        if recalled:
+            return {
+                "agent": "repo",
+                "intent": "memory.recall",
+                "answer": f"The token is: {recalled}",
+                "session": session,
+                "thread_n": thread_n,
+            }
+        else:
+            return {
+                "agent": "repo",
+                "intent": "memory.miss",
+                "answer": "I don’t have a token stored for this session yet.",
+                "session": session,
+                "thread_n": thread_n,
+            }
+
+    # --- Normal RMS-backed Q&A ---
+    try:
+        vec = _embed(q)
+    except Exception as e:
+        return {
+            "agent": "repo",
+            "intent": "error",
+            "message": f"embedding failed: {getattr(e, 'message', None) or str(e)}",
+            "session": session,
+            "thread_n": thread_n,
+        }
+
+    # choose dims + rpc via helper; collect top-k hits
     try:
         hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
-        used_rpc = "repo_search"  # for debugging/return
     except Exception as e:
         err = getattr(e, "message", None) or str(e)
         return {
             "agent": "repo",
             "intent": "error",
-            "message": f"repo_search failed: {err}",
+            "message": f"repo_search RPC failed: {err}",
             "debug": {
-                "dims": dims,
-                "used_rpc": "repo_search",
+                "params": {"q": f"[{len(vec)} floats]", "repo": repo, "branch_in": branch, "prefix": path_prefix, "match_count": int(k)},
             },
+            "session": session,
+            "thread_n": thread_n,
         }
 
-    # RMS context (citable)
-    ctx_blocks: List[str] = []
-    for i, h in enumerate(hits[:8], start=1):
-        cite = format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
-        ctx_blocks.append(f"{cite}\n```\n{h['content']}\n```")
-
-    # Chat history (non-citable)
-    effective_n = None
-    history_text = "(none)"
-    if session:
-        effective_n = int(thread_n) if (thread_n is not None and str(thread_n).isdigit()) else (get_session_n(session) or default_n())
-        msgs = get_messages(session, limit=effective_n) or []
-        if msgs:
-            history_text = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
-
-    system = (
-        "Answer concisely. Cite sources as [n] path:start–end@sha. "
-        "Only cite repo sources; do not cite chat history. "
-        "If the answer isn't in the repo context, say you don't know and list files to fetch."
-    )
-    user = (
-        f"QUESTION:\n{question}\n\n"
-        "CHAT HISTORY (recent; do not cite):\n" + history_text + "\n\n"
-        "CONTEXT (authoritative; do not invent beyond this):\n"
-        + ("\n\n".join(ctx_blocks) if ctx_blocks else "(no context)")
-    )
-
-    client = OpenAI()
-    resp = client.chat.completions.create(
-        model=CHAT_MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    )
-    answer = resp.choices[0].message.content or ""
-
-    if session:
-        try:
-            append_message(session, "user", question)
-            append_message(session, "assistant", answer)
-        except Exception:
-            pass
+    # Build a concise, cite-aware answer by concatenating contexts (simple baseline)
+    if hits:
+        cites = []
+        for i, h in enumerate(hits[:3], start=1):
+            cites.append(_format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha")))
+        answer = "Here’s what I found in the repo:\n" + "\n".join(cites)
+    else:
+        answer = "No relevant matches in the repo memory."
 
     return {
-        "hits": hits,
+        "agent": "repo",
+        "intent": "answer",
         "answer": answer,
-        "used_commit": commit,
-        "used_index_dims": dims,
-        "used_model": EMBED_MODEL,
-        "used_rpc": used_rpc,
+        "hits": hits,
         "session": session,
-        "thread_n": effective_n,
+        "thread_n": thread_n,
     }
+
+
+# ---------- Convenience wrapper the route may call ----------
+
+def handle(task: str, *, session: Optional[str] = None, thread_n: Optional[int] = None,
+           repo: Optional[str] = None, branch: Optional[str] = None,
+           k: int = 8, path_prefix: Optional[str] = None) -> Dict[str, Any]:
+    """
+    If your router/route uses a generic `handle`, keep this thin wrapper.
+    """
+    return answer_about_repo(
+        task,
+        repo=(repo or REPO_SLUG),
+        branch=(branch or REPO_BRANCH),
+        k=k,
+        path_prefix=path_prefix,
+        session=session,
+        thread_n=thread_n,
+    )
