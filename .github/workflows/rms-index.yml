@@ -49,4 +49,5 @@ jobs:
           RMS_SKIP: "backend/static/assets/**,frontend/dist/**,**/node_modules/**"
           RMS_ROOT: ${{ github.workspace }}
         run: |
-          python tools/index_repo_ci.py
+          python backend/tools/index_repo_ci.py
+
