@@ -5,6 +5,23 @@ import os
 
 from backend.services.supabase_service import supabase
 
+
+def _choose_dims(embedding: List[float]) -> int:
+    """
+    Decide which RPC (1024 vs 1536) to call.
+    - If RMS_FORCE_DIMS is set to "1024" or "1536", use that.
+    - Else infer from the vector length; default to 1536 if unknown.
+    """
+    if not isinstance(embedding, list) or not embedding:
+        raise ValueError("embedding must be a non-empty list[float]")
+    forced = (os.getenv("RMS_FORCE_DIMS", "").strip() or "")
+    if forced.isdigit():
+        n = int(forced)
+        if n in (1024, 1536):
+            return n
+    return len(embedding) if len(embedding) in (1024, 1536) else 1536
+
+
 # ---- Low-level raw search: calls the Postgres RPC directly ----
 def repo_search_raw(params: Dict[str, Any], *, dims: int) -> List[Dict[str, Any]]:
     """
@@ -29,18 +46,17 @@ def repo_search_raw(params: Dict[str, Any], *, dims: int) -> List[Dict[str, Any]
 
     fn = "repo_search_1536" if int(dims) == 1536 else "repo_search_1024"
 
-    # RPC expects these names exactly
+    # RPC expects these names exactly (to avoid ambiguous overload selection)
     rpc_args = {
         "repo_in": repo,
         "branch_in": branch,
-        "prefix_in": prefix,
+        "prefix_in": prefix,       # may be None/null -> SQL handles it
         "query_embedding": vec,
         "match_count": int(k),
     }
 
     res = supabase.rpc(fn, rpc_args).execute()
     rows = getattr(res, "data", None) or []
-    # Rows should already contain fields our UI expects; just pass through
     return rows
 
 
@@ -53,15 +69,7 @@ def repo_search(
     k: int = 8,
     prefix: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    if not isinstance(embedding, list) or not embedding:
-        raise ValueError("repo_search: embedding must be list[float]")
-
-    dims_env = os.getenv("RMS_FORCE_DIMS", "").strip()
-    dims = int(dims_env) if dims_env.isdigit() else len(embedding)
-    if dims not in (1024, 1536):
-        # default to 1536 unless explicitly overridden
-        dims = 1536
-
+    dims = _choose_dims(embedding)
     params = {
         "q": embedding,
         "repo": repo,
