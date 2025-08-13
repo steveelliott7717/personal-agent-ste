@@ -1,0 +1,9 @@
+curl -sS -X POST https: //personal-agent-ste.fly.dev/app/api/repo/plan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repo": "personal-agent-ste",
+    "branch": "main",
+    "path_prefix": "",
+    "k": 12,
+    "task": "Goal:\nEnable RMS GPT to maintain a running conversational memory (thread) across user requests, in addition to existing repo memory.\n\nRequirements:\n1) Implement persistent conversation storage keyed by user/session; survive restarts. Storage design is up to you but must be easy to query and truncate.\n2) On each new request, load the last N messages (configurable, default 20) and include them in planning/analysis.\n3) Merge conversation memory with repo memory during planning so both are available.\n4) Provide commands to: (a) clear/reset memory for a session, (b) set N, (c) export recent thread for debugging.\n5) Keep scope minimal; do not regress current RMS features.\n\nAcceptance Criteria:\n- RMS can reference details from a previous RMS request without the user re-stating them.\n- Memory persists after service restart.\n- A simple test script or instructions show: send Request A (with a unique token), then Request B asking RMS to repeat the token; RMS returns the token.\n- A documented endpoint or CLI command exists to clear memory and to configure N."
+}'

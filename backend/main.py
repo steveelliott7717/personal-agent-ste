@@ -19,6 +19,8 @@ from backend.agents.router_agent import route_request
 from backend.agents.repo_agent import propose_changes, answer_about_repo
 from backend.utils.nl_formatter import ensure_natural
 from backend.utils.agent_protocol import AgentResponse
+from backend.services import conversation as conv
+
 
 app = FastAPI(title="Personal Agent API")
 
@@ -47,9 +49,20 @@ def repo_query(payload: Dict[str, Any]):
     prefix = payload.get("path_prefix")
     k      = int(payload.get("k", 8))
     commit = payload.get("commit")
+    session = payload.get("session")
+    thread_n = payload.get("thread_n")
 
     try:
-        return answer_about_repo(q, repo=repo, branch=branch, k=k, path_prefix=prefix, commit=commit)
+        return answer_about_repo(
+            q,
+            repo=repo,
+            branch=branch,
+            k=k,
+            path_prefix=prefix,
+            commit=commit,
+            session=session,
+            thread_n=thread_n,
+        )
     except Exception as e:
         # bubble up precise error so we can see the RPC’s complaint
         raise HTTPException(status_code=400, detail=str(e))
@@ -64,9 +77,44 @@ def repo_plan(payload: Dict[str, Any]):
     branch = payload.get("branch", "main")
     prefix = payload.get("path_prefix")  # e.g., "backend/" or "frontend/"
     k      = int(payload.get("k", 12))
+    session = payload.get("session")
+    thread_n = payload.get("thread_n")
 
-    out = propose_changes(task, repo=repo, branch=branch, commit="HEAD", k=k, path_prefix=prefix)
+    out = propose_changes(
+        task,
+        repo=repo,
+        branch=branch,
+        commit="HEAD",
+        k=k,
+        path_prefix=prefix,
+        session=session,
+        thread_n=thread_n,
+    )
     return out
+
+
+@app.post("/app/api/repo/memory/reset")
+def repo_memory_reset(payload: Dict[str, Any]):
+    session = (payload or {}).get("session")
+    if not session:
+        raise HTTPException(status_code=400, detail="Missing 'session'")
+    deleted = conv.clear_session(session)
+    return {"ok": True, "session": session, "deleted": deleted}
+
+@app.post("/app/api/repo/memory/config")
+def repo_memory_config(payload: Dict[str, Any]):
+    session = (payload or {}).get("session")
+    n = (payload or {}).get("n")
+    if not session or n is None:
+        raise HTTPException(status_code=400, detail="Missing 'session' or 'n'")
+    conv.set_session_n(session, int(n))
+    return {"ok": True, "session": session, "n": conv.get_session_n(session) or conv.default_n()}
+
+@app.get("/app/api/repo/memory/export")
+def repo_memory_export(session: str, limit: int = 50):
+    if not session:
+        raise HTTPException(status_code=400, detail="Missing 'session'")
+    return {"ok": True, "session": session, "limit": int(limit), "messages": conv.export_messages(session, limit)}
 
 # -------------------- Middleware --------------------
 class NaturalLanguageMiddleware(BaseHTTPMiddleware):

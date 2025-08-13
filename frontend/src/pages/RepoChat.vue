@@ -74,8 +74,11 @@ const messages = ref([
   { role: 'assistant', content: 'Hi! Ask me anything about your repository. I’ll answer using your RMS and cite files.', citations: [] }
 ])
 const loading = ref(false)
+
 const prefix = ref('backend/')
 const k = ref(8)
+const session = ref(localStorage.getItem('rms_session') || 'dev')
+const threadN = ref(Number(localStorage.getItem('rms_thread_n') || 20))
 
 const health = ref(null)
 const healthError = ref('')
@@ -99,7 +102,15 @@ async function send() {
   input.value = ''
   loading.value = true
   try {
-    const body = { task: text, path_prefix: prefix.value || null, k: k.value || 8 }
+    localStorage.setItem('rms_session', session.value || '')
+    localStorage.setItem('rms_thread_n', String(threadN.value || ''))
+    const body = {
+      task: text,
+      path_prefix: prefix.value || null,
+      k: k.value || 8,
+      session: session.value || null,
+      thread_n: threadN.value || null
+    }
     const res = await fetch('/app/api/repo/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -110,7 +121,12 @@ async function send() {
     const cites = (data.hits || []).slice(0, 3).map((h, idx) =>
       `[${idx+1}] ${h.path}:${h.start_line}–${h.end_line}@${(h.commit_sha||'').slice(0,7)}`
     )
-    messages.value.push({ role: 'assistant', content: data.answer || '(no answer)', citations: cites })
+    messages.value.push({
+      role: 'assistant',
+      content: (data.answer || '(no answer)') +
+        (data.session ? `\n\n— session: ${data.session} · N=${data.thread_n ?? ''}` : ''),
+      citations: cites
+    })
   } catch (e) {
     messages.value.push({ role: 'assistant', content: `Error: ${e?.message || String(e)}` })
   } finally {

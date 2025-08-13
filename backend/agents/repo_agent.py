@@ -5,13 +5,19 @@ import os
 
 from openai import OpenAI
 
-# If you already have a thin RMS helper, keep using it where convenient:
-#   - repo_search(vec, repo, branch, k, prefix) -> List[dict]
-#   - format_citation(idx, path, start_line, end_line, sha) -> str
+# RMS helpers
 from backend.services.rms import repo_search, format_citation
 
-# Your existing embedding util (returns List[float])
+# Embeddings
 from backend.semantics.embeddings import embed_text
+
+# Conversation memory (SQLite-backed)
+from backend.services.conversation import (
+    append_message,
+    get_last_messages,
+    get_session_n,
+    default_n,
+)
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 CHAT_MODEL  = os.getenv("CHAT_MODEL", "gpt-5")
@@ -28,20 +34,17 @@ SYSTEM_PLAN = (
 )
 
 def _embed(text: str) -> List[float]:
-    """Thin shim in case you later swap models."""
     return embed_text(text)
 
 def repo_search_raw(params: Dict[str, Any], dims: int) -> List[Dict[str, Any]]:
     """
-    Thin REST call to the dimensioned repo_search RPC so we can capture raw 4xx error bodies.
-    Picks the RPC name based on vector length: 1024 -> repo_search_1024, else repo_search_1536.
+    Raw call to the dimensioned Supabase RPC, picking 1024 vs 1536 by vector length.
     """
     import json
     from urllib.request import Request, urlopen
     from urllib.error import HTTPError
 
     base = os.environ["SUPABASE_URL"]
-        # prefer explicit override (helps while 1024 column isn’t populated)
     force = os.getenv("RMS_FORCE_DIMS", "").strip()
     if force == "1536":
         fn = "repo_search_1536"
@@ -67,6 +70,8 @@ def repo_search_raw(params: Dict[str, Any], dims: int) -> List[Dict[str, Any]]:
         detail = he.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"HTTP {he.code} {he.reason} at RPC {fn}\n{detail}")
 
+# ---------- Repo planning (produces diffs) ----------
+
 def propose_changes(
     task: str,
     *,
@@ -75,34 +80,58 @@ def propose_changes(
     commit: str = "HEAD",
     k: int = 12,
     path_prefix: Optional[str] = None,
+    session: Optional[str] = None,
+    thread_n: Optional[int] = None,
 ) -> Dict[str, Any]:
     vec = _embed(task)
     hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
 
-    # Build context block with citations + snippet content
+    # RMS context (citable)
     ctx_parts: List[str] = []
     for i, h in enumerate(hits, start=1):
         cite = format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
         ctx_parts.append(f"{cite}\n```\n{h['content']}\n```")
 
+    # Chat history (non-citable)
+    effective_n = None
+    history_text = "(none)"
+    if session:
+        effective_n = int(thread_n) if (thread_n is not None and str(thread_n).isdigit()) else (get_session_n(session) or default_n())
+        msgs = get_last_messages(session, limit=effective_n) or []
+        if msgs:
+            history_text = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
+
     prompt = (
         SYSTEM_PLAN.format(REPO=repo, BRANCH=branch, COMMIT=commit)
         + "\nTASK\n" + task
+        + "\n\nCHAT HISTORY (recent; do not cite):\n" + history_text
         + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")
     )
 
     client = OpenAI()
     resp = client.chat.completions.create(
-        model=CHAT_MODEL,  # gpt-5 (must use default temperature)
+        model=CHAT_MODEL,
         messages=[
             {"role": "system", "content": "Follow RESPONSE SHAPE exactly; produce minimal, safe diffs."},
             {"role": "user", "content": prompt},
         ],
     )
     draft = resp.choices[0].message.content or ""
-    return {"hits": hits, "draft": draft, "prompt": prompt}
 
-# ---------- Repo Q&A helper (bypasses router) ----------
+    if session:
+        try:
+            append_message(session, "user", task)
+            append_message(session, "assistant", draft)
+        except Exception:
+            pass
+
+    return {
+        "hits": hits,
+        "draft": draft,
+        "prompt": prompt,
+        "session": session,
+        "thread_n": effective_n,
+    }
 
 # ---------- Repo Q&A helper (bypasses router) ----------
 
@@ -114,30 +143,27 @@ def answer_about_repo(
     k: int = 8,
     path_prefix: Optional[str] = None,
     commit: Optional[str] = None,
+    session: Optional[str] = None,
+    thread_n: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Answer a natural-language question strictly from repo memory (RMS)."""
 
-    # 1) Embed the question
+    # Embed & dims
     vec = _embed(question)
     if not isinstance(vec, list) or not vec or not isinstance(vec[0], (int, float)):
         raise ValueError("bad embedding vector: expected list[float]")
-
-    # 2) Decide which RPC to call (env override wins)
     dims_env = os.getenv("RMS_FORCE_DIMS", "").strip()
     dims = int(dims_env) if dims_env.isdigit() else len(vec)
     used_rpc = "repo_search_1024" if dims == 1024 else "repo_search_1536"
 
-    # 3) Build params for the newer RPC signature
-    #    public.repo_search_1536(branch_in, match_count, prefix_in, query_embedding, repo_in)
+    # RPC params — keep original names
     params = {
-        "query_embedding": vec,      # <-- was 'query_embedding' but value was undefined before
-        "repo_in": repo,
+        "q": vec,
+        "repo": repo,
         "branch_in": branch,
-        "prefix_in": path_prefix,
-        "match_count": k,
+        "prefix": path_prefix,
+        "match_count": int(k),
     }
 
-    # 4) Call RPC
     try:
         hits = repo_search_raw(params, dims=dims)
     except Exception as e:
@@ -147,21 +173,35 @@ def answer_about_repo(
             "intent": "error",
             "message": f"repo_search RPC failed: {err}",
             "debug": {
-                "params": {**params, "query_embedding": f"[{len(vec)} floats]"},
+                "params": {**params, "q": f"[{len(vec)} floats]"},
                 "dims": dims,
                 "used_rpc": used_rpc,
             },
         }
 
-    # 5) Build LLM context from hits
+    # RMS context (citable)
     ctx_blocks: List[str] = []
     for i, h in enumerate(hits[:8], start=1):
         cite = format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
         ctx_blocks.append(f"{cite}\n```\n{h['content']}\n```")
 
-    system = "Answer concisely. Cite sources as [n] path:start–end@sha. If the answer isn't in the context, say you don't know and list files to fetch."
+    # Chat history (non-citable)
+    effective_n = None
+    history_text = "(none)"
+    if session:
+        effective_n = int(thread_n) if (thread_n is not None and str(thread_n).isdigit()) else (get_session_n(session) or default_n())
+        msgs = get_last_messages(session, limit=effective_n) or []
+        if msgs:
+            history_text = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
+
+    system = (
+        "Answer concisely. Cite sources as [n] path:start–end@sha. "
+        "Only cite repo sources; do not cite chat history. "
+        "If the answer isn't in the repo context, say you don't know and list files to fetch."
+    )
     user = (
         f"QUESTION:\n{question}\n\n"
+        "CHAT HISTORY (recent; do not cite):\n" + history_text + "\n\n"
         "CONTEXT (authoritative; do not invent beyond this):\n"
         + ("\n\n".join(ctx_blocks) if ctx_blocks else "(no context)")
     )
@@ -176,6 +216,13 @@ def answer_about_repo(
     )
     answer = resp.choices[0].message.content or ""
 
+    if session:
+        try:
+            append_message(session, "user", question)
+            append_message(session, "assistant", answer)
+        except Exception:
+            pass
+
     return {
         "hits": hits,
         "answer": answer,
@@ -183,4 +230,6 @@ def answer_about_repo(
         "used_index_dims": dims,
         "used_model": EMBED_MODEL,
         "used_rpc": used_rpc,
+        "session": session,
+        "thread_n": effective_n,
     }
