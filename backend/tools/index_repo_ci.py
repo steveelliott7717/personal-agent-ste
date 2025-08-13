@@ -29,6 +29,7 @@ Env vars (all optional unless marked *required):
 """
 
 from __future__ import annotations
+import math
 
 import os
 import io
@@ -64,6 +65,12 @@ CHUNK_LINES = 120
 CHUNK_OVERLAP = 15
 BATCH_EMBED = 128
 BATCH_INSERT = 256
+# ---- Embedding safety limits (env-overridable) ----
+# These protect each embeddings request from exceeding the model's context window.
+EMBED_PIECE_MAX_TOKENS   = int(os.getenv("EMBED_PIECE_MAX_TOKENS", "6000"))
+EMBED_REQUEST_MAX_TOKENS = int(os.getenv("EMBED_REQUEST_MAX_TOKENS", "7500"))
+EMBED_REQUEST_MAX_CHARS  = int(os.getenv("EMBED_REQUEST_MAX_CHARS", "10000"))
+
 
 # -------------------- HTTP helper --------------------
 
@@ -150,6 +157,11 @@ def _sha1(text: str) -> str:
     import hashlib
     return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
 
+def _rough_tokens(s: str) -> int:
+    # quick + conservative: ~4 chars per token
+    return max(1, math.ceil(len(s) / 4))
+
+
 def chunk_file(text: str) -> List[Tuple[int,int,str]]:
     """
     Returns list of (start_line, end_line, chunk_text), 1-based inclusive lines.
@@ -172,6 +184,10 @@ def chunk_file(text: str) -> List[Tuple[int,int,str]]:
 # -------------------- OpenAI embeddings --------------------
 
 def embed_batch(texts: List[str]) -> List[List[float]]:
+    """
+    Embeds the given texts, splitting into safe sub-batches to avoid
+    per-request context overflows. Also truncates any single piece defensively.
+    """
     if not OPENAI_API_KEY:
         raise RuntimeError("Missing OPENAI_API_KEY")
     try:
@@ -180,9 +196,50 @@ def embed_batch(texts: List[str]) -> List[List[float]]:
         raise RuntimeError(f"openai package not available: {e}")
 
     client = OpenAI(api_key=OPENAI_API_KEY)
-    safe_inputs = [(t if isinstance(t, str) and t.strip() else " ") for t in texts]
-    resp = client.embeddings.create(model=EMBED_MODEL, input=safe_inputs)
-    return [item.embedding for item in resp.data]
+
+    # 1) Per-piece normalization + truncation (defensive cap)
+    per_piece_char_cap = max(100, EMBED_PIECE_MAX_TOKENS * 4)
+    normalized: List[str] = []
+    for t in texts:
+        s = t if isinstance(t, str) and t.strip() else " "
+        if len(s) > per_piece_char_cap:
+            s = s[:per_piece_char_cap]
+        normalized.append(s)
+
+    # 2) Greedy pack into safe sub-batches so each request stays under caps
+    #    Also honor BATCH_EMBED as a hard cap on list length.
+    out_vectors: List[List[float]] = []
+    i = 0
+    N = len(normalized)
+    while i < N:
+        cur: List[str] = []
+        cur_tokens = 0
+        cur_chars = 0
+        while i < N and len(cur) < BATCH_EMBED:
+            s = normalized[i]
+            tok = _rough_tokens(s)
+            # If adding this piece would exceed caps, stop this sub-batch
+            if ((cur_tokens + tok) > EMBED_REQUEST_MAX_TOKENS) or ((cur_chars + len(s)) > EMBED_REQUEST_MAX_CHARS):
+                if not cur:
+                    # Single very large item: send alone (already truncated above)
+                    cur.append(s)
+                    i += 1
+                break
+            cur.append(s)
+            cur_tokens += tok
+            cur_chars += len(s)
+            i += 1
+
+        # 3) Call embeddings for this sub-batch
+        resp = client.embeddings.create(model=EMBED_MODEL, input=cur)
+        out_vectors.extend([item.embedding for item in resp.data])
+
+    # Sanity-check: must return one vector per input
+    if len(out_vectors) != len(texts):
+        raise RuntimeError(f"Embedding count mismatch: {len(out_vectors)} vs {len(texts)}")
+
+    return out_vectors
+
 
 # -------------------- Supabase helpers --------------------
 
