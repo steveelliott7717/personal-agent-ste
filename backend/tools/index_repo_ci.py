@@ -41,7 +41,8 @@ if not OPENAI_API_KEY:
     sys.exit(1)
 
 # Safe per-item token cap (well below 8192)
-PIECE_MAX_TOKENS_DEFAULT = int(os.getenv("PIECE_MAX_TOKENS", "6000"))
+PIECE_MAX_TOKENS_DEFAULT = int(os.getenv("PIECE_MAX_TOKENS", "5200"))
+
 
 # Batch controls; embeddings endpoint doesn’t enforce total tokens across items,
 # but we keep batches reasonable for reliability.
@@ -66,6 +67,34 @@ signal.signal(signal.SIGINT, _handle_sigint)
 # =========================================
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+
+# ---- Token + batching helpers ----
+def rough_token_estimate(s: str) -> int:
+    # Very safe overestimate: ~3.3 chars/token; clamp >= 1
+    return max(1, int(len(s) / 3.3))
+
+def pack_batches(items, *, request_max_tokens: int, batch_size: int, request_max_chars: int | None = None):
+    """
+    Greedy-pack strings into batches so the **sum** of estimated tokens
+    (and optional chars) stays <= request_max_* limits.
+    """
+    batches, cur, cur_tok, cur_chars = [], [], 0, 0
+    for s in items:
+        t = rough_token_estimate(s)
+        c = len(s)
+        # If adding this item would exceed any cap, flush current batch first
+        would_exceed_tokens = (cur_tok + t) > request_max_tokens
+        would_exceed_chars  = request_max_chars is not None and (cur_chars + c) > request_max_chars
+        would_exceed_len    = len(cur) >= batch_size
+        if cur and (would_exceed_tokens or would_exceed_chars or would_exceed_len):
+            batches.append(cur)
+            cur, cur_tok, cur_chars = [], 0, 0
+        # If it's still too big for an empty batch, force it alone; upper layers will handle retry
+        cur.append(s); cur_tok += t; cur_chars += c
+    if cur:
+        batches.append(cur)
+    return batches
+
 
 def _rest(url: str, method: str = "GET", body: Optional[dict] = None, supabase_key: Optional[str] = None) -> dict:
     data = None
@@ -120,8 +149,13 @@ def token_len(s: str) -> int:
             return len(enc.encode(s))
         except Exception:
             pass
-    # rough estimate if tokenizer is missing
-    return max(1, math.ceil(len(s) / 4))
+    # Conservative fallback (≈3 chars/token to avoid underestimation)
+    return max(1, math.ceil(len(s) / 3))
+
+def hard_truncate_piece(s: str, piece_max_tokens: int, absolute_char_cap: int = 12000) -> str:
+    # Cap by both tokens (~chars) and a strict char ceiling (more conservative)
+    per_piece_char_cap = min(piece_max_tokens * 3, absolute_char_cap)
+    return s if len(s) <= per_piece_char_cap else s[:per_piece_char_cap]
 
 def split_long_text(text: str, max_tokens: int) -> Iterable[str]:
     """
@@ -137,7 +171,7 @@ def split_long_text(text: str, max_tokens: int) -> Iterable[str]:
         return
 
     # Fallback path without tiktoken: chunk by ~chars with soft boundaries
-    approx_chars = max_tokens * 4
+    approx_chars = max_tokens * 3  # safer than *4
     if len(text) <= approx_chars:
         yield text
         return
@@ -163,6 +197,7 @@ def split_long_text(text: str, max_tokens: int) -> Iterable[str]:
                 buf, buf_len = [], 0
     if buf:
         yield "".join(buf)
+
 
 def ensure_under_limit(text: str, max_tokens: int) -> List[str]:
     if token_len(text) <= max_tokens:
@@ -405,18 +440,38 @@ def main():
         # and process as a sub-batch to avoid 400s.
         sub_inputs: List[str] = []
         sub_meta: List[Tuple[str,int,int,str,str,str]] = []
-        for k, m in enumerate(meta_slice):
-            text = m[3]
+        for m in meta_slice:
+            base_path, sline, eline, text, fsha, csha = m
+
+            # First, split anything over the configured cap
             if token_len(text) > args.piece_max_tokens:
                 parts = ensure_under_limit(text, args.piece_max_tokens)
-                # Replace one meta row by multiple sub-rows (with synthetic sub-index)
-                base_path, sline, eline, _, fsha, csha = m
-                for sub_idx, part in enumerate(parts):
-                    sub_inputs.append(part)
-                    sub_meta.append((base_path, sline, eline, part, fsha, f"{csha}-{sub_idx}"))
             else:
-                sub_inputs.append(text)
-                sub_meta.append(m)
+                parts = [text]
+
+            # Extra hard guard: if any part still exceeds ~cap (due to estimator),
+            # iteratively shrink by chars until safely under.
+            safe_parts: List[str] = []
+            for part in parts:
+                # quick char clamp to avoid pathological strings
+                part = hard_truncate_piece(part, args.piece_max_tokens)
+                # iterative tighten if needed
+                attempts = 0
+                while token_len(part) > args.piece_max_tokens and attempts < 6:
+                    # shrink by 10% and try again
+                    part = part[: max(1, int(len(part) * 0.9))]
+                    attempts += 1
+                safe_parts.append(part)
+
+            # Append with sub-index if we split
+            if len(safe_parts) == 1:
+                sub_inputs.append(safe_parts[0])
+                sub_meta.append((base_path, sline, eline, safe_parts[0], fsha, csha))
+            else:
+                for sub_idx, sp in enumerate(safe_parts):
+                    sub_inputs.append(sp)
+                    sub_meta.append((base_path, sline, eline, sp, fsha, f"{csha}-{sub_idx}"))
+
 
         try:
             t0 = time.time()
