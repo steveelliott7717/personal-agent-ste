@@ -62,6 +62,8 @@ coverage.xml
 # FRONTEND / NODE
 # =========================
 node_modules/
+# Ignore axios null helper file
+frontend/node_modules/axios/lib/helpers/null.js
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -8,10 +8,11 @@
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
-    "vue": "^3.4.0"
+    "vue": "^3.4.0",
+    "vue-router": "^4.5.1"
   },
   "devDependencies": {
-    "vite": "^5.4.0",
-    "@vitejs/plugin-vue": "^5.0.0"
+    "@vitejs/plugin-vue": "^5.2.4",
+    "vite": "^5.4.0"
   }
 }

@@ -1,0 +1,443 @@
+diff --git a/.gitignore b/.gitignore
+index 89d3c22..16ada0c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -106,3 +106,4 @@ logs/
+ *.log
+ *.out
+ *.err
++"patches/" 
+diff --git a/backend/agents/router_agent.py b/backend/agents/router_agent.py
+index 0d43a96..8e68219 100644
+--- a/backend/agents/router_agent.py
++++ b/backend/agents/router_agent.py
+@@ -7,6 +7,34 @@ import json, logging, time, importlib
+ from backend.services.supabase_service import supabase
+ from backend.reasoner.policy import reason_with_memory
+ from backend.utils.agent_protocol import make_response
++from backend.semantics.store import upsert as emb_upsert
++import time
++
++from backend.services.supabase_service import supabase
++
++def _log_decision(agent_slug: str, user_id: str, query_text: str, was_success: bool,
++                  latency_ms: int = 0, reason: str | None = None,
++                  confidence: float | None = None, error: str | None = None,
++                  extra: dict | None = None) -> None:
++    try:
++        payload = {
++            "agent_slug": agent_slug,
++            "user_id": user_id,
++            "query_text": query_text,
++            "was_success": was_success,
++            "latency_ms": latency_ms,
++            "extra": {
++                "reason": reason,
++                "confidence": confidence,
++                "error": error,
++                **(extra or {})
++            }
++        }
++        payload["extra"] = {k: v for k, v in payload["extra"].items() if v is not None}
++        supabase.table("agent_decisions").insert(payload).execute()
++    except Exception:
++        logger.exception("[router] failed to log agent_decision")
++
+ 
+ 
+ ROUTER_VERSION = "2025-08-09-supabase-registry-v1"
+@@ -127,18 +155,40 @@ def _parse_json(raw: str) -> Optional[Dict[str, Any]]:
+ 
+ def _llm_route(user_text: str, user_id: str) -> Optional[Dict[str, Any]]:
+     try:
+-        raw = reason_with_memory(agent_name="router", query=_build_prompt(user_text, user_id), namespace="routing", k=4)
++        raw = reason_with_memory(
++            agent_name="router",
++            query=_build_prompt(user_text, user_id),
++            namespace="routing",
++            k=4,
++        )
+         obj = _parse_json(raw)
+-        if not obj: return None
++        if not obj:
++            # LLM returned something we couldn't parse
++            _log_decision("router", user_id, user_text, False, reason="parse_failed")
++            return None
++
+         try:
+             obj["confidence"] = float(obj.get("confidence", 0))
+         except Exception:
+             obj["confidence"] = 0.0
++
++        # Soft log that the LLM produced a routing proposal (final success/fail is logged later)
++        _log_decision(
++            "router",
++            user_id,
++            user_text,
++            True,
++            reason="llm_routed",
++            confidence=obj.get("confidence"),
++        )
+         return obj
+-    except Exception:
++
++    except Exception as e:
+         logger.exception("[router] reasoner failed")
++        _log_decision("router", user_id, user_text, False, reason="reasoner_failed", error=str(e))
+         return None
+ 
++
+ # ----- public entry -----
+ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
+     reg = _load_registry()
+@@ -150,32 +200,77 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
+ 
+         # Direct answer
+         if decision and decision.get("agent") == "none":
++            _log_decision("router", user_id, query, True, extra={"reason": decision.get("reason"), "confidence": decision.get("confidence")})
+             return "router", make_response(agent="router", intent="answer",
+-                                           data={"response": decision.get("response"),
+-                                                 "reason": decision.get("reason"),
+-                                                 "confidence": decision.get("confidence")})
++                                        data={"response": decision.get("response"),
++                                                "reason": decision.get("reason"),
++                                                "confidence": decision.get("confidence")})
++
+ 
+         # Clarify (or low confidence)
+         if not decision or decision.get("agent") == "clarify" or decision.get("confidence", 0) < 0.55:
+             opts = decision.get("options") if decision and decision.get("options") else allowed
+             q = decision.get("question") if decision and decision.get("question") else "Which agent should handle this?"
++            _log_decision("router", user_id, query, False, extra={"reason": (decision or {}).get("reason"), "confidence": (decision or {}).get("confidence")})
+             return "router", make_response(agent="router", intent="clarify",
+-                                           data={"question": q, "options": opts,
+-                                                 "suggested_rewrite": decision.get("rewrite") if decision else None})
++                                        data={"question": q, "options": opts,
++                                                "suggested_rewrite": decision.get("rewrite") if decision else None})
++
+ 
+         # Normal route
+         agent = str(decision.get("agent") or "").strip().lower()
+         if agent in reg:
+             text = decision.get("rewrite") or query
+-            return agent, reg[agent]["handle"](text)
++
++            # Log to routing memory for future retrieval
++            try:
++                doc_id = f"{user_id}:{int(time.time())}"  # or a short hash if you prefer
++                emb_upsert(
++                    namespace="routing",
++                    doc_id=doc_id,
++                    text=text,  # the post-rewrite text you routed on
++                    metadata={
++                        "reason": decision.get("reason"),
++                        "confidence": decision.get("confidence"),
++                        "ref": agent,  # keep in metadata too
++                    },
++                    kind="utterance",
++                    ref=agent,
++                )
++            except Exception:
++                logger.exception("[router] failed to log routing utterance")
++
++            # Time the agent call, then log analytics
++            _start = time.time()
++            result = reg[agent]["handle"](text)
++            _latency_ms = int((time.time() - _start) * 1000)
++
++            _log_decision(
++                agent_slug=agent,
++                user_id=user_id,
++                query_text=text,
++                was_success=True,  # flip to False if you detect failures in result handling
++                latency_ms=_latency_ms,
++                extra={"reason": decision.get("reason"), "confidence": decision.get("confidence")}
++            )
++
++            return agent, result
++
++
++    
++    
+ 
+         # If the agent isn’t in registry, clarify (no fallback)
++        _log_decision("router", user_id, query, False, extra={"reason": "agent_not_in_registry"})
+         return "router", make_response(agent="router", intent="clarify",
+-                                       data={"question": "I don’t recognize that agent. Choose one:",
+-                                             "options": allowed})
++                                    data={"question": "I don’t recognize that agent. Choose one:",
++                                            "options": allowed})
++
+ 
+     except Exception:
+         logger.exception("[router] fatal error")
++        _log_decision("router", user_id, query, False, extra={"reason": "fatal_error"})
+         return "router", make_response(agent="router", intent="clarify",
+-                                       data={"question": "Something went wrong. Which agent should handle this?",
+-                                             "options": allowed})
++                                    data={"question": "Something went wrong. Which agent should handle this?",
++                                            "options": allowed})
++
+diff --git a/backend/main.py b/backend/main.py
+index 4219a34..4a72c04 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -14,6 +14,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
+ from backend.agents.router_agent import route_request
+ from backend.utils.nl_formatter import ensure_natural
+ from backend.utils.agent_protocol import AgentResponse
++from dotenv import load_dotenv
++load_dotenv()
++
+ 
+ app = FastAPI(title="Personal Agent API")
+ 
+diff --git a/backend/plugins/bus/publish.py b/backend/plugins/bus/publish.py
+index 1300d54..b7cc840 100644
+--- a/backend/plugins/bus/publish.py
++++ b/backend/plugins/bus/publish.py
+@@ -1,7 +1,7 @@
+ from __future__ import annotations
+ from typing import Any, Dict, List, Optional
+ from importlib import import_module
+-from backend.service.supabase_service import supabase
++from backend.services.supabase_service import supabase
+ 
+ # --- tiny event emitter (idempotent by key) ---
+ def emit(topic: str, payload: dict, source_agent: str, idem_key: Optional[str] = None):
+diff --git a/backend/semantics/retriever.py b/backend/semantics/retriever.py
+index 9bb2867..6533c1a 100644
+--- a/backend/semantics/retriever.py
++++ b/backend/semantics/retriever.py
+@@ -1,30 +1,145 @@
+-from typing import List, Dict, Any
++# backend/semantics/retriever.py
++from __future__ import annotations
++from typing import List, Dict, Any, Iterable
++import json, math
++
+ from backend.services.supabase_service import supabase
+-from backend.semantics.store import embed_text  # embed_text lives in store.py right now
++from backend.semantics.store import embed_text
++
++
++def _to_vec(v: Any) -> List[float]:
++    """
++    Normalize a Supabase 'vector' field into a List[float].
++    Handles: already-a-list, JSON-strings like "[...]", pgvector text like "{...}" or "(...)".
++    Returns [] if unusable.
++    """
++    if v is None:
++        return []
++    # Already a list/tuple
++    if isinstance(v, (list, tuple)):
++        out: List[float] = []
++        for x in v:
++            try:
++                out.append(float(x))
++            except Exception:
++                return []
++        return out
++    # String cases
++    if isinstance(v, str):
++        s = v.strip()
++        # JSON-like
++        if s.startswith("[") and s.endswith("]"):
++            try:
++                arr = json.loads(s)
++                return [float(x) for x in arr]
++            except Exception:
++                return []
++        # pgvector text forms "(...)" or "{...}"
++        if (s.startswith("(") and s.endswith(")")) or (s.startswith("{") and s.endswith("}")):
++            s2 = s[1:-1]  # strip parens/braces
++            try:
++                parts = [p.strip() for p in s2.split(",")]
++                return [float(p) for p in parts if p]
++            except Exception:
++                return []
++    # Unknown
++    return []
++
++
++def _cosine(a: List[float], b: List[float]) -> float:
++    if not a or not b or len(a) != len(b):
++        return 0.0
++    dot = 0.0
++    na = 0.0
++    nb = 0.0
++    for x, y in zip(a, b):
++        dot += x * y
++        na += x * x
++        nb += y * y
++    if na == 0.0 or nb == 0.0:
++        return 0.0
++    return dot / (math.sqrt(na) * math.sqrt(nb))
++
+ 
+ def search(namespace: str, query: str, k: int = 10) -> List[Dict[str, Any]]:
++    """
++    Simple local top-k cosine search over agent_embeddings for a given namespace.
++    Used as a generic fallback elsewhere.
++    """
+     qemb = embed_text(query)
+-    # Try server-side RPC first
+-    try:
+-        resp = supabase.rpc("semantic_search_agent_embeddings", {
+-            "p_namespace": namespace,
+-            "p_query_embedding": qemb,
+-            "p_match_count": k
+-        }).execute()
+-        if hasattr(resp, "data") and resp.data:
+-            return resp.data
+-    except Exception:
+-        pass
+-    # Fallback: client-side cosine
+     rows = supabase.table("agent_embeddings").select("*").eq("namespace", namespace).execute().data or []
+-    import math
+-    def cos(a, b):
+-        dot = sum(x*y for x, y in zip(a, b))
+-        na = math.sqrt(sum(x*x for x in a)) or 1.0
+-        nb = math.sqrt(sum(x*x for x in b)) or 1.0
+-        return dot/(na*nb)
+     for r in rows:
+-        emb = r.get("embedding") or []
+-        r["score"] = cos(qemb, emb) if emb else 0.0
++        emb = _to_vec(r.get("embedding"))
++        r["score"] = _cosine(qemb, emb) if emb else 0.0
+     rows.sort(key=lambda r: r.get("score", 0.0), reverse=True)
+     return rows[:k]
++
++
++def search_router(query: str, k: int = 10) -> List[Dict[str, Any]]:
++    """
++    Blend capability matches (agent_capabilities) with historical routing utterances (namespace='routing').
++
++    final_score = 0.6 * capability_score + 0.4 * utterance_score
++    """
++    qemb = embed_text(query)
++
++    # 1) Capabilities (client-side cosine)
++    caps = supabase.table("agent_capabilities").select("agent_slug, description, embedding").execute().data or []
++    cap_rows: Dict[str, Dict[str, Any]] = {}
++    for c in caps:
++        emb = _to_vec(c.get("embedding"))
++        s = _cosine(qemb, emb) if emb else 0.0
++        cap_rows[c["agent_slug"]] = {
++            "type": "capability",
++            "agent_slug": c["agent_slug"],
++            "text": c.get("description") or "",
++            "score_cap": s,
++            "score_utt": 0.0,
++        }
++
++    # 2) Historical utterances via RPC, fallback to local cosine
++    try:
++        resp = supabase.rpc(
++            "semantic_search_agent_embeddings",
++            {
++                "p_namespace": "routing",
++                "p_query_embedding": qemb,
++                "p_match_count": k,
++            },
++        ).execute()
++        utt = getattr(resp, "data", None) or []
++        # RPC rows: (doc_id, text, score, metadata)
++        for u in utt:
++            ref = None
++            md = u.get("metadata")
++            if isinstance(md, dict):
++                ref = md.get("ref") or md.get("agent") or None
++            if not ref and "ref" in u:
++                ref = u.get("ref")
++            if not ref:
++                continue
++            row = cap_rows.setdefault(
++                ref, {"type": "capability", "agent_slug": ref, "text": "", "score_cap": 0.0, "score_utt": 0.0}
++            )
++            row["score_utt"] = max(row.get("score_utt", 0.0), float(u.get("score") or 0.0))
++    except Exception:
++        rows = supabase.table("agent_embeddings").select("*").eq("namespace", "routing").execute().data or []
++        for r in rows:
++            emb = _to_vec(r.get("embedding"))
++            s = _cosine(qemb, emb) if emb else 0.0
++            ref = r.get("ref") or (r.get("metadata") or {}).get("ref")
++            if not ref:
++                continue
++            row = cap_rows.setdefault(
++                ref, {"type": "capability", "agent_slug": ref, "text": "", "score_cap": 0.0, "score_utt": 0.0}
++            )
++            row["score_utt"] = max(row["score_utt"], s)
++
++    # 3) Blend and rank
++    blended: List[Dict[str, Any]] = []
++    for row in cap_rows.values():
++        row["score"] = 0.6 * float(row.get("score_cap", 0.0)) + 0.4 * float(row.get("score_utt", 0.0))
++        blended.append(row)
++
++    blended.sort(key=lambda r: r.get("score", 0.0), reverse=True)
++    return blended[:k]
+diff --git a/backend/semantics/store.py b/backend/semantics/store.py
+index bce4798..e066cf1 100644
+--- a/backend/semantics/store.py
++++ b/backend/semantics/store.py
+@@ -1,18 +1,49 @@
+-from typing import Any, Dict
+-try:
+-    from backend.semantics.embeddings import embed_text
+-except Exception:
+-    from backend.semantics.embeddings import embed_text
++# backend/semantics/store.py
++from __future__ import annotations
++from typing import Any, Dict, Optional
+ 
++from backend.semantics.embeddings import embed_text
+ from backend.services.supabase_service import supabase
+ 
+-def upsert(namespace: str, doc_id: str, text: str, metadata: Dict[str, Any] | None = None):
++
++def upsert(
++    namespace: str,
++    doc_id: str,
++    text: str,
++    metadata: Optional[Dict[str, Any]] = None,
++    *,
++    kind: Optional[str] = None,
++    ref: Optional[str] = None,
++) -> None:
++    """
++    Upsert a single semantic record into public.agent_embeddings using namespace+doc_id as the conflict key.
++    Embeds the provided text with Cohere (1024-d) under the hood.
++
++    Parameters
++    ----------
++    namespace : logical grouping of vectors (e.g., "routing", "meals", "training")
++    doc_id    : unique id within the namespace (we set a UNIQUE (namespace, doc_id) in SQL)
++    text      : raw text to embed
++    metadata  : optional JSON-serializable dict stored in metadata jsonb
++    kind      : 'utterance' or 'capability' (default is handled server-side if None)
++    ref       : optional pointer (e.g., agent_slug) to help router attribution
++    """
+     emb = embed_text(text)
+-    payload = {
++
++    payload: Dict[str, Any] = {
+         "namespace": namespace,
+         "doc_id": doc_id,
+         "text": text,
+-        "embedding": emb,
+-        "metadata": metadata or {}
++        "embedding": emb,            # vector(1024) on the DB side
++        "metadata": metadata or {},  # jsonb
+     }
+-    supabase.table("agent_embeddings").upsert(payload, on_conflict="namespace,doc_id").execute()
++    if kind is not None:
++        payload["kind"] = kind
++    if ref is not None:
++        payload["ref"] = ref
++
++    # Uses UNIQUE (namespace, doc_id) set in the migration
++    supabase.table("agent_embeddings").upsert(
++        payload,
++        on_conflict="namespace,doc_id",
++    ).execute()

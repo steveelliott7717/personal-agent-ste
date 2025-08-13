@@ -5,57 +5,68 @@ import os
 import json
 from typing import Any, Dict, Tuple
 
-from fastapi import FastAPI, Form, Body, Request, HTTPException
-
-from fastapi.responses import JSONResponse
-from fastapi.responses import RedirectResponse
-
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
 from pathlib import Path
-
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# ✅ package-qualified imports (works when running: uvicorn backend.main:app)
-from backend.agents.router_agent import route_request
-from backend.agents.repo_agent import propose_changes
-
-from backend.utils.nl_formatter import ensure_natural
-from backend.utils.agent_protocol import AgentResponse
 from dotenv import load_dotenv
 load_dotenv()
 
+# ✅ package-qualified imports (works when running: uvicorn backend.main:app)
+from backend.agents.router_agent import route_request
+from backend.agents.repo_agent import propose_changes, answer_about_repo
+from backend.utils.nl_formatter import ensure_natural
+from backend.utils.agent_protocol import AgentResponse
 
 app = FastAPI(title="Personal Agent API")
 
+# -------------------- Health --------------------
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.get("/app/api/repo/health")
+def repo_health():
+    # Simple probe the Repo endpoints are up (and which model is configured)
+    return {"ok": True, "model": os.getenv("CHAT_MODEL", "gpt-5")}
+
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    return RedirectResponse(url="/app/")
+
+# -------------------- Repo endpoints (bypass router) --------------------
+@app.post("/app/api/repo/query")
+def repo_query(payload: Dict[str, Any]):
+    q = (payload or {}).get("task") or (payload or {}).get("question") or (payload or {}).get("q")
+    if not q:
+        raise HTTPException(status_code=400, detail="Missing 'task'/'question'/'q'")
+    repo   = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix")
+    k      = int(payload.get("k", 8))
+    commit = payload.get("commit")
+
+    try:
+        return answer_about_repo(q, repo=repo, branch=branch, k=k, path_prefix=prefix, commit=commit)
+    except Exception as e:
+        # bubble up precise error so we can see the RPC’s complaint
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/app/api/repo/plan")
-def repo_plan(payload: dict):
+def repo_plan(payload: Dict[str, Any]):
     task = payload.get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
-
     repo   = payload.get("repo", "personal-agent-ste")
     branch = payload.get("branch", "main")
     prefix = payload.get("path_prefix")  # e.g., "backend/" or "frontend/"
     k      = int(payload.get("k", 12))
 
-    out = propose_changes(
-        task,
-        repo=repo,
-        branch=branch,
-        commit="HEAD",
-        k=k,
-        path_prefix=prefix
-    )
+    out = propose_changes(task, repo=repo, branch=branch, commit="HEAD", k=k, path_prefix=prefix)
     return out
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-@app.get("/", include_in_schema=False)
-def root_redirect():
-    return RedirectResponse(url="/app/")
 
 # -------------------- Middleware --------------------
 class NaturalLanguageMiddleware(BaseHTTPMiddleware):
@@ -133,12 +144,7 @@ def _normalize(agent: str, raw_result: Any) -> AgentResponse:
         return {"agent": agent, "intent": "list", "data": raw_result}
     return {"agent": agent, "intent": "unknown", "message": str(raw_result)}
 
-# -------------------- Health --------------------
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-# -------------------- Universal request endpoint --------------------
+# -------------------- Universal request endpoint (router path) --------------------
 @app.post("/api/request")
 @app.post("/app/api/request")
 @app.post("/api/route")       # alias to support earlier clients/tests
@@ -187,9 +193,7 @@ async def handle_request(request: Request):
 
     return JSONResponse(natural)
 
-
-
-# -------------------- Static frontend (optional) --------------------
+# -------------------- Static frontend (SPA at /app) --------------------
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 if os.path.isdir(static_dir):
@@ -197,8 +201,6 @@ if os.path.isdir(static_dir):
 
     # Serve the SPA at /app (and optionally /)
     app.mount("/app", StaticFiles(directory=static_dir, html=True), name="static")
-    # If you also want the root to serve the SPA, uncomment the next line:
-    # app.mount("/", StaticFiles(directory=static_dir, html=True), name="static_root")
 
     @app.get("/app", include_in_schema=False, response_class=HTMLResponse)
     @app.get("/app/", include_in_schema=False, response_class=HTMLResponse)
