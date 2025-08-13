@@ -222,7 +222,7 @@ def answer_about_repo(
             "intent": "error",
             "message": f"repo_search RPC failed: {err}",
             "debug": {
-                "params": {"q": f"[{len(vec)} floats]", "repo": repo, "branch_in": branch, "prefix": path_prefix, "match_count": int(k)},
+                "params": {"repo_in": repo, "branch_in": branch, "prefix_in": path_prefix, "query_embedding": vec, "match_count": int(k)},
             },
             "session": session,
             "thread_n": thread_n,
