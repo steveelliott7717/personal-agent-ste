@@ -1,0 +1,6 @@
+{
+    "task": "Remember this token: ABC-123. Just acknowledge and store it in session memory.",
+    "session": "s_dev_001",
+    "path_prefix": null,
+    "k": 8
+}

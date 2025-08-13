@@ -14,7 +14,7 @@ from backend.semantics.embeddings import embed_text
 # Conversation memory (SQLite-backed)
 from backend.services.conversation import (
     append_message,
-    get_last_messages,
+    get_messages,     # <- renamed
     get_session_n,
     default_n,
 )
@@ -97,7 +97,7 @@ def propose_changes(
     history_text = "(none)"
     if session:
         effective_n = int(thread_n) if (thread_n is not None and str(thread_n).isdigit()) else (get_session_n(session) or default_n())
-        msgs = get_last_messages(session, limit=effective_n) or []
+        msgs = get_messages(session, limit=effective_n) or []
         if msgs:
             history_text = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
 
@@ -155,27 +155,19 @@ def answer_about_repo(
     dims = int(dims_env) if dims_env.isdigit() else len(vec)
     used_rpc = "repo_search_1024" if dims == 1024 else "repo_search_1536"
 
-    # RPC params — keep original names
-    params = {
-        "q": vec,
-        "repo": repo,
-        "branch_in": branch,
-        "prefix": path_prefix,
-        "match_count": int(k),
-    }
-
+    # --- Call search via the stable wrapper (handles RPC details) ---
     try:
-        hits = repo_search_raw(params, dims=dims)
+        hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
+        used_rpc = "repo_search"  # for debugging/return
     except Exception as e:
         err = getattr(e, "message", None) or str(e)
         return {
             "agent": "repo",
             "intent": "error",
-            "message": f"repo_search RPC failed: {err}",
+            "message": f"repo_search failed: {err}",
             "debug": {
-                "params": {**params, "q": f"[{len(vec)} floats]"},
                 "dims": dims,
-                "used_rpc": used_rpc,
+                "used_rpc": "repo_search",
             },
         }
 
@@ -190,7 +182,7 @@ def answer_about_repo(
     history_text = "(none)"
     if session:
         effective_n = int(thread_n) if (thread_n is not None and str(thread_n).isdigit()) else (get_session_n(session) or default_n())
-        msgs = get_last_messages(session, limit=effective_n) or []
+        msgs = get_messages(session, limit=effective_n) or []
         if msgs:
             history_text = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
 

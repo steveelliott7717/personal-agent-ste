@@ -24,6 +24,20 @@ from backend.services import conversation as conv
 
 app = FastAPI(title="Personal Agent API")
 
+# backend/main.py
+from fastapi import FastAPI
+import os
+
+app = FastAPI()
+
+@app.get("/app/api/debug/supabase-key")
+async def debug_supabase_key():
+    key = os.getenv("SUPABASE_SERVICE_ROLE")
+    if key:
+        return {"SUPABASE_SERVICE_ROLE_start": key[:8] + "..."}
+    return {"SUPABASE_SERVICE_ROLE": None}
+
+
 # -------------------- Health --------------------
 @app.get("/health")
 def health():
