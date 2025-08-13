@@ -35,7 +35,17 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install openai supabase "postgrest==0.10.6" httpx tiktoken
+          pip install \
+            openai \
+            "supabase==2.4.0" \
+            "postgrest==0.10.6" \
+            httpx \
+            tiktoken
+      - name: Show versions (debug)
+        run: |
+          python -c "import postgrest, supabase; import importlib.metadata as m; \
+          print('postgrest', m.version('postgrest')); print('supabase', m.version('supabase'))"
+
 
       - name: Run indexer
         env:
