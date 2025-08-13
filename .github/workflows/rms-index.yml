@@ -38,13 +38,17 @@ jobs:
           pip install \
             openai \
             "supabase==2.4.0" \
-            "postgrest==0.10.6" \
-            httpx \
+            "postgrest==0.10.8" \
+            "httpx==0.25.2" \
             tiktoken
       - name: Show versions (debug)
         run: |
-          python -c "import postgrest, supabase; import importlib.metadata as m; \
-          print('postgrest', m.version('postgrest')); print('supabase', m.version('supabase'))"
+          python - <<'PY'
+          import importlib.metadata as m
+          for pkg in ["supabase", "postgrest", "httpx"]:
+              try: print(pkg, m.version(pkg))
+              except: print(pkg, "not installed")
+          PY
 
 
       - name: Run indexer
