@@ -1,400 +1,466 @@
-#!/usr/bin/env python3
-"""
-CI indexer for RMS.
-
-- Scans the repo (optionally with a path prefix and skip globs)
-- Chunks files
-- Embeds chunks with OpenAI embeddings
-- Upserts into Supabase `repo_memory` (or a table you choose)
-
-To avoid 409 Conflict on insert, this script:
-1) Pulls existing (path, chunk_sha) for the repo/branch from Supabase (paged)
-2) Skips rows that already exist
-3) De-dupes items inside the current run
-
-Env vars (all optional unless marked *required):
-  * OPENAI_API_KEY
-  * SUPABASE_URL
-  * SUPABASE_SERVICE_ROLE        # or SUPABASE_KEY
-    EMBED_MODEL                  # default "text-embedding-3-small"
-    RMS_REPO                     # default repo name (e.g. "personal-agent-ste")
-    RMS_BRANCH                   # default "main"
-    RMS_PREFIX                   # e.g. "backend/" — only index files under this
-    RMS_SKIP                     # comma-separated globs to ignore
-    RMS_ROOT                     # working directory; default "."
-    RMS_RESET                    # if set (non-empty), delete existing rows first
-    RMS_TABLE                    # default "repo_memory"
-    RMS_ON_CONFLICT              # e.g. "repo,branch,path,chunk_sha" (optional)
-    RMS_COMMIT_SHA               # optional; stored as commit_sha column if provided
-"""
-
+# backend/tools/index_repo_ci.py
 from __future__ import annotations
-import math
 
-import os
-import io
-import sys
-import json
-import hashlib
-from typing import Dict, List, Tuple, Set
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
-from fnmatch import fnmatch
+import os, sys, json, time, math, argparse, pathlib, hashlib, signal, re
+from typing import List, Tuple, Dict, Iterable, Optional
 
-# -------------------- Config --------------------
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE", "").strip() or os.getenv("SUPABASE_KEY", "").strip()
+# -------- OpenAI client (1.x) --------
+try:
+    from openai import OpenAI
+except Exception as e:
+    print("Missing openai>=1.x. pip install --upgrade openai", file=sys.stderr)
+    raise
 
+# -------- Optional tokenizer (tiktoken) --------
+try:
+    import tiktoken
+except Exception:
+    tiktoken = None
+
+# =========================================
+#               CONFIG
+# =========================================
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small").strip()
+EMBED_DIMS  = 3072 if "3-large" in EMBED_MODEL else 1536
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_APIKEY") or os.getenv("OPENAI_KEY")
 
-RMS_REPO = os.getenv("RMS_REPO", "personal-agent-ste").strip()
-RMS_BRANCH = os.getenv("RMS_BRANCH", "main").strip()
-RMS_PREFIX = (os.getenv("RMS_PREFIX") or "").strip()
-RMS_SKIP = [g.strip() for g in (os.getenv("RMS_SKIP") or "backend/static/assets/**,frontend/dist/**,**/node_modules/**").split(",") if g.strip()]
-RMS_ROOT = (os.getenv("RMS_ROOT") or ".").strip()
-RMS_RESET = (os.getenv("RMS_RESET") or "").strip()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE") or os.getenv("SUPABASE_KEY")
 
-RMS_TABLE = os.getenv("RMS_TABLE", "repo_memory").strip()
-RMS_ON_CONFLICT = (os.getenv("RMS_ON_CONFLICT") or "").strip()  # e.g., "repo,branch,path,chunk_sha"
-RMS_COMMIT_SHA = (os.getenv("RMS_COMMIT_SHA") or "").strip()
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("Missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE (or SUPABASE_KEY).", file=sys.stderr)
+    sys.exit(1)
+if not OPENAI_API_KEY:
+    print("Missing OPENAI_API_KEY.", file=sys.stderr)
+    sys.exit(1)
 
-# Chunking params (simple & robust)
-CHUNK_LINES = 120
-CHUNK_OVERLAP = 15
-BATCH_EMBED = 128
-BATCH_INSERT = 256
-# ---- Embedding safety limits (env-overridable) ----
-# These protect each embeddings request from exceeding the model's context window.
-EMBED_PIECE_MAX_TOKENS   = int(os.getenv("EMBED_PIECE_MAX_TOKENS", "6000"))
-EMBED_REQUEST_MAX_TOKENS = int(os.getenv("EMBED_REQUEST_MAX_TOKENS", "7500"))
-EMBED_REQUEST_MAX_CHARS  = int(os.getenv("EMBED_REQUEST_MAX_CHARS", "10000"))
+# Safe per-item token cap (well below 8192)
+PIECE_MAX_TOKENS_DEFAULT = int(os.getenv("PIECE_MAX_TOKENS", "6000"))
 
+# Batch controls; embeddings endpoint doesn’t enforce total tokens across items,
+# but we keep batches reasonable for reliability.
+BATCH_SIZE_DEFAULT       = int(os.getenv("BATCH_SIZE", "8"))
 
-# -------------------- HTTP helper --------------------
-
-def _rest(path: str, *, method: str = "GET", body: bytes | None = None, headers: Dict[str, str] | None = None, raise_for_status: bool = True):
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise RuntimeError("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE/SUPABASE_KEY")
-
-    url = f"{SUPABASE_URL}{path}"
-    base_headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Accept": "application/json",
-    }
-    if body is not None:
-        base_headers["Content-Type"] = "application/json"
-    if headers:
-        base_headers.update(headers)
-
-    req = Request(url, data=body, method=method, headers=base_headers)
-    try:
-        with urlopen(req) as resp:
-            data = resp.read()
-            if not data:
-                return None
-            ctype = resp.headers.get("Content-Type", "")
-            if "application/json" in ctype:
-                try:
-                    return json.loads(data.decode("utf-8"))
-                except Exception:
-                    return data
-            return data
-    except HTTPError as he:
-        detail = ""
-        try:
-            detail = he.read().decode("utf-8", errors="ignore")
-        except Exception:
-            pass
-        if raise_for_status:
-            raise RuntimeError(f"HTTP {he.code} {he.reason} at {url}\n{detail}")
-        return {"_error": he.code, "_detail": detail}
-    except URLError as ue:
-        if raise_for_status:
-            raise RuntimeError(f"URL error at {url}: {ue}")
-        return {"_error": "urlerror", "_detail": str(ue)}
-
-# -------------------- Filesystem scan --------------------
-
-_TEXT_EXTS = {
-    ".py",".js",".ts",".tsx",".jsx",".vue",
-    ".json",".toml",".yml",".yaml",".ini",".cfg",
-    ".md",".txt",".sql",".sh",".bat",
-    ".html",".css",".scss",".rs",".go",".java",".kt",".rb",".php",".c",".h",".cpp",".hpp",
-    ".env",".conf",
+# File filters
+SKIP_DIRS = {".git", ".venv", "node_modules", "dist", "build", ".next", ".turbo", ".cache"}
+DEFAULT_EXTS = {
+    ".py",".ts",".tsx",".js",".jsx",".vue",".sql",".json",".md",".yml",".yaml",
+    ".toml",".ini",".env",".txt",".css",".html",".sh"
 }
 
-def _should_skip(relpath: str) -> bool:
-    if RMS_PREFIX and not relpath.startswith(RMS_PREFIX):
-        return True
-    for g in RMS_SKIP:
-        if fnmatch(relpath, g):
-            return True
-    _, ext = os.path.splitext(relpath)
-    if ext.lower() not in _TEXT_EXTS:
-        # still allow README/license etc without extension
-        base = os.path.basename(relpath).lower()
-        if not (base.startswith("readme") or base in ("license","licence",".gitignore",".dockerignore")):
-            return True
-    return False
+STOP = False
+def _handle_sigint(sig, frame):
+    global STOP
+    STOP = True
+    print("\n[!] Received interrupt — will stop after current batch.", flush=True)
+signal.signal(signal.SIGINT, _handle_sigint)
 
-def _walk_files(root: str) -> List[str]:
-    out = []
-    for dirpath, _, filenames in os.walk(root):
-        for fn in filenames:
-            full = os.path.join(dirpath, fn)
-            rel = os.path.relpath(full, root).replace("\\", "/")
-            if _should_skip(rel):
-                continue
-            out.append(rel)
-    return out
+# =========================================
+#           Helpers: HTTP (Supabase)
+# =========================================
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
-# -------------------- Chunking --------------------
+def _rest(url: str, method: str = "GET", body: Optional[dict] = None, supabase_key: Optional[str] = None) -> dict:
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+    req = Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Prefer", "resolution=merge-duplicates")
+    if supabase_key:
+        req.add_header("apikey", supabase_key)
+        req.add_header("Authorization", f"Bearer {supabase_key}")
+    try:
+        with urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+            return json.loads(raw.decode("utf-8")) if raw else {}
+    except HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8")
+        except Exception:
+            pass
+        raise RuntimeError(f"HTTP {e.code} {e.reason} at {url}\n{detail}") from None
+    except URLError as e:
+        raise RuntimeError(f"Network error contacting {url}: {e}") from None
 
-def _sha1(text: str) -> str:
-    import hashlib
-    return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+# =========================================
+#           Tokenization utilities
+# =========================================
+_enc_cache = None
 
-def _rough_tokens(s: str) -> int:
-    # quick + conservative: ~4 chars per token
+def _get_encoder():
+    global _enc_cache
+    if _enc_cache is not None:
+        return _enc_cache
+    if tiktoken is None:
+        _enc_cache = None
+        return None
+    try:
+        _enc_cache = tiktoken.encoding_for_model(EMBED_MODEL)
+    except Exception:
+        # Fallback to cl100k if model not known
+        try:
+            _enc_cache = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _enc_cache = None
+    return _enc_cache
+
+def token_len(s: str) -> int:
+    enc = _get_encoder()
+    if enc:
+        try:
+            return len(enc.encode(s))
+        except Exception:
+            pass
+    # rough estimate if tokenizer is missing
     return max(1, math.ceil(len(s) / 4))
 
+def split_long_text(text: str, max_tokens: int) -> Iterable[str]:
+    """
+    Split text so each piece <= max_tokens. Uses tiktoken when available; otherwise
+    falls back to size-based windows with paragraph/line boundaries.
+    """
+    enc = _get_encoder()
+    if enc:
+        toks = enc.encode(text)
+        n = len(toks)
+        for i in range(0, n, max_tokens):
+            yield enc.decode(toks[i:i+max_tokens])
+        return
 
-def chunk_file(text: str) -> List[Tuple[int,int,str]]:
-    """
-    Returns list of (start_line, end_line, chunk_text), 1-based inclusive lines.
-    """
+    # Fallback path without tiktoken: chunk by ~chars with soft boundaries
+    approx_chars = max_tokens * 4
+    if len(text) <= approx_chars:
+        yield text
+        return
+
+    # Prefer splitting on double newlines, then lines, else fixed window
+    parts = re.split(r"(\n\s*\n)", text)  # keep separators implicit by re-joining
+    buf = []
+    buf_len = 0
+    for part in parts:
+        chunk = part
+        if buf_len + len(chunk) <= approx_chars:
+            buf.append(chunk); buf_len += len(chunk)
+        else:
+            if buf:
+                yield "".join(buf)
+                buf, buf_len = [chunk], len(chunk)
+            else:
+                # Single part larger than window -> hard slice
+                s = chunk
+                step = approx_chars
+                for i in range(0, len(s), step):
+                    yield s[i:i+step]
+                buf, buf_len = [], 0
+    if buf:
+        yield "".join(buf)
+
+def ensure_under_limit(text: str, max_tokens: int) -> List[str]:
+    if token_len(text) <= max_tokens:
+        return [text]
+    return list(split_long_text(text, max_tokens))
+
+# =========================================
+#           Repo scanning / chunking
+# =========================================
+def sha1_bytes(b: bytes) -> str:
+    import hashlib
+    return hashlib.sha1(b).hexdigest()
+
+def read_file_text(p: pathlib.Path) -> str:
+    try:
+        return p.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def file_iter(root: pathlib.Path, include_ext: set[str], paths: Optional[List[str]]) -> Iterable[pathlib.Path]:
+    base = root.resolve()
+    allow_prefixes = []
+    if paths:
+        for q in paths:
+            allow_prefixes.append((base / q).resolve())
+    for p in base.rglob("*"):
+        if p.is_dir():
+            if p.name in SKIP_DIRS:
+                continue
+        elif p.is_file():
+            if include_ext and p.suffix.lower() not in include_ext:
+                continue
+            if allow_prefixes and not any(str(p).startswith(str(ap)) for ap in allow_prefixes):
+                continue
+            yield p
+
+def logical_chunks_by_lines(text: str, max_lines: int, overlap: int) -> Iterable[str]:
     lines = text.splitlines()
     n = len(lines)
     if n == 0:
-        return []
-    chunks = []
-    start = 0
-    while start < n:
-        end = min(n, start + CHUNK_LINES)
-        chunk = "\n".join(lines[start:end])
-        chunks.append((start+1, end, chunk))
-        if end >= n:
-            break
-        start = max(end - CHUNK_OVERLAP, start + 1)
-    return chunks
-
-# -------------------- OpenAI embeddings --------------------
-
-def embed_batch(texts: List[str]) -> List[List[float]]:
-    """
-    Embeds the given texts, splitting into safe sub-batches to avoid
-    per-request context overflows. Also truncates any single piece defensively.
-    """
-    if not OPENAI_API_KEY:
-        raise RuntimeError("Missing OPENAI_API_KEY")
-    try:
-        from openai import OpenAI
-    except Exception as e:
-        raise RuntimeError(f"openai package not available: {e}")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
-    # 1) Per-piece normalization + truncation (defensive cap)
-    per_piece_char_cap = max(100, EMBED_PIECE_MAX_TOKENS * 4)
-    normalized: List[str] = []
-    for t in texts:
-        s = t if isinstance(t, str) and t.strip() else " "
-        if len(s) > per_piece_char_cap:
-            s = s[:per_piece_char_cap]
-        normalized.append(s)
-
-    # 2) Greedy pack into safe sub-batches so each request stays under caps
-    #    Also honor BATCH_EMBED as a hard cap on list length.
-    out_vectors: List[List[float]] = []
+        return
     i = 0
-    N = len(normalized)
-    while i < N:
-        cur: List[str] = []
-        cur_tokens = 0
-        cur_chars = 0
-        while i < N and len(cur) < BATCH_EMBED:
-            s = normalized[i]
-            tok = _rough_tokens(s)
-            # If adding this piece would exceed caps, stop this sub-batch
-            if ((cur_tokens + tok) > EMBED_REQUEST_MAX_TOKENS) or ((cur_chars + len(s)) > EMBED_REQUEST_MAX_CHARS):
-                if not cur:
-                    # Single very large item: send alone (already truncated above)
-                    cur.append(s)
-                    i += 1
-                break
-            cur.append(s)
-            cur_tokens += tok
-            cur_chars += len(s)
-            i += 1
+    while i < n:
+        j = min(n, i + max_lines)
+        piece = "\n".join(lines[i:j])
+        yield piece
+        if j >= n: break
+        i = j - overlap if overlap > 0 else j
 
-        # 3) Call embeddings for this sub-batch
-        resp = client.embeddings.create(model=EMBED_MODEL, input=cur)
-        out_vectors.extend([item.embedding for item in resp.data])
-
-    # Sanity-check: must return one vector per input
-    if len(out_vectors) != len(texts):
-        raise RuntimeError(f"Embedding count mismatch: {len(out_vectors)} vs {len(texts)}")
-
-    return out_vectors
-
-
-# -------------------- Supabase helpers --------------------
-
-def fetch_existing_keys(repo: str, branch: str) -> Set[Tuple[str, str]]:
-    """
-    Fetch existing (path, chunk_sha) pairs for the repo/branch.
-    Uses proper PostgREST pagination headers to avoid 409.
-    """
-    keys: Set[Tuple[str, str]] = set()
-    page = 0
-    page_size = 5000
-
-    while True:
-        rng_start = page * page_size
-        rng_end = rng_start + page_size - 1
-        res = _rest(
-            f"/rest/v1/{RMS_TABLE}?repo=eq.{repo}&branch=eq.{branch}&select=path,chunk_sha",
-            headers={
-                "Range-Unit": "items",
-                "Range": f"{rng_start}-{rng_end}",
-            },
-            method="GET",
-            body=None,
-            raise_for_status=False,
-        )
-        if isinstance(res, dict) and "_error" in res:
-            # If table is empty or permissions are restrictive, break cleanly
-            break
-        rows = res or []
-        if not rows:
-            break
-        for r in rows:
-            p = (r.get("path") or "").strip()
-            s = (r.get("chunk_sha") or "").strip()
-            if p and s:
-                keys.add((p, s))
-        if len(rows) < page_size:
-            break
-        page += 1
-
-    return keys
-
-def delete_repo_branch(repo: str, branch: str):
-    _rest(
-        f"/rest/v1/{RMS_TABLE}?repo=eq.{repo}&branch=eq.{branch}",
-        method="DELETE",
-        body=None,
-    )
-
-def insert_rows(rows: List[Dict]):
-    """
-    Insert rows in batches; skip upsert unless RMS_ON_CONFLICT is provided AND
-    the DB has a matching unique/primary key. Prefiltering avoids 409s.
-    """
+# =========================================
+#            Supabase upsert
+# =========================================
+def supabase_upsert_rows(rows: list[dict], verbose: bool = False):
     if not rows:
         return
-    q = f"/rest/v1/{RMS_TABLE}"
-    if RMS_ON_CONFLICT:
-        q += f"?on_conflict={RMS_ON_CONFLICT}"
 
-    i = 0
-    while i < len(rows):
-        batch = rows[i:i+BATCH_INSERT]
-        body = json.dumps(batch).encode("utf-8")
-        _rest(q, method="POST", body=body)
-        i += len(batch)
+    url_chunks = f"{SUPABASE_URL}/rest/v1/repo_chunks?on_conflict=chunk_sha"
+    url_memory = f"{SUPABASE_URL}/rest/v1/repo_memory?on_conflict=ux_repo_memory_chunk"
 
-# -------------------- Main flow --------------------
+    def _send(url, payload):
+        try:
+            _rest(url, method="POST", body=payload, supabase_key=SUPABASE_KEY)
+        except RuntimeError as e:
+            if ("on_conflict" in url) and (
+                "does not exist" in str(e).lower()
+                or "42703" in str(e)
+                or "PGRST204" in str(e)
+            ):
+                fallback = url.split("?")[0]
+                if verbose:
+                    print(f"[db] falling back to plain insert: {fallback}")
+                _rest(fallback, method="POST", body=payload, supabase_key=SUPABASE_KEY)
+            else:
+                raise
+
+    # repo_chunks rows
+    chunk_rows = [{
+        "repo": r["repo"],
+        "branch": r["branch"],
+        "path": r["path"],
+        "start_line": r.get("start_line"),
+        "end_line": r.get("end_line"),
+        "content": r["content"],
+        "file_sha": r.get("file_sha"),
+        "chunk_sha": r.get("chunk_sha"),
+        "commit_sha": r.get("commit_sha"),
+        "head_ref": r.get("commit_sha") or "HEAD",
+        "chunk_index": r.get("chunk_index"),
+    } for r in rows]
+
+    # repo_memory rows (embedding table)
+    mem_rows_raw = [{
+        "repo_name": r["repo"],
+        "repo": r["repo"],
+        "branch": r["branch"],
+        "head_ref": r.get("commit_sha") or "HEAD",
+        "path": r["path"],
+        "file_sha": r.get("file_sha"),
+        "chunk_sha": r.get("chunk_sha"),
+        "start_line": r.get("start_line"),
+        "end_line": r.get("end_line"),
+        "content": r["content"],
+        "embedding": r["embedding"],
+        "dims": r["dims"],
+        "commit_sha": r.get("commit_sha"),
+    } for r in rows]
+
+    def _clean(d: dict) -> dict:
+        return {k: v for k, v in d.items() if v is not None}
+
+    mem_rows = [_clean(m) for m in mem_rows_raw]
+
+    _send(url_chunks, chunk_rows)
+    _send(url_memory, mem_rows)
+
+# =========================================
+#            Embedding + pipeline
+# =========================================
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+def embed_batch(inputs: List[str]) -> List[List[float]]:
+    """Embed a batch of strings. Assumes each item is already <= piece token cap."""
+    assert inputs, "embed_batch: empty inputs"
+    # Defensive: drop empty strings (OpenAI rejects some empty inputs)
+    safe = [s if (s and s.strip()) else " " for s in inputs]
+    resp = client.embeddings.create(model=EMBED_MODEL, input=safe)
+    data = resp.data or []
+    return [d.embedding for d in data]
+
+def build_rows_for_file(
+    *,
+    repo: str,
+    branch: str,
+    rel_path: str,
+    file_text: str,
+    file_sha: str,
+    piece_max_tokens: int,
+    max_lines: int,
+    overlap: int,
+) -> List[Tuple[str, int, int, str]]:
+    """
+    Return list of (path, start_line, end_line, content) with per-piece token safety.
+    We first chunk by lines (for code locality), then split any oversized piece by tokens.
+    """
+    rows: List[Tuple[str,int,int,str]] = []
+    # First pass: logical line chunks
+    start_line = 1
+    for piece in logical_chunks_by_lines(file_text, max_lines=max_lines, overlap=overlap):
+        end_line = start_line + piece.count("\n")
+        # Enforce token cap for each piece
+        subpieces = ensure_under_limit(piece, piece_max_tokens)
+        if len(subpieces) == 1:
+            rows.append((rel_path, start_line, end_line, subpieces[0]))
+        else:
+            # If we split, approximate sub-line ranges (best-effort)
+            approx_span = max(1, (end_line - start_line + 1) // len(subpieces))
+            s = start_line
+            for sp in subpieces:
+                e = s + approx_span - 1
+                rows.append((rel_path, s, e, sp))
+                s = e + 1
+        start_line = end_line + 1
+    return rows
 
 def main():
-    print(f"[indexer] Indexing with repo={RMS_REPO} branch={RMS_BRANCH} prefix='{RMS_PREFIX}'", flush=True)
-    root = RMS_ROOT or "."
-    print(f"[indexer] Root={root}", flush=True)
+    ap = argparse.ArgumentParser(description="Index repo into Supabase with embeddings (token-safe).")
+    ap.add_argument("--repo-name", required=True)
+    ap.add_argument("--branch", required=True)
+    ap.add_argument("--root", required=True)
+    ap.add_argument("--paths", default="", help='Quoted space-separated list, e.g. "backend frontend/src file.js"')
+    ap.add_argument("--include-ext", default=",".join(sorted(DEFAULT_EXTS)))
+    ap.add_argument("--max-lines", type=int, default=120)
+    ap.add_argument("--overlap", type=int, default=15)
+    ap.add_argument("--piece-max-tokens", type=int, default=PIECE_MAX_TOKENS_DEFAULT)
+    ap.add_argument("--batch-size", type=int, default=BATCH_SIZE_DEFAULT)
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args()
 
-    all_files = _walk_files(root)
-    print(f"[indexer] Indexing {len(all_files)} files…", flush=True)
+    repo = args.repo_name
+    branch = args.branch
+    root = pathlib.Path(args.root).resolve()
+    include_ext = {e.strip().lower() for e in args.include_ext.split(",") if e.strip()}
+    paths = [p for p in args.paths.split() if p.strip()] if args.paths else None
 
-    if RMS_RESET:
-        print("[indexer] Clearing existing rows…", flush=True)
-        delete_repo_branch(RMS_REPO, RMS_BRANCH)
+    files = list(file_iter(root, include_ext, paths))
+    if args.verbose:
+        print(f"[indexer] Scanning {len(files)} files...")
 
-    # Pull existing keys to avoid 409s
-    existing = fetch_existing_keys(RMS_REPO, RMS_BRANCH)
-    print(f"[indexer] Found {len(existing)} existing (path, chunk_sha) rows in DB", flush=True)
+    all_chunks: List[Tuple[str,int,int,str,str,str]] = []  # (path, start, end, content, file_sha, chunk_sha)
 
-    # Prepare chunks to embed
-    to_embed_texts: List[str] = []
-    to_embed_meta: List[Tuple[str, int, int, str]] = []  # (path, start, end, chunk_sha)
-    seen_in_run: Set[Tuple[str, str]] = set()
+    for p in files:
+        rel = str(p.relative_to(root)).replace("\\", "/")
+        text = read_file_text(p)
+        file_sha = sha1_bytes(text.encode("utf-8"))
+        line_chunks = build_rows_for_file(
+            repo=repo,
+            branch=branch,
+            rel_path=rel,
+            file_text=text,
+            file_sha=file_sha,
+            piece_max_tokens=args.piece_max_tokens,
+            max_lines=args.max_lines,
+            overlap=args.overlap,
+        )
+        count_before = len(line_chunks)
+        # Pack and compute chunk_sha
+        idx = 0
+        for (path_rel, start, end, content) in line_chunks:
+            chunk_id = f"{repo}:{branch}:{path_rel}:{start}-{end}:{idx}"
+            chunk_sha = sha1_bytes(chunk_id.encode("utf-8"))
+            all_chunks.append((path_rel, start, end, content, file_sha, chunk_sha))
+            idx += 1
 
-    for rel in all_files:
-        full = os.path.join(root, rel)
-        try:
-            with io.open(full, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read()
-        except Exception as e:
-            print(f"[indexer] SKIP {rel} (read error: {e})", flush=True)
-            continue
+        print(f"[indexer] OK {rel} ({count_before} chunks)")
 
-        chunks = chunk_file(text)
-        if not chunks:
-            continue
+        if STOP:
+            break
 
-        print(f"[indexer] OK {rel} ({len(chunks)} chunks)", flush=True)
-
-        for (start, end, chunk_text) in chunks:
-            csha = _sha1(chunk_text)
-            key = (rel, csha)
-            if key in existing:
-                continue  # already present in DB — skip
-            if key in seen_in_run:
-                continue  # avoid duplicates in the same CI run
-            seen_in_run.add(key)
-            to_embed_texts.append(chunk_text)
-            to_embed_meta.append((rel, start, end, csha))
-
-    if not to_embed_texts:
-        print("[indexer] Nothing new to index (all chunks already exist).", flush=True)
+    if not all_chunks:
+        print("[indexer] No chunks to embed. Done.")
         return
 
-    # Embed in batches
-    vectors: List[List[float]] = []
-    idx = 0
-    while idx < len(to_embed_texts):
-        batch = to_embed_texts[idx:idx+BATCH_EMBED]
-        vecs = embed_batch(batch)
-        vectors.extend(vecs)
-        idx += len(batch)
+    if args.dry_run:
+        print(f"[indexer] DRY RUN — would embed {len(all_chunks)} chunks across {len(set([c[0] for c in all_chunks]))} files.")
+        return
 
-    if len(vectors) != len(to_embed_meta):
-        raise RuntimeError(f"Embedding count mismatch: {len(vectors)} vs {len(to_embed_meta)}")
+    # Embed & Upsert in batches
+    total = len(all_chunks)
+    batch_size = max(1, int(args.batch_size))
+    i = 0
+    out_rows: List[dict] = []
 
-    # Build rows
-    rows: List[Dict] = []
-    for (meta, vec) in zip(to_embed_meta, vectors):
-        path, start, end, csha = meta
-        rows.append({
-            "repo": RMS_REPO,
-            "branch": RMS_BRANCH,
-            "path": path,
-            "start_line": int(start),
-            "end_line": int(end),
-            "content": None,            # store only embeddings & metadata; content optional
-            "embedding": vec,
-            "chunk_sha": csha,
-            "commit_sha": RMS_COMMIT_SHA or None,
-        })
+    while i < total and not STOP:
+        j = min(total, i + batch_size)
+        meta_slice = all_chunks[i:j]
+        inputs = [m[3] for m in meta_slice]
 
-    # Insert rows (no 409; we prefiltered)
-    insert_rows(rows)
-    print(f"[indexer] Inserted {len(rows)} new rows.", flush=True)
+        # Final safety: if any input accidentally exceeds cap, split it locally
+        # and process as a sub-batch to avoid 400s.
+        sub_inputs: List[str] = []
+        sub_meta: List[Tuple[str,int,int,str,str,str]] = []
+        for k, m in enumerate(meta_slice):
+            text = m[3]
+            if token_len(text) > args.piece_max_tokens:
+                parts = ensure_under_limit(text, args.piece_max_tokens)
+                # Replace one meta row by multiple sub-rows (with synthetic sub-index)
+                base_path, sline, eline, _, fsha, csha = m
+                for sub_idx, part in enumerate(parts):
+                    sub_inputs.append(part)
+                    sub_meta.append((base_path, sline, eline, part, fsha, f"{csha}-{sub_idx}"))
+            else:
+                sub_inputs.append(text)
+                sub_meta.append(m)
+
+        try:
+            t0 = time.time()
+            vecs = embed_batch(sub_inputs)
+            t1 = time.time()
+        except Exception as e:
+            print(f"[embed {i//batch_size+1}] ERROR: {e}", flush=True)
+            # Skip bad batch but continue; next runs will still try others
+            i = j
+            continue
+
+        if len(vecs) != len(sub_meta):
+            print(f"[embed {i//batch_size+1}] ERROR: returned {len(vecs)} embeddings for {len(sub_meta)} inputs", flush=True)
+            i = j
+            continue
+
+        rows: List[dict] = []
+        for k, emb in enumerate(vecs):
+            rel, start, end, content, file_sha, chunk_sha = sub_meta[k]
+            rows.append({
+                "repo": repo, "branch": branch, "path": rel,
+                "start_line": start, "end_line": end,
+                "content": content, "file_sha": file_sha, "chunk_sha": chunk_sha,
+                "commit_sha": os.getenv("GIT_COMMIT", "HEAD"),
+                "embedding": emb, "dims": EMBED_DIMS,
+                "chunk_index": i + k,
+            })
+
+        try:
+            sup_t0 = time.time()
+            supabase_upsert_rows(rows, verbose=args.verbose)
+            sup_t1 = time.time()
+        except Exception as e:
+            print(f"[embed {i//batch_size+1}] upsert ERROR: {e}", flush=True)
+            i = j
+            continue
+
+        out_rows.extend(rows)
+        rate = len(sub_inputs) / max(0.001, (t1 - t0))
+        print(f"[embed {i//batch_size+1}] ok {len(sub_inputs)} pcs in {(t1 - t0):.2f}s (rate {rate:.2f} pcs/s), supabase {(sup_t1 - sup_t0):.2f}s", flush=True)
+        i = j
+
+    print(f"Indexed {len(out_rows)} chunks across {len(set([r['path'] for r in out_rows]))} files @ {repo}@{branch}")
+    print("Done.")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"Traceback (most recent call last):\n{e}", file=sys.stderr)
-        raise
+    main()
