@@ -49,19 +49,141 @@ def root_redirect():
     return RedirectResponse(url="/app/")
 
 # -------------------- Minimal sanitizer/gate for patch responses --------------------
+# --- begin sanitizer/gate helpers (replace your existing block) ---
+import re
+
 _CODEBLOCK_RE = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 _CBLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
+_HUNK_HDR_RE = re.compile(r"^@@ -(\d+),(\d+) \+(\d+),(\d+) @@")
+
+def _auto_prefix_newfile_hunks_and_fix_headers(text: str) -> str:
+    """
+    Make malformed *new-file* hunks git-apply-ready:
+      - In sections with 'new file mode' and '--- /dev/null', ensure every content line
+        inside each '@@ ... @@' hunk starts with '+' (unless it already starts with '+', '-', ' ', or '\\').
+      - Re-write the hunk header '+<start>,<len>' to match the number of '+' lines after fixing.
+        (For new files, '+<start>' should typically be 1.)
+    Leaves modified/deleted file sections untouched.
+    """
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    out: list[str] = []
+
+    in_section = False
+    new_file_section = False
+    in_hunk = False
+
+    # Track current hunk state so we can fix the header's +len after we finish the hunk
+    pending_hunk_header_index: int | None = None
+    plus_start: int = 1
+    plus_len: int = 0
+
+    def is_section_header(l: str) -> bool:
+        return (
+            l.startswith("diff --git ") or
+            l.startswith("index ") or
+            l.startswith("--- ") or
+            l.startswith("+++ ") or
+            l.startswith("new file mode ") or
+            l.startswith("deleted file mode ") or
+            l.startswith("rename from ") or
+            l.startswith("rename to ")
+        )
+
+    def flush_hunk_header_if_needed():
+        nonlocal pending_hunk_header_index, plus_start, plus_len
+        if pending_hunk_header_index is None:
+            return
+        # Only adjust for new-file sections
+        if new_file_section:
+            hdr = out[pending_hunk_header_index]
+            m = _HUNK_HDR_RE.match(hdr)
+            if m:
+                # old_minus_start, old_minus_len = int(m.group(1)), int(m.group(2))
+                _, _ = int(m.group(1)), int(m.group(2))
+                old_plus_start, _old_plus_len = int(m.group(3)), int(m.group(4))
+                # Keep start if present, default to 1, set len to actual '+ line' count
+                new_plus_start = old_plus_start if old_plus_start > 0 else max(1, plus_start)
+                new_plus_len = max(0, plus_len)
+                out[pending_hunk_header_index] = f"@@ -0,0 +{new_plus_start},{new_plus_len} @@"
+        # Reset hunk counters
+        pending_hunk_header_index = None
+        plus_start = 1
+        plus_len = 0
+
+    for l in lines:
+        # Start of a new diff section
+        if l.startswith("diff --git "):
+            # close any open hunk
+            flush_hunk_header_if_needed()
+            in_section = True
+            new_file_section = False
+            in_hunk = False
+            out.append(l)
+            continue
+
+        if not in_section:
+            # Preamble/noise before first section
+            out.append(l)
+            continue
+
+        # Identify new-file sections
+        if l.startswith("new file mode "):
+            new_file_section = True
+
+        # Hunk header
+        if l.startswith("@@ "):
+            # close previous hunk before starting a new one
+            flush_hunk_header_if_needed()
+            in_hunk = True
+            pending_hunk_header_index = len(out)
+            out.append(l)  # temporary; may be rewritten later
+            # initialize counters for this hunk
+            plus_start = 1
+            plus_len = 0
+            continue
+
+        # Any diff/file header resets hunk state
+        if is_section_header(l):
+            flush_hunk_header_if_needed()
+            in_hunk = False
+            out.append(l)
+            continue
+
+        # Inside a hunk of a NEW FILE: ensure '+' prefix on content lines
+        if in_hunk and new_file_section:
+            if not (l.startswith("+") or l.startswith("-") or l.startswith(" ") or l.startswith("\\")):
+                l = "+" + l
+            if l.startswith("+"):
+                plus_len += 1
+            out.append(l)
+            continue
+
+        # Other lines
+        out.append(l)
+
+    # End of file: close any open hunk
+    flush_hunk_header_if_needed()
+
+    return "\n".join(out)
 
 def _sanitize_patch_text(text: str) -> str:
     if not text:
         return ""
+    # 1) Strip code fences (keep inner), normalize to LF
     m = _CODEBLOCK_RE.search(text)
     s = (m.group("body") if m else text)
     s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # 2) Remove C-style comment blocks and standalone ellipsis lines
     s = _CBLOCK_RE.sub("", s)
     s = _ELLIPSIS_LINE_RE.sub("", s)
-    return s.strip()
+    s = s.strip()
+    # 3) Auto-fix new-file hunks and headers
+    s = _auto_prefix_newfile_hunks_and_fix_headers(s)
+    return s
 
 def _looks_like_unified_diff(text: str) -> bool:
     if not text:
@@ -69,6 +191,8 @@ def _looks_like_unified_diff(text: str) -> bool:
     if text.startswith("diff --git"):
         return True
     return text.startswith("--- ") and ("\n+++ " in text)
+# --- end sanitizer/gate helpers ---
+
 
 # -------------------- Repo endpoints (bypass router) --------------------
 @app.post("/app/api/repo/query")
