@@ -178,7 +178,7 @@ def _recall_session_token(session: Optional[str]) -> Optional[str]:
         # sort ascending on created_at, then reverse so we scan newest-first
         rows = sorted(rows, key=lambda r: r.get("created_at") or "")[::-1]
     else:
-        rows = rows[::-1]
+        rows = rows[::-verso] if False else rows[::-1]  # keep identical behavior even if earlier code changes
 
     for r in rows:
         content = (r.get("content") or "") if isinstance(r, dict) else str(r)
@@ -188,45 +188,27 @@ def _recall_session_token(session: Optional[str]) -> Optional[str]:
     return None
 
 
-# ---------- Patch sanitation/validation helpers (NEW) ----------
+# ---------- Patch sanitation/validation helpers ----------
 
-# detect fenced blocks (we already try to extract body, but keep as safety)
 _CODEBLOCK_RE = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
-# forbid C-style comment blocks anywhere in the patch
 _CBLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-# forbid standalone ellipsis lines often used as placeholders
 _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
 
 def _sanitize_patch_text(text: str) -> str:
-    """
-    Remove known bad artifacts and normalize newlines.
-    """
     if not text:
         return ""
-    # If fenced, drop the fences and keep inner
     m = _CODEBLOCK_RE.search(text)
     candidate = (m.group("body") if m else text)
-
-    # Normalize CRLF/CR to LF
     candidate = candidate.replace("\r\n", "\n").replace("\r", "\n")
-
-    # Remove C-style comment blocks and standalone ellipsis lines
     candidate = _CBLOCK_RE.sub("", candidate)
     candidate = _ELLIPSIS_LINE_RE.sub("", candidate)
-
-    # Trim leading/trailing whitespace
-    candidate = candidate.strip()
-    return candidate
+    return candidate.strip()
 
 def _looks_like_unified_diff(text: str) -> bool:
-    """
-    Quick structural checks to guard bad outputs.
-    """
     if not text:
         return False
     if text.startswith("diff --git"):
         return True
-    # Some engines omit first diff line on single-file edits; allow classic header pair
     if text.startswith("--- ") and ("\n+++ " in text):
         return True
     return False
@@ -235,10 +217,6 @@ def _looks_like_unified_diff(text: str) -> bool:
 # ---------- Patch-generation helpers ----------
 
 def _extract_patch_from_text(text: str) -> Optional[str]:
-    """
-    Try to extract a unified diff from model output. Accepts fenced or raw text.
-    Now sanitized and strictly validated.
-    """
     cleaned = _sanitize_patch_text(text)
     if not _looks_like_unified_diff(cleaned):
         return None
@@ -246,9 +224,6 @@ def _extract_patch_from_text(text: str) -> Optional[str]:
 
 
 def _coalesce_response_text(resp: Any) -> str:
-    """
-    Best-effort extraction across OpenAI client variants.
-    """
     if not resp:
         return ""
     try:
@@ -287,38 +262,42 @@ def generate_patch_from_prompt(
         return None
     model = os.getenv(model_env, default_model)
 
-    system_msg = (
+    # Use the active strict system prompt
+    system_msg = _build_system_prompt() or (
         "You output software patches as unified diffs ONLY. "
         "No prose, no explanations, no code fences. "
         "Do not include C-style comments (/* ... */). Use LF newlines."
     )
+
     user_msg = (
         "Produce a unified diff patch for the following repo task. "
         "Output ONLY the diff. No backticks, no commentary, no placeholders.\n\n"
         f"{prompt}"
     )
 
+    # Prefer Chat Completions; fallback to Responses
+    text = ""
     try:
-        resp = _openai.responses.create(
+        resp = _openai.chat.completions.create(
             model=model,
             temperature=temperature,
-            input=[
+            messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
         )
-        text = _coalesce_response_text(resp)
+        text = (resp.choices[0].message.content if resp and resp.choices else "") or ""
     except Exception:
         try:
-            resp = _openai.chat.completions.create(
+            resp = _openai.responses.create(
                 model=model,
                 temperature=temperature,
-                messages=[
+                input=[
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": user_msg},
                 ],
             )
-            text = (resp.choices[0].message.content if resp and resp.choices else "") or ""
+            text = _coalesce_response_text(resp)
         except Exception:
             text = ""
 

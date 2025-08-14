@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 from typing import Any, Dict, Tuple, Union
 
 from fastapi import FastAPI, Request, HTTPException, Response
@@ -10,25 +11,22 @@ from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, File
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from starlette.middleware.base import BaseHTTPMiddleware
-from backend.utils.patch_linter import lint_patch, make_followup_prompt
 from dotenv import load_dotenv
-load_dotenv()
+
+# Linter (kept) — optional guardrails in JSON & warning headers
+from backend.utils.patch_linter import lint_patch, make_followup_prompt
 
 # ✅ package-qualified imports (works when running: uvicorn backend.main:app)
 from backend.agents.router_agent import route_request
 from backend.agents.repo_agent import propose_changes, answer_about_repo, generate_patch_from_prompt
+
 from backend.utils.nl_formatter import ensure_natural
 from backend.utils.agent_protocol import AgentResponse
 from backend.services import conversation as conv
 
+load_dotenv()
 
 app = FastAPI(title="Personal Agent API")
-
-# backend/main.py
-from fastapi import FastAPI
-import os
-
-app = FastAPI()
 
 @app.get("/app/api/debug/supabase-key")
 async def debug_supabase_key():
@@ -37,7 +35,6 @@ async def debug_supabase_key():
         return {"SUPABASE_SERVICE_ROLE_start": key[:8] + "..."}
     return {"SUPABASE_SERVICE_ROLE": None}
 
-
 # -------------------- Health --------------------
 @app.get("/health")
 def health():
@@ -45,12 +42,33 @@ def health():
 
 @app.get("/app/api/repo/health")
 def repo_health():
-    # Simple probe the Repo endpoints are up (and which model is configured)
     return {"ok": True, "model": os.getenv("CHAT_MODEL", "gpt-5")}
 
 @app.get("/", include_in_schema=False)
 def root_redirect():
     return RedirectResponse(url="/app/")
+
+# -------------------- Minimal sanitizer/gate for patch responses --------------------
+_CODEBLOCK_RE = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
+_CBLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
+
+def _sanitize_patch_text(text: str) -> str:
+    if not text:
+        return ""
+    m = _CODEBLOCK_RE.search(text)
+    s = (m.group("body") if m else text)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = _CBLOCK_RE.sub("", s)
+    s = _ELLIPSIS_LINE_RE.sub("", s)
+    return s.strip()
+
+def _looks_like_unified_diff(text: str) -> bool:
+    if not text:
+        return False
+    if text.startswith("diff --git"):
+        return True
+    return text.startswith("--- ") and ("\n+++ " in text)
 
 # -------------------- Repo endpoints (bypass router) --------------------
 @app.post("/app/api/repo/query")
@@ -77,7 +95,6 @@ def repo_query(payload: Dict[str, Any]):
             session=session,
             thread_n=thread_n,
         )
-        # If the repo agent produced a string, or we can infer it's a repo-agent dict, return text/plain.
         if isinstance(out, str):
             return PlainTextResponse(out)
         if isinstance(out, dict) and out.get("agent") == "repo":
@@ -85,9 +102,7 @@ def repo_query(payload: Dict[str, Any]):
             return PlainTextResponse(str(text))
         return out
     except Exception as e:
-        # bubble up precise error so we can see the RPC’s complaint
         raise HTTPException(status_code=400, detail=str(e))
-
 
 
 @app.post("/app/api/repo/plan", response_model=None)
@@ -130,15 +145,27 @@ async def repo_plan(request: Request) -> Response:
     accept = (request.headers.get("accept") or "").lower()
     wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
 
-    # Produce (or fetch) patch text when needed for linting (we lint even if returning JSON)
-    patch_text = (out.get("patch") if isinstance(out, dict) else None) or ""
-    if not patch_text:
+    # Build/obtain patch text (for both JSON & patch modes)
+    raw_patch = (out.get("patch") if isinstance(out, dict) else None) or ""
+    if not raw_patch:
         # generate from prompt when available
-        patch_text = generate_patch_from_prompt(out.get("prompt", "")) or ""
+        raw_patch = generate_patch_from_prompt(out.get("prompt", "")) or ""
 
-    # Run linter against produced patch (if any)
+    # Sanitize/gate before linting/return
+    sanitized = _sanitize_patch_text(raw_patch)
+    is_sanitized = (sanitized != (raw_patch or "").strip())
+    if wants_patch:
+        # For patch responses, enforce structure up front
+        if not _looks_like_unified_diff(sanitized):
+            return PlainTextResponse(
+                "No patch generated or invalid diff. Re-run in JSON mode and fix the plan.",
+                status_code=400,
+                media_type="text/plain",
+            )
+
+    # Lint the (sanitized) patch
     lint = lint_patch(
-        patch=patch_text,
+        patch=sanitized,
         path_prefix=prefix,
         required=required,
         forbidden=forbidden,
@@ -155,21 +182,23 @@ async def repo_plan(request: Request) -> Response:
             enriched["followup_prompt"] = followup
         return JSONResponse(enriched)
 
-    # Patch mode: return plain text with warning headers (if any)
-    if not patch_text:
+    # Patch mode: return plain text with headers
+    if not sanitized:
         return PlainTextResponse(
             "No patch generated for this task. Use JSON mode to inspect the plan/prompt.",
             status_code=400,
             media_type="text/plain",
         )
 
-    headers = {}
+    headers: Dict[str, str] = {}
     if not lint["ok"]:
-        # Keep headers short; first issue as summary + count
         summary = str(lint["summary"])[:180]
         headers["X-RMS-Warnings"] = f"{summary} (+{max(0, len(lint['issues'])-1)} more)"
+    if is_sanitized:
+        headers["X-RMS-Sanitized"] = "true"
+    headers["Content-Disposition"] = 'attachment; filename="repo_plan.patch"'
 
-    return PlainTextResponse(content=patch_text, media_type="text/x-patch", headers=headers)
+    return PlainTextResponse(content=sanitized, media_type="text/x-patch", headers=headers)
 
 @app.post("/app/api/repo/memory/reset")
 def repo_memory_reset(payload: Dict[str, Any]):
@@ -308,7 +337,6 @@ async def handle_request(request: Request):
 
     # If the routed agent is the repo agent, return text/plain so the client gets raw text.
     if isinstance(resp, dict) and resp.get("agent") == "repo":
-        # Pull a plausible textual field; if unavailable, fall back to the whole normalized/pretty object.
         text = resp.get("answer") or resp.get("message") or resp.get("data") or json.dumps(resp, ensure_ascii=False)
         return PlainTextResponse(str(text))
 
@@ -331,7 +359,6 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
     INDEX_FILE = Path(static_dir) / "index.html"
 
-    # Serve the SPA at /app (and optionally /)
     app.mount("/app", StaticFiles(directory=static_dir, html=True), name="static")
 
     @app.get("/app", include_in_schema=False, response_class=HTMLResponse)
@@ -341,7 +368,6 @@ if os.path.isdir(static_dir):
             return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
         raise HTTPException(status_code=404, detail="Frontend build not found.")
 
-    # SPA fallback: return index.html for any /app/* path that isn't a real file
     @app.get("/app/{path:path}", include_in_schema=False, response_class=HTMLResponse)
     def spa_fallback(path: str):
         candidate = Path(static_dir) / path
