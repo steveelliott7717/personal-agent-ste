@@ -1,0 +1,8 @@
+{
+  "repo": "personal-agent-ste",
+  "branch": "main",
+  "path_prefix": "<PATH_PREFIX e.g., backend/ or frontend/src/>",
+  "k": 12,
+  "session": "<short-session-id e.g., s-task-<slug>>",
+  "task": "Role: RMS GPT (planner+implementer)\nRepo: personal-agent-ste\nBranch: main\nPath prefix: <PATH_PREFIX>\n\nObjective:\n<ONE-PARAGRAPH GOAL>\n\nRequirements:\n- <bullet 1>\n- <bullet 2>\n- <keep changes minimal and localized>\n\nAcceptance criteria:\n- <bullet 1 testable>\n- <bullet 2 testable>\n\nDeliverables:\n- Unified diffs for all changed files under <PATH_PREFIX>\n- Updated docs if applicable\n\nVerification steps (to include in PR description):\n1) <curl or script step 1>\n2) <step 2>\n\nNotes:\n- Keep the diff minimal; do not introduce new infra unless required.\n- Preserve existing route shapes and public endpoints where noted."
+}

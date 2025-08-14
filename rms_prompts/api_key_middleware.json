@@ -1,0 +1,45 @@
+{
+    "repo": "personal-agent-ste",
+    "branch": "main",
+    "path_prefix": "backend/",
+    "task": "Add minimal API-key auth middleware for FastAPI under backend/app/api/*, excluding /health. Centralize in one place, wire it into app startup, and add small docs.",
+    "rationale": "Protect hosted backend endpoints with a lightweight header check without disrupting local/dev flows.",
+    "constraints": [
+        "Header name: X-API-Key",
+        "Env var: API_KEY",
+        "If API_KEY is unset or empty, disable auth (allow all) to preserve local/dev UX",
+        "Exclude /health from auth",
+        "Apply to all existing and future routes under backend/app/api/* without needing per-route edits",
+        "Return 401 JSON {\"error\":\"Unauthorized\"} on missing/invalid key",
+        "No breaking changes to existing env/CI unless necessary",
+        "Keep code small and self-contained; prefer a single module + one import/wire"
+    ],
+    "deliverables": [
+        "A new module e.g. backend/app/security/api_key.py that provides a Starlette/FastAPI middleware or dependency implementing the X-API-Key check with env-based toggle",
+        "Wire-up in the main FastAPI app factory/bootstrap so it covers /app/api/* but not /health (preserve the existing /health handler, public)",
+        "Minimal README snippet (backend/README.md or repo README section) explaining header and env var; include sample curl commands for 200/401",
+        "Optional: example .env.sample entry (API_KEY=changeme) if the repo uses env samples"
+    ],
+    "acceptance_criteria": [
+        "GET /health returns 200 without X-API-Key regardless of env",
+        "Any request to a route under /app/api/* returns 401 when API_KEY is set and the header is missing or wrong",
+        "Same routes return 200/normal behavior when header matches API_KEY",
+        "When API_KEY is unset/empty, all routes behave as before (no auth enforced)",
+        "Middleware code is centralized and covered by a small unit test or clear manual verification steps",
+        "No route-by-route edits required beyond central wiring"
+    ],
+    "verification_steps": [
+        "With API_KEY unset: curl -sS {HOST}/health -> 200; curl -sS {HOST}/app/api/repo/health -> 200 (or existing behavior)",
+        "Set API_KEY to 'testkey' and redeploy",
+        "curl -sS {HOST}/health -> 200 (no header)",
+        "curl -i -sS {HOST}/app/api/repo/health -> 401 without header",
+        "curl -i -sS -H 'X-API-Key: wrong' {HOST}/app/api/repo/health -> 401",
+        "curl -i -sS -H 'X-API-Key: testkey' {HOST}/app/api/repo/health -> 200"
+    ],
+    "notes_to_rms": [
+        "Prefer Starlette BaseHTTPMiddleware or an APIRouter-level dependency that can exclude /health cleanly.",
+        "If the app mounts routers under a prefix, ensure coverage matches /app/api/*.",
+        "Keep diffs minimal; avoid refactors besides necessary imports/wiring.",
+        "Output a unified diff patch that applies cleanly with `git apply -p0` from repo root."
+    ]
+}
