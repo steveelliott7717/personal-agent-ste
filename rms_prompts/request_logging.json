@@ -1,5 +1,5 @@
 {
-    "task": "Add minimal request logging middleware to backend/ that assigns a unique correlation ID per HTTP request, stores it in request.state.correlation_id, and ensures all log lines for that request include the correlation ID. Make logging toggleable via env var LOG_REQUESTS (default true). Maintain backward compatibility and avoid heavy deps.\n\nAcceptance Criteria:\n1) New files created under backend/:\n   - backend/logging_utils.py: ContextVar-based correlation ID storage; CorrelationIdFilter; configure_logging(level=INFO).\n   - backend/middleware/request_logging.py: BaseHTTPMiddleware that generates UUID4 per request, sets request.state.correlation_id, logs start/end (method, path, status, duration ms, correlation_id) when LOG_REQUESTS is true; clears token in finally.\n2) Modify backend/main.py only to wire: configure_logging() once at startup and add RequestLoggingMiddleware. No API response shapes change.\n3) Patch is a valid unified diff that applies cleanly with: git apply --whitespace=fix (after CRLF→LF normalization).\n4) Runtime verification:\n   - With LOG_REQUESTS=true, two GET /health calls show logs that include method, path, status, duration and distinct correlation IDs; request.state.correlation_id is accessible in an endpoint for internal use (no response change).\n   - With LOG_REQUESTS=false, middleware runs but request logs are suppressed; correlation ID still set.\n\nConstraints:\n- Scope strictly to backend/.\n- Minimal, reversible changes; no heavy dependencies.\n- Keep existing behavior and response payloads.\n\nVerification Steps:\n- Apply patch; build & run.\n- Toggle LOG_REQUESTS and hit /health twice; observe logs as per criteria.\n- Ensure no changes to API responses.",
+    "task": "STRICT FOLLOW-UP: Re-emit the SAME request logging + correlation ID changes as a unified diff that applies cleanly. Keep functionality and scope identical; only correct diff structure. Requirements:\n\n1) File sections: each hunk MUST be preceded (in the same section) by:\n   - 'diff --git a/<path> b/<path>'\n   - then '--- a/<path>' (or '--- /dev/null' for new files)\n   - then '+++ b/<path>'.\n2) New files ('--- /dev/null'): every hunk body line MUST start with '+'.\n3) Modified files: every hunk body line MUST start with '+', '-' or ' ' (space). No bare lines.\n4) Hunk headers MUST match their bodies (use correct ranges so 'git apply --check' passes). If unsure, use more context or split into multiple smaller hunks.\n5) Do NOT change code semantics vs the previous intent. No response shape changes. No heavy deps. Scope strictly backend/.\n\nFiles and intent (unchanged):\n- backend/logging_utils.py (new file): ContextVar correlation ID utils + logging filter + configure_logging().\n- backend/middleware/request_logging.py (new file): BaseHTTPMiddleware setting UUID4 correlation ID in request.state, logs start/end when LOG_REQUESTS=true, clears token in finally.\n- backend/main.py (modified): call configure_logging() once and register RequestLoggingMiddleware.\n\nAcceptance:\n- On Windows, after CRLF→LF normalization, 'git apply --check' then 'git apply --whitespace=fix' succeed.\n- No markdown fences, no C-style block comments, no ellipsis placeholders.\n",
     "repo": "personal-agent-ste",
     "branch": "main",
     "path_prefix": "backend/",
@@ -8,15 +8,16 @@
     "checks": {
         "required": [
             "^diff --git a/backend/",
-            "^\\+\\+\\+ b/backend/",
             "^(?:new file mode 100644|--- a/backend/|--- /dev/null)$",
-            "^@@ -\\d+(?:,\\d+)? \\+\\d+(?:,\\d+)? @@"
+            "^\\+\\+\\+ b/backend/",
+            "^@@ -\\d+(?:,\\d+)? \\+\\d+(?:,\\d+)? @@",
+            "^(?:\\+|-| |\\\\)"
         ],
         "forbidden": [
             "```",
             "/\\*.*?\\*/",
             "^\\s*\\.\\.\\.\\s*$",
-            "(?s)\\n@@[^@]*@@(?![\\s\\S]*\\n\\+\\+\\+ b/)" 
+            "^[^+\\- @\\\\].*$"
         ],
         "max_files": 10,
         "max_bytes": 120000

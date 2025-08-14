@@ -1,0 +1,23 @@
+{
+  "task": "Add minimal request logging middleware to backend/ that assigns a unique correlation ID per HTTP request, stores it in request.state.correlation_id, and ensures all log lines for that request include the correlation ID. Make logging toggleable via env var LOG_REQUESTS (default true). Maintain backward compatibility and avoid heavy deps.\n\nAcceptance Criteria:\n1) New files under backend/:\n   - backend/logging_utils.py: ContextVar-based correlation ID storage; CorrelationIdFilter; configure_logging(level=INFO).\n   - backend/middleware/request_logging.py: BaseHTTPMiddleware that generates UUID4 per request, sets request.state.correlation_id, logs start/end (method, path, status, duration ms, correlation_id) when LOG_REQUESTS is true; clears token in finally.\n2) Modify backend/main.py only to wire: configure_logging() once at startup and add RequestLoggingMiddleware. No API response shapes change.\n3) Patch is a valid unified diff that applies cleanly with: git apply --whitespace=fix (after CRLF→LF normalization).\n4) Runtime verification:\n   - With LOG_REQUESTS=true, two GET /health calls show logs that include method, path, status, duration and distinct correlation IDs; request.state.correlation_id is set.\n   - With LOG_REQUESTS=false, middleware runs but request logs are suppressed; correlation ID still set.\n\nConstraints:\n- Scope strictly to backend/.\n- Minimal, reversible changes; no heavy dependencies.\n- Keep existing behavior and response payloads.",
+  "repo": "personal-agent-ste",
+  "branch": "main",
+  "path_prefix": "backend/",
+  "k": 8,
+  "session": "s1",
+  "checks": {
+    "required": [
+      "^diff --git a/backend/",
+      "^(?:new file mode 100644|--- a/backend/|--- /dev/null)$",
+      "^\\+\\+\\+ b/backend/",
+      "^@@ -\\d+(?:,\\d+)? \\+\\d+(?:,\\d+)? @@"
+    ],
+    "forbidden": [
+      "```",
+      "/\\*.*?\\*/",
+      "^\\s*\\.\\.\\.\\s*$"
+    ],
+    "max_files": 10,
+    "max_bytes": 120000
+  }
+}

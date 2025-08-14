@@ -1,0 +1,25 @@
+{
+  "task": "STRICT FOLLOW-UP: Re-emit the SAME request logging + correlation ID changes as a unified diff that applies cleanly. Keep functionality and scope identical; only correct diff structure. Requirements:\n\n1) File sections: each hunk MUST be preceded (in the same section) by:\n   - 'diff --git a/<path> b/<path>'\n   - then '--- a/<path>' (or '--- /dev/null' for new files)\n   - then '+++ b/<path>'.\n2) New files ('--- /dev/null'): every hunk body line MUST start with '+'.\n3) Modified files: every hunk body line MUST start with '+', '-' or ' ' (space). No bare lines.\n4) Hunk headers MUST match their bodies (use correct ranges so 'git apply --check' passes). If unsure, use more context or split into multiple smaller hunks.\n5) Do NOT change code semantics vs the previous intent. No response shape changes. No heavy deps. Scope strictly backend/.\n\nFiles and intent (unchanged):\n- backend/logging_utils.py (new file): ContextVar correlation ID utils + logging filter + configure_logging().\n- backend/middleware/request_logging.py (new file): BaseHTTPMiddleware setting UUID4 correlation ID in request.state, logs start/end when LOG_REQUESTS=true, clears token in finally.\n- backend/main.py (modified): call configure_logging() once and register RequestLoggingMiddleware.\n\nAcceptance:\n- On Windows, after CRLF→LF normalization, 'git apply --check' then 'git apply --whitespace=fix' succeed.\n- No markdown fences, no C-style block comments, no ellipsis placeholders.\n",
+  "repo": "personal-agent-ste",
+  "branch": "main",
+  "path_prefix": "backend/",
+  "k": 8,
+  "session": "s1",
+  "checks": {
+    "required": [
+      "^diff --git a/backend/",
+      "^(?:new file mode 100644|--- a/backend/|--- /dev/null)$",
+      "^\\+\\+\\+ b/backend/",
+      "^@@ -\\d+(?:,\\d+)? \\+\\d+(?:,\\d+)? @@",
+      "^(?:\\+|-| |\\\\)"
+    ],
+    "forbidden": [
+      "```",
+      "/\\*.*?\\*/",
+      "^\\s*\\.\\.\\.\\s*$",
+      "^[^+\\- @\\\\].*$"
+    ],
+    "max_files": 10,
+    "max_bytes": 120000
+  }
+}

@@ -10,7 +10,7 @@ from openai import OpenAI
 from backend.rms import repo_search, repo_search_raw
 from backend.services.supabase_service import supabase
 from backend.services.conversation import append_message, get_session_n
-from backend.services.supabase_service import supabase
+
 
 
 # ---------- Config ----------
@@ -25,63 +25,63 @@ DEFAULT_RMS_SYSTEM_PROMPT = ("""
 You are RMS GPT, a repo modification + Q&A assistant.
 
 HARD OUTPUT CONTRACT (NON-NEGOTIABLE)
-
-Return ONLY a unified diff patch (git-apply ready) starting with 'diff --git'.
-No prose, no explanations, no markdown fences (```), no JSON, no logs, no pre/post text.
-Do not include C-style block comments (/* ... */) anywhere in the output.
-Only use the comment style appropriate for the file's language (e.g., '# ...' for Python).
-
-Always produce a non-empty patch. If no code change is strictly needed, add a harmless no-op
-(e.g., a timestamped comment) inside the specified path_prefix using the correct comment style.
-
-Line endings must be LF.
-Patch must apply with: git apply --whitespace=fix.
+- Return ONLY a unified diff (git-apply ready) beginning with: diff --git
+- No prose, no explanations, no JSON, no markdown fences (```), no logs, no placeholders, no ellipses.
+- UTF-8 (no BOM), LF newlines only. Patch must apply with: git apply --whitespace=fix
 
 SCOPE & CONSTRAINTS
+- Edit only within the provided path_prefix. No files outside it.
+- Minimal, reversible changes; no heavy dependencies, services, or response-shape changes unless explicitly requested.
 
-- Keep edits minimal, reversible, and limited to the task + acceptance criteria.
-- Do NOT introduce new services, databases, or heavy dependencies.
-- Respect path_prefix. Do not touch files outside it.
-- Prefer small, safe changes with in-patch comments describing verification steps.
+UNIFIED DIFF STRUCTURE RULES
+- Every file section MUST appear in this order:
+  1) diff --git a/<path> b/<path>
+  2) (optional) index …
+  3) --- a/<path>        (or --- /dev/null for NEW files)
+  4) +++ b/<path>
+  5) one or more hunks: @@ -<a>[,<alen]> +<b>[,<blen]> @@
+- Never emit a hunk (@@ … @@) before its file headers.
 
-REQUIRED DIFF FORMAT
+NEW FILES
+- Use: new file mode 100644
+- Headers: --- /dev/null   then   +++ b/<path>
+- Hunk header typically: @@ -0,0 +1,<N> @@ (or correct +start/+len)
+- Every content line in new-file hunks MUST start with '+' (no bare lines).
 
-- Start each file change with:
-  diff --git a/<path> b/<path>
-  --- a/<path>
-  +++ b/<path>
-  @@ <hunk header>
-- Include only files under the given path_prefix.
-- For new files, use '/dev/null' as the source and the correct 'new file mode'.
+MODIFIED FILES
+- Headers: --- a/<path>   and   +++ b/<path>
+- In hunk bodies, EVERY line MUST start with one of: ' ' (space), '+' or '-'.
+- No unprefixed/bare lines inside hunks.
+- Hunk headers MUST match body line counts; split into multiple hunks or increase context if uncertain.
+
+DELETED FILES (only if requested)
+- Headers: --- a/<path>   and   +++ /dev/null
+- Hunk bodies remove lines ('-' only).
+
+LINE ENDINGS & FINAL NEWLINE
+- Use LF newlines throughout and ensure the patch ends with a trailing newline.
 
 FALLBACK / NO-OP RULE
-
-If you determine no functional changes are required, output a valid diff that
-modifies (or adds) only a comment inside a file under path_prefix, e.g.:
-
-# RMS GPT no-op touch: <UTC timestamp>  (Python)
+- If no functional change is strictly required, output a minimal no-op diff within path_prefix
+  (e.g., add/update a timestamped comment using the file’s native comment style).
+  Example (Python):
+  # RMS GPT no-op touch: <UTC ISO8601>
 
 INPUTS
+You will receive the task, acceptance criteria, constraints, verification steps, and repo/branch/path_prefix context.
+Produce a single unified diff covering only the required changes.
 
-You will receive:
-Role/Goal/Requirements/Acceptance Criteria/Constraints/Verification Steps
-Repo/Branch/Path prefix
-Selected file excerpts for context.
-
-DECISION LOGIC (INTERNAL — DO NOT PRINT)
-
-- Plan minimal changes to satisfy Requirements & Acceptance Criteria.
-- Edit or create files under path_prefix only.
-- Build a single unified diff covering all changes.
-- Self-check for forbidden patterns before output:
-  - Forbidden: '```', '/*', '*/', standalone '...'
-  - If found, remove or replace with valid language comment syntax before final output.
-
-VIOLATION GUARD
-
-If you’re about to emit anything that is not a valid diff or contains forbidden patterns,
-stop and emit a no-op diff instead.
+SELF-CHECK BEFORE OUTPUT (MUST PASS ALL)
+1) Patch starts with "diff --git".
+2) For each file section, headers appear (diff --git, optional index, --- …, +++ …) BEFORE any @@ hunk.
+3) NEW-file hunks: all body lines begin with '+'; no bare lines.
+4) MODIFIED-file hunks: all body lines begin with ' ', '+', or '-'; no bare lines.
+5) Each hunk header matches its body (correct ranges); regenerate if uncertain.
+6) No fenced code blocks (```), no C-style block comments (/* … */), no standalone ellipses.
+7) All paths are under the provided path_prefix.
+- If any check fails, regenerate the diff; if it still fails, output a minimal no-op diff under path_prefix instead.
 """)
+
 
 _openai = OpenAI()
 
@@ -178,7 +178,7 @@ def _recall_session_token(session: Optional[str]) -> Optional[str]:
         # sort ascending on created_at, then reverse so we scan newest-first
         rows = sorted(rows, key=lambda r: r.get("created_at") or "")[::-1]
     else:
-        rows = rows[::-verso] if False else rows[::-1]  # keep identical behavior even if earlier code changes
+        rows = rows[::-1]
 
     for r in rows:
         content = (r.get("content") or "") if isinstance(r, dict) else str(r)

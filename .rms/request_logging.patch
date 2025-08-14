@@ -2,71 +2,62 @@ diff --git a/backend/logging_utils.py b/backend/logging_utils.py
 new file mode 100644
 --- /dev/null
 +++ b/backend/logging_utils.py
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,30 @@
 +# backend/logging_utils.py
 +import logging
 +import os
 +import uuid
 +from contextvars import ContextVar
 +
-+correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
++CORRELATION_ID: ContextVar[str] = ContextVar("correlation_id", default=str(uuid.uuid4()))
 +
 +class CorrelationIdFilter(logging.Filter):
 +    def filter(self, record: logging.LogRecord) -> bool:
-+        record.correlation_id = correlation_id_var.get()
++        record.correlation_id = CORRELATION_ID.get()
 +        return True
 +
 +def configure_logging(level=logging.INFO):
-+    logging.basicConfig(level=level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s - correlation_id=%(correlation_id)s')
++    logging.basicConfig(level=level)
 +    logging.getLogger().addFilter(CorrelationIdFilter())
 +
 +def get_correlation_id() -> str:
-+    return correlation_id_var.get()
++    return CORRELATION_ID.get()
 +
 +def set_correlation_id(correlation_id: str):
-+    correlation_id_var.set(correlation_id)
++    CORRELATION_ID.set(correlation_id)
++
++def log_request(method: str, path: str, status: int, duration: float):
++    if os.getenv("LOG_REQUESTS", "true").lower() == "true":
++        logging.info(f"Request: {method} {path} {status} {duration:.2f}ms Correlation ID: {get_correlation_id()}")
++
++def clear_correlation_id():
++    CORRELATION_ID.set(str(uuid.uuid4()))
 +
 diff --git a/backend/middleware/request_logging.py b/backend/middleware/request_logging.py
 new file mode 100644
 --- /dev/null
 +++ b/backend/middleware/request_logging.py
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,21 @@
 +# backend/middleware/request_logging.py
 +import time
-+import logging
 +import uuid
-+from fastapi import Request, Response
 +from starlette.middleware.base import BaseHTTPMiddleware
-+from backend.logging_utils import set_correlation_id, get_correlation_id
++from fastapi import Request
++from backend.logging_utils import set_correlation_id, log_request, clear_correlation_id
 +
 +class RequestLoggingMiddleware(BaseHTTPMiddleware):
 +    async def dispatch(self, request: Request, call_next):
 +        correlation_id = str(uuid.uuid4())
 +        set_correlation_id(correlation_id)
-+
 +        start_time = time.time()
-+        response: Response = await call_next(request)
++
++        response = await call_next(request)
++
 +        duration = (time.time() - start_time) * 1000  # Convert to milliseconds
++        log_request(request.method, request.url.path, response.status_code, duration)
 +
-+        if os.getenv("LOG_REQUESTS", "true").lower() == "true":
-+            logging.info(
-+                "Request completed",
-+                extra={
-+                    "method": request.method,
-+                    "path": request.url.path,
-+                    "status": response.status_code,
-+                    "duration_ms": duration,
-+                    "correlation_id": correlation_id,
-+                },
-+            )
-+
++        clear_correlation_id()
 +        return response
-+
-+    async def __call__(self, request: Request, call_next):
-+        try:
-+            return await self.dispatch(request, call_next)
-+        finally:
-+            set_correlation_id("")  # Clear the correlation ID
 +
 diff --git a/backend/main.py b/backend/main.py
 --- a/backend/main.py
@@ -75,20 +66,13 @@ diff --git a/backend/main.py b/backend/main.py
 from fastapi.staticfiles import StaticFiles
 +from backend.logging_utils import configure_logging
  from backend.middleware.request_logging import RequestLoggingMiddleware
- from dotenv import load_dotenv
- load_dotenv()
+
+load_dotenv()
 @@ -20,6 +21,7 @@
-app = FastAPI(title="Personal Agent API")
+# backend/main.py
+ app = FastAPI(title="Personal Agent API")
  
 +configure_logging()  # Configure logging at startup
  app.add_middleware(RequestLoggingMiddleware)  # Add request logging middleware
 
 # -------------------- Health --------------------
-diff --git a/backend/requirements.txt b/backend/requirements.txt
-+++ b/backend/requirements.txt
---- a/backend/requirements.txt
-+++ b/backend/requirements.txt
-@@ -8,7 +8,8 @@
-python-dotenv
-+contextvars
-```
