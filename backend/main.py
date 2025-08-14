@@ -282,24 +282,101 @@ def _normalize_and_synthesize_newfile_hunks(text: str) -> tuple[str, dict]:
         "synth_hunks": synthesized,
     }
 
-def _sanitize_patch_text(text: str) -> tuple[str, dict]:
-    """
-    Pipeline:
-      1) Unwrap + clean
-      2) Ensure file headers exist before hunks
-      3) Normalize/synthesize all new-file hunks (prefix '+' and fix headers)
-    """
-    s = _unwrap_and_clean(text)
-    s = _ensure_file_headers(s)
-    fixed, stats = _normalize_and_synthesize_newfile_hunks(s)
-    return fixed, stats
-
 def _looks_like_unified_diff(text: str) -> bool:
     if not text:
         return False
     if text.startswith("diff --git"):
         return True
     return text.startswith("--- ") and ("\n+++ " in text)
+
+# Normalize MODIFIED-file hunks:
+# - Prefix any bare in-hunk line with a single space (context).
+# - Recompute old/new lengths: old = count(' ' + '-') ; new = count(' ' + '+').
+# - Rewrite hunk headers with corrected lengths; keep existing -start and +start.
+_HUNK_HDR_RE_FULL = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)(?:,([0-9]+))?\s+@@")
+
+def _normalize_modified_hunks(text: str) -> str:
+    if not text:
+        return ""
+    lines = text.split("\n")
+    out = []
+
+    in_section = False
+    in_hunk = False
+    hdr_idx = None
+    old_count = 0
+    new_count = 0
+
+    def flush():
+        nonlocal hdr_idx, old_count, new_count, in_hunk
+        if hdr_idx is not None:
+            hdr = out[hdr_idx]
+            m = _HUNK_HDR_RE_FULL.match(hdr)
+            if m:
+                ms = int(m.group(1))
+                ps = int(m.group(3))
+                # If the original header omitted lengths, add them; otherwise overwrite with corrected counts.
+                out[hdr_idx] = f"@@ -{ms},{max(0, old_count)} +{ps},{max(0, new_count)} @@"
+        hdr_idx = None
+        old_count = 0
+        new_count = 0
+        in_hunk = False
+
+    def is_file_header(l: str) -> bool:
+        return (
+            l.startswith("diff --git ") or l.startswith("index ")
+            or l.startswith("--- ") or l.startswith("+++ ")
+            or l.startswith("new file mode ") or l.startswith("deleted file mode ")
+            or l.startswith("rename from ") or l.startswith("rename to ")
+        )
+
+    for l in lines:
+        if l.startswith("diff --git "):
+            flush()
+            in_section = True
+            out.append(l)
+            continue
+
+        if not in_section:
+            out.append(l); continue
+
+        if l.startswith("@@ "):
+            flush()
+            in_hunk = True
+            hdr_idx = len(out)
+            out.append(l)  # placeholder, will be rewritten on flush
+            old_count = 0
+            new_count = 0
+            continue
+
+        if is_file_header(l):
+            flush()
+            out.append(l)
+            continue
+
+        if in_hunk:
+            # Treat any bare line as context
+            if not (l.startswith(" ") or l.startswith("+") or l.startswith("-") or l.startswith("\\")):
+                l = " " + l
+            # Count for header rewrite
+            if l.startswith(" ") or l.startswith("-"):
+                old_count += 1
+            if l.startswith(" ") or l.startswith("+"):
+                new_count += 1
+            out.append(l)
+            continue
+
+        out.append(l)
+
+    flush()
+    return "\n".join(out)
+
+def _sanitize_patch_text(text: str) -> tuple[str, dict]:
+    s = _unwrap_and_clean(text)
+    s = _ensure_file_headers(s)
+    s, stats = _normalize_and_synthesize_newfile_hunks(s)  # your existing new-file fixer
+    s = _normalize_modified_hunks(s)  # <-- add this line
+    return s, stats
 
 
 # -------------------- Repo endpoints (bypass router) --------------------
