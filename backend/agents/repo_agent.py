@@ -74,7 +74,7 @@ DECISION LOGIC (INTERNAL — DO NOT PRINT)
 - Edit or create files under path_prefix only.
 - Build a single unified diff covering all changes.
 - Self-check for forbidden patterns before output:
-  - Forbidden: '```', '/*', '*/'
+  - Forbidden: '```', '/*', '*/', standalone '...'
   - If found, remove or replace with valid language comment syntax before final output.
 
 VIOLATION GUARD
@@ -82,7 +82,6 @@ VIOLATION GUARD
 If you’re about to emit anything that is not a valid diff or contains forbidden patterns,
 stop and emit a no-op diff instead.
 """)
-
 
 _openai = OpenAI()
 
@@ -189,28 +188,61 @@ def _recall_session_token(session: Optional[str]) -> Optional[str]:
     return None
 
 
-# ---------- Patch-generation helpers (NEW) ----------
+# ---------- Patch sanitation/validation helpers (NEW) ----------
 
+# detect fenced blocks (we already try to extract body, but keep as safety)
 _CODEBLOCK_RE = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
+# forbid C-style comment blocks anywhere in the patch
+_CBLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+# forbid standalone ellipsis lines often used as placeholders
+_ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
+
+def _sanitize_patch_text(text: str) -> str:
+    """
+    Remove known bad artifacts and normalize newlines.
+    """
+    if not text:
+        return ""
+    # If fenced, drop the fences and keep inner
+    m = _CODEBLOCK_RE.search(text)
+    candidate = (m.group("body") if m else text)
+
+    # Normalize CRLF/CR to LF
+    candidate = candidate.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Remove C-style comment blocks and standalone ellipsis lines
+    candidate = _CBLOCK_RE.sub("", candidate)
+    candidate = _ELLIPSIS_LINE_RE.sub("", candidate)
+
+    # Trim leading/trailing whitespace
+    candidate = candidate.strip()
+    return candidate
+
+def _looks_like_unified_diff(text: str) -> bool:
+    """
+    Quick structural checks to guard bad outputs.
+    """
+    if not text:
+        return False
+    if text.startswith("diff --git"):
+        return True
+    # Some engines omit first diff line on single-file edits; allow classic header pair
+    if text.startswith("--- ") and ("\n+++ " in text):
+        return True
+    return False
+
+
+# ---------- Patch-generation helpers ----------
 
 def _extract_patch_from_text(text: str) -> Optional[str]:
     """
     Try to extract a unified diff from model output. Accepts fenced or raw text.
+    Now sanitized and strictly validated.
     """
-    if not text:
+    cleaned = _sanitize_patch_text(text)
+    if not _looks_like_unified_diff(cleaned):
         return None
-    m = _CODEBLOCK_RE.search(text)
-    candidate = (m.group("body") if m else text).strip()
-    # Heuristics for a valid unified diff
-    if candidate.startswith("diff --git"):
-        return candidate
-    if candidate.startswith("--- ") or candidate.startswith("+++ "):
-        return candidate
-    for header in ("diff --git", "--- ", "+++ "):
-        idx = candidate.find(header)
-        if idx != -1:
-            return candidate[idx:].strip()
-    return None
+    return cleaned
 
 
 def _coalesce_response_text(resp: Any) -> str:
@@ -257,11 +289,12 @@ def generate_patch_from_prompt(
 
     system_msg = (
         "You output software patches as unified diffs ONLY. "
-        "No prose, no explanations, no code fences."
+        "No prose, no explanations, no code fences. "
+        "Do not include C-style comments (/* ... */). Use LF newlines."
     )
     user_msg = (
         "Produce a unified diff patch for the following repo task. "
-        "Output ONLY the diff. No backticks, no commentary.\n\n"
+        "Output ONLY the diff. No backticks, no commentary, no placeholders.\n\n"
         f"{prompt}"
     )
 
