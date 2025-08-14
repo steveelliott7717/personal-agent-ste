@@ -50,40 +50,35 @@ def root_redirect():
 
 # -------------------- Sanitizer / gate for patch responses --------------------
 # -------------------- Sanitizer / gate for patch responses --------------------
+# -------------------- Sanitizer / gate for patch responses --------------------
 import re
-import json  # ensure json is imported for headers later
+import json  # used for debug headers
 
-# Strip wrappers/noise first
+# Strip wrappers/noise
 _CODEBLOCK_RE     = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 _CBLOCK_RE        = re.compile(r"/\*.*?\*/", re.DOTALL)
 _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
 
-# Hunk headers:
-#   4-number: @@ -a,b +c,d @@
-#   3-number: @@ -a,b +d @@   (new len only)  OR  @@ -a +c,d @@ (old len omitted)
-#   2-number: @@ -0,0 +20 @@  (start omitted on + side)
-_HUNK_HDR_RE_ANY = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@")
-
-# diff --git line
-_DIFF_GIT_RE = re.compile(r"^diff --git a/(.+?) b/(.+?)$")
+# Headers
+_DIFF_GIT_RE      = re.compile(r"^diff --git a/(.+?) b/(.+?)$")
+_HUNK_HDR_RE_ANY  = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@")
 
 def _unwrap_and_clean(text: str) -> str:
     if not text:
         return ""
     m = _CODEBLOCK_RE.search(text)
     s = (m.group("body") if m else text)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")  # normalize to LF
-    s = _CBLOCK_RE.sub("", s)                        # strip C-style block comments
-    s = _ELLIPSIS_LINE_RE.sub("", s)                 # strip standalone ellipsis lines
+    s = s.replace("\r\n", "\n").replace("\r", "\n")   # normalize to LF
+    s = _CBLOCK_RE.sub("", s)                         # strip C-style comment blocks
+    s = _ELLIPSIS_LINE_RE.sub("", s)                  # strip standalone ellipsis lines
     return s.strip()
 
 def _ensure_file_headers(text: str) -> str:
     """
-    Guarantee every '@@ ... @@' hunk sits under a valid file header within its section.
-    If a hunk appears before '---'/'+++':
-      - Insert '--- /dev/null' if the section has 'new file mode'
-      - Else insert '--- a/<path>' (path from 'diff --git')
-      - Always insert '+++ b/<path>'
+    Ensure every '@@ ... @@' hunk within a diff section is preceded by file headers.
+    If missing, synthesize:
+      - '--- /dev/null' if 'new file mode' is present
+      - else '--- a/<path>'  and always '+++ b/<path>'
     """
     lines = text.split("\n")
     out: list[str] = []
@@ -92,79 +87,64 @@ def _ensure_file_headers(text: str) -> str:
     have_old = False
     have_new = False
     new_file_mode = False
-    current_path_b: str | None = None  # from 'diff --git a/<a> b/<b>'
+    path_b: str | None = None
 
-    def start_section():
+    def reset_section_flags():
         nonlocal have_old, have_new, new_file_mode
         have_old = False
         have_new = False
         new_file_mode = False
 
-    for i, l in enumerate(lines):
+    for l in lines:
         if l.startswith("diff --git "):
-            # New section
             in_section = True
-            start_section()
+            reset_section_flags()
             m = _DIFF_GIT_RE.match(l)
-            current_path_b = m.group(2) if m else None
+            path_b = (m.group(2) if m else None)
             out.append(l)
             continue
 
         if not in_section:
-            out.append(l)
-            continue
+            out.append(l); continue
 
         if l.startswith("new file mode "):
             new_file_mode = True
-            out.append(l)
-            continue
+            out.append(l); continue
 
         if l.startswith("--- "):
             have_old = True
-            out.append(l)
-            continue
+            out.append(l); continue
 
         if l.startswith("+++ "):
             have_new = True
-            out.append(l)
-            continue
+            out.append(l); continue
 
         if l.startswith("@@ "):
-            # If hunks appear without headers in this section, synthesize them
-            if not have_old or not have_new:
-                # We need a path to build headers
-                path_b = current_path_b or ""
+            if not (have_old and have_new):
+                # synthesize headers right before the hunk
                 if new_file_mode:
                     out.append("--- /dev/null")
                 else:
-                    out.append(f"--- a/{path_b}")
-                out.append(f"+++ b/{path_b}")
-                have_old = True
-                have_new = True
+                    out.append(f"--- a/{path_b or ''}")
+                out.append(f"+++ b/{path_b or ''}")
+                have_old = have_new = True
             out.append(l)
             continue
 
-        # A new file header line also resets have_old/have_new if we see another 'diff --git'
-        if l.startswith("index ") or l.startswith("rename from ") or l.startswith("rename to "):
-            # index/rename lines appear between diff and headers; leave flags as-is
-            out.append(l)
-            continue
-
-        # Any other line is part of hunks or context; just pass through
+        # pass-through (index/rename lines or hunk body)
         out.append(l)
 
     return "\n".join(out)
 
-def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
+def _normalize_and_synthesize_newfile_hunks(text: str) -> tuple[str, dict]:
     """
-    Brute-force, hunk-aware normalizer:
-      - Marks a hunk as 'new file' if the section has '--- /dev/null' OR minus-len == 0 (or omitted while minus-start == 0).
-      - Inside such hunks, prefixes '+' on any non-control line (including empty lines).
-      - Rewrites header to '@@ -0,0 +<start>,<len> @@' where <len> is the actual '+' count.
-      - Returns (fixed_text, debug_stats).
+    Fix ALL *new-file* content so it's inside proper hunks with correct '+' and header lengths.
+    A hunk is 'new file' if the section has '--- /dev/null' OR minus-len == 0 (or omitted while minus-start == 0).
+    Additionally, if content appears OUTSIDE any '@@' in a new-file section, synthesize a hunk.
+    Returns (fixed_text, stats).
     """
     if not text:
-        return "", {"sections": 0, "newfile_hunks": 0, "prefixed_lines": 0, "rewritten_headers": 0}
+        return "", {"sections": 0, "newfile_hunks": 0, "prefixed_lines": 0, "rewritten_headers": 0, "synth_hunks": 0}
 
     lines = text.split("\n")
     out: list[str] = []
@@ -173,14 +153,24 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
     newfile_hunks = 0
     prefixed = 0
     rewritten = 0
+    synthesized = 0
 
+    # State
     in_section = False
-    section_saw_devnull = False
+    section_is_newfile = False      # seen '--- /dev/null' in this section
     in_hunk = False
     hunk_is_newfile = False
     hdr_idx: int | None = None
     plus_start = 1
     plus_count = 0
+
+    def is_file_header(l: str) -> bool:
+        return (
+            l.startswith("diff --git ") or l.startswith("index ") or
+            l.startswith("new file mode ") or l.startswith("deleted file mode ") or
+            l.startswith("rename from ") or l.startswith("rename to ") or
+            l.startswith("--- ") or l.startswith("+++ ")
+        )
 
     def flush_hunk():
         nonlocal hdr_idx, plus_start, plus_count, hunk_is_newfile, rewritten, newfile_hunks
@@ -194,38 +184,34 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
         plus_count = 0
         hunk_is_newfile = False
 
-    def is_file_header(l: str) -> bool:
-        return (
-            l.startswith("diff --git ") or l.startswith("index ") or
-            l.startswith("--- ") or l.startswith("+++ ") or
-            l.startswith("new file mode ") or l.startswith("deleted file mode ") or
-            l.startswith("rename from ") or l.startswith("rename to ")
-        )
-
     for l in lines:
+        # New diff section
         if l.startswith("diff --git "):
             flush_hunk()
             in_section = True
-            section_saw_devnull = False
+            section_is_newfile = False
             in_hunk = False
             sections += 1
             out.append(l)
             continue
 
         if not in_section:
+            out.append(l); continue
+
+        # Track '/dev/null' header (signals new-file for the whole section)
+        if l.startswith("--- "):
+            if l.strip() == "--- /dev/null":
+                section_is_newfile = True
             out.append(l)
             continue
 
-        if l.startswith("--- "):
-            if l.strip() == "--- /dev/null":
-                section_saw_devnull = True
-
+        # Normal hunk header
         if l.startswith("@@ "):
             flush_hunk()
             in_hunk = True
             hdr_idx = len(out)
             out.append(l)  # placeholder; may be rewritten
-            # Decide if this hunk is a 'new file' hunk
+            # Decide if this hunk is a 'new file' hunk by header or section state
             ms = ml = ps = pl = None
             m = _HUNK_HDR_RE_ANY.match(l)
             if m:
@@ -234,19 +220,32 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
                 ps = int(m.group(3)) if m.group(3) is not None else None
                 pl = int(m.group(4)) if m.group(4) is not None else None
             minus_len_zero = (ml == 0) or (ml is None and ms == 0)
-            hunk_is_newfile = bool(section_saw_devnull or minus_len_zero)
+            hunk_is_newfile = bool(section_is_newfile or minus_len_zero)
             plus_start = ps if (ps and ps > 0) else 1
             plus_count = 0
             continue
 
+        # If we hit another header, close current hunk (if any)
         if is_file_header(l):
             flush_hunk()
             in_hunk = False
             out.append(l)
             continue
 
+        # Content line
+        if section_is_newfile:
+            # If content appears outside a hunk in a new-file section, synthesize a hunk header
+            if not in_hunk:
+                in_hunk = True
+                hunk_is_newfile = True
+                hdr_idx = len(out)
+                out.append("@@ -0,0 +1,0 @@")  # will be rewritten on flush
+                plus_start = 1
+                plus_count = 0
+                synthesized += 1
+
         if in_hunk and hunk_is_newfile:
-            # Prefix '+' if missing and not a control line
+            # Ensure '+' prefix for new-file content
             if not (l.startswith("+") or l.startswith("-") or l.startswith(" ") or l.startswith("\\")):
                 l = "+" + l
                 prefixed += 1
@@ -257,6 +256,7 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
 
         out.append(l)
 
+    # End of file
     flush_hunk()
 
     return "\n".join(out), {
@@ -264,17 +264,19 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
         "newfile_hunks": newfile_hunks,
         "prefixed_lines": prefixed,
         "rewritten_headers": rewritten,
+        "synth_hunks": synthesized,
     }
 
 def _sanitize_patch_text(text: str) -> tuple[str, dict]:
     """
-    1) Unwrap + normalize, strip forbidden patterns
-    2) Ensure each hunk has proper file headers (---/+++), synthesizing as needed
-    3) Auto-fix all new-file hunks (+ prefixes and header lengths)
+    Pipeline:
+      1) Unwrap + clean
+      2) Ensure file headers exist before hunks
+      3) Normalize/synthesize all new-file hunks (prefix '+' and fix headers)
     """
     s = _unwrap_and_clean(text)
     s = _ensure_file_headers(s)
-    fixed, stats = _auto_fix_newfile_hunks(s)
+    fixed, stats = _normalize_and_synthesize_newfile_hunks(s)
     return fixed, stats
 
 def _looks_like_unified_diff(text: str) -> bool:
@@ -282,7 +284,6 @@ def _looks_like_unified_diff(text: str) -> bool:
         return False
     if text.startswith("diff --git"):
         return True
-    # fallback: single-file unified diff with ---/+++ present
     return text.startswith("--- ") and ("\n+++ " in text)
 
 
