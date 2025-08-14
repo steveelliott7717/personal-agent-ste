@@ -4,29 +4,43 @@ from __future__ import annotations
 import os
 import json
 import re
-from typing import Any, Dict, Tuple, Union
+import tempfile
+import subprocess
+import shutil
+from pathlib import Path
+from typing import Any, Dict, Tuple
 
 from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse, PlainTextResponse
+from fastapi.responses import (
+    JSONResponse,
+    RedirectResponse,
+    HTMLResponse,
+    FileResponse,
+    PlainTextResponse,
+)
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 
-# Linter (kept) — optional guardrails in JSON & warning headers
-from backend.utils.patch_linter import lint_patch, make_followup_prompt
+# Optional linter (leave as-is if present in your repo)
+from backend.utils.patch_linter import lint_patch, make_followup_prompt  # type: ignore
 
-# ✅ package-qualified imports (works when running: uvicorn backend.main:app)
+# Agents / services
 from backend.agents.router_agent import route_request
-from backend.agents.repo_agent import propose_changes, answer_about_repo, generate_patch_from_prompt
-
-from backend.utils.nl_formatter import ensure_natural
-from backend.utils.agent_protocol import AgentResponse
-from backend.services import conversation as conv
+from backend.agents.repo_agent import (
+    propose_changes,
+    answer_about_repo,
+    generate_patch_from_prompt,
+)
+from backend.utils.nl_formatter import ensure_natural  # type: ignore
+from backend.utils.agent_protocol import AgentResponse  # type: ignore
+from backend.services import conversation as conv  # type: ignore
 
 load_dotenv()
 
 app = FastAPI(title="Personal Agent API")
+
+# -------------------- Debug / Health --------------------
 
 @app.get("/app/api/debug/supabase-key")
 async def debug_supabase_key():
@@ -35,7 +49,6 @@ async def debug_supabase_key():
         return {"SUPABASE_SERVICE_ROLE_start": key[:8] + "..."}
     return {"SUPABASE_SERVICE_ROLE": None}
 
-# -------------------- Health --------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -48,29 +61,29 @@ def repo_health():
 def root_redirect():
     return RedirectResponse(url="/app/")
 
-# -------------------- Sanitizer / gate for patch responses --------------------
-# -------------------- Sanitizer / gate for patch responses --------------------
-# -------------------- Sanitizer / gate for patch responses --------------------
-import re
-import json  # used for debug headers
+# -------------------- Patch Sanitization (pure Python) --------------------
 
 # Strip wrappers/noise
 _CODEBLOCK_RE     = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 _CBLOCK_RE        = re.compile(r"/\*.*?\*/", re.DOTALL)
 _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
 
-# Headers
-_DIFF_GIT_RE      = re.compile(r"^diff --git a/(.+?) b/(.+?)$")
-_HUNK_HDR_RE_ANY  = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@")
+# Headers / hunk regexes
+_DIFF_GIT_RE       = re.compile(r"^diff --git a/(.+?) b/(.+?)$")
+_HUNK_HDR_RE_ANY   = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@$")
+_HUNK_HDR_RE_FULL  = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)(?:,([0-9]+))?\s+@@$")
 
-# Replace your existing _unwrap_and_clean with this:
+_HDR_NEWFILE   = re.compile(r"^\s*---\s*/dev/null\s*$")
+_HDR_OLD_A     = re.compile(r"^\s*---\s+a/(.+)\s*$")
+_HDR_NEW_B     = re.compile(r"^\s*\+\+\+\s+b/(.+)\s*$")
+
 def _unwrap_and_clean(text: str) -> str:
+    """Remove code fences, C-style comments, and standalone ellipsis lines; normalize to LF."""
     if not text:
         return ""
-    s = text.replace("\r\n", "\n").replace("\r", "\n")  # normalize to LF
+    s = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    # 1) Remove ALL fenced code blocks, keeping inner bodies
-    #    Handles ```diff, ```patch, or bare ``` fences, repeated anywhere.
+    # Remove all fenced code blocks, keeping their bodies
     fence = re.compile(r"```(?:diff|patch)?\s*([\s\S]*?)```", re.IGNORECASE)
     while True:
         before = s
@@ -78,22 +91,20 @@ def _unwrap_and_clean(text: str) -> str:
         if s == before:
             break
 
-    # 2) Remove any stray standalone fence lines that slipped through
+    # Strip stray ```
     s = re.sub(r"(?m)^\s*```\s*$", "", s)
-
-    # 3) Strip C-style comment blocks and standalone ellipsis lines
+    # Strip C-style comment blocks and ellipsis-only lines
     s = _CBLOCK_RE.sub("", s)
     s = _ELLIPSIS_LINE_RE.sub("", s)
 
     return s.strip()
 
-
 def _ensure_file_headers(text: str) -> str:
     """
-    Ensure every '@@ ... @@' hunk within a diff section is preceded by file headers.
-    If missing, synthesize:
-      - '--- /dev/null' if 'new file mode' is present
-      - else '--- a/<path>'  and always '+++ b/<path>'
+    Ensure each '@@' hunk is preceded by proper file headers within a section.
+    If headers are missing, synthesize:
+      - '--- /dev/null' for new files,
+      - otherwise '--- a/<path>' and always '+++ b/<path>'.
     """
     lines = text.split("\n")
     out: list[str] = []
@@ -120,23 +131,26 @@ def _ensure_file_headers(text: str) -> str:
             continue
 
         if not in_section:
-            out.append(l); continue
+            out.append(l)
+            continue
 
         if l.startswith("new file mode "):
             new_file_mode = True
-            out.append(l); continue
+            out.append(l)
+            continue
 
         if l.startswith("--- "):
             have_old = True
-            out.append(l); continue
+            out.append(l)
+            continue
 
         if l.startswith("+++ "):
             have_new = True
-            out.append(l); continue
+            out.append(l)
+            continue
 
         if l.startswith("@@ "):
             if not (have_old and have_new):
-                # synthesize headers right before the hunk
                 if new_file_mode:
                     out.append("--- /dev/null")
                 else:
@@ -146,17 +160,14 @@ def _ensure_file_headers(text: str) -> str:
             out.append(l)
             continue
 
-        # pass-through (index/rename lines or hunk body)
         out.append(l)
 
     return "\n".join(out)
 
 def _normalize_and_synthesize_newfile_hunks(text: str) -> tuple[str, dict]:
     """
-    Fix ALL *new-file* content so it's inside proper hunks with correct '+' and header lengths.
-    A hunk is 'new file' if the section has '--- /dev/null' OR minus-len == 0 (or omitted while minus-start == 0).
-    Additionally, if content appears OUTSIDE any '@@' in a new-file section, synthesize a hunk.
-    Returns (fixed_text, stats).
+    For new-file sections, ensure content is inside hunks with '+'-prefixed lines and corrected header counts.
+    Also synthesize a hunk if content appears outside any hunk in a new-file section.
     """
     if not text:
         return "", {"sections": 0, "newfile_hunks": 0, "prefixed_lines": 0, "rewritten_headers": 0, "synth_hunks": 0}
@@ -170,21 +181,20 @@ def _normalize_and_synthesize_newfile_hunks(text: str) -> tuple[str, dict]:
     rewritten = 0
     synthesized = 0
 
-    # State
     in_section = False
-    section_is_newfile = False      # seen '--- /dev/null' in this section
+    section_is_newfile = False
     in_hunk = False
     hunk_is_newfile = False
     hdr_idx: int | None = None
     plus_start = 1
     plus_count = 0
 
-    def is_file_header(l: str) -> bool:
+    def is_header(l: str) -> bool:
         return (
-            l.startswith("diff --git ") or l.startswith("index ") or
-            l.startswith("new file mode ") or l.startswith("deleted file mode ") or
-            l.startswith("rename from ") or l.startswith("rename to ") or
-            l.startswith("--- ") or l.startswith("+++ ")
+            l.startswith("diff --git ") or l.startswith("index ")
+            or l.startswith("new file mode ") or l.startswith("deleted file mode ")
+            or l.startswith("rename from ") or l.startswith("rename to ")
+            or l.startswith("--- ") or l.startswith("+++ ")
         )
 
     def flush_hunk():
@@ -199,8 +209,10 @@ def _normalize_and_synthesize_newfile_hunks(text: str) -> tuple[str, dict]:
         plus_count = 0
         hunk_is_newfile = False
 
-    for l in lines:
-        # New diff section
+    i = 0
+    while i < len(lines):
+        l = lines[i]
+
         if l.startswith("diff --git "):
             flush_hunk()
             in_section = True
@@ -208,70 +220,70 @@ def _normalize_and_synthesize_newfile_hunks(text: str) -> tuple[str, dict]:
             in_hunk = False
             sections += 1
             out.append(l)
+            i += 1
             continue
 
         if not in_section:
-            out.append(l); continue
+            out.append(l)
+            i += 1
+            continue
 
-        # Track '/dev/null' header (signals new-file for the whole section)
         if l.startswith("--- "):
             if l.strip() == "--- /dev/null":
                 section_is_newfile = True
             out.append(l)
+            i += 1
             continue
 
-        # Normal hunk header
         if l.startswith("@@ "):
             flush_hunk()
             in_hunk = True
             hdr_idx = len(out)
-            out.append(l)  # placeholder; may be rewritten
-            # Decide if this hunk is a 'new file' hunk by header or section state
-            ms = ml = ps = pl = None
+            out.append(l)  # placeholder
             m = _HUNK_HDR_RE_ANY.match(l)
+            ms = ml = ps = None
             if m:
                 ms = int(m.group(1))
                 ml = int(m.group(2)) if m.group(2) is not None else None
                 ps = int(m.group(3)) if m.group(3) is not None else None
-                pl = int(m.group(4)) if m.group(4) is not None else None
             minus_len_zero = (ml == 0) or (ml is None and ms == 0)
             hunk_is_newfile = bool(section_is_newfile or minus_len_zero)
             plus_start = ps if (ps and ps > 0) else 1
             plus_count = 0
+            i += 1
             continue
 
-        # If we hit another header, close current hunk (if any)
-        if is_file_header(l):
+        if is_header(l):
             flush_hunk()
             in_hunk = False
             out.append(l)
+            i += 1
             continue
 
-        # Content line
-        if section_is_newfile:
-            # If content appears outside a hunk in a new-file section, synthesize a hunk header
-            if not in_hunk:
-                in_hunk = True
-                hunk_is_newfile = True
-                hdr_idx = len(out)
-                out.append("@@ -0,0 +1,0 @@")  # will be rewritten on flush
-                plus_start = 1
-                plus_count = 0
-                synthesized += 1
+        # Content
+        if section_is_newfile and not in_hunk:
+            # Synthesize a hunk
+            in_hunk = True
+            hunk_is_newfile = True
+            hdr_idx = len(out)
+            out.append("@@ -0,0 +1,0 @@")  # will be rewritten on flush
+            plus_start = 1
+            plus_count = 0
+            synthesized += 1
 
         if in_hunk and hunk_is_newfile:
-            # Ensure '+' prefix for new-file content
             if not (l.startswith("+") or l.startswith("-") or l.startswith(" ") or l.startswith("\\")):
                 l = "+" + l
                 prefixed += 1
             if l.startswith("+"):
                 plus_count += 1
             out.append(l)
+            i += 1
             continue
 
         out.append(l)
+        i += 1
 
-    # End of file
     flush_hunk()
 
     return "\n".join(out), {
@@ -282,28 +294,20 @@ def _normalize_and_synthesize_newfile_hunks(text: str) -> tuple[str, dict]:
         "synth_hunks": synthesized,
     }
 
-def _looks_like_unified_diff(text: str) -> bool:
-    if not text:
-        return False
-    if text.startswith("diff --git"):
-        return True
-    return text.startswith("--- ") and ("\n+++ " in text)
-
-# Normalize MODIFIED-file hunks:
-# - Prefix any bare in-hunk line with a single space (context).
-# - Recompute old/new lengths: old = count(' ' + '-') ; new = count(' ' + '+').
-# - Rewrite hunk headers with corrected lengths; keep existing -start and +start.
-_HUNK_HDR_RE_FULL = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)(?:,([0-9]+))?\s+@@")
-
 def _normalize_modified_hunks(text: str) -> str:
+    """
+    For modified-file hunks:
+      - Prefix any bare in-hunk line with a single space (context).
+      - Recompute old/new lengths from body and rewrite the header.
+    """
     if not text:
         return ""
     lines = text.split("\n")
-    out = []
+    out: list[str] = []
 
     in_section = False
     in_hunk = False
-    hdr_idx = None
+    hdr_idx: int | None = None
     old_count = 0
     new_count = 0
 
@@ -315,19 +319,22 @@ def _normalize_modified_hunks(text: str) -> str:
             if m:
                 ms = int(m.group(1))
                 ps = int(m.group(3))
-                # If the original header omitted lengths, add them; otherwise overwrite with corrected counts.
                 out[hdr_idx] = f"@@ -{ms},{max(0, old_count)} +{ps},{max(0, new_count)} @@"
         hdr_idx = None
         old_count = 0
         new_count = 0
         in_hunk = False
 
-    def is_file_header(l: str) -> bool:
+    def is_header(l: str) -> bool:
         return (
-            l.startswith("diff --git ") or l.startswith("index ")
-            or l.startswith("--- ") or l.startswith("+++ ")
-            or l.startswith("new file mode ") or l.startswith("deleted file mode ")
-            or l.startswith("rename from ") or l.startswith("rename to ")
+            l.startswith("diff --git ")
+            or l.startswith("index ")
+            or l.startswith("--- ")
+            or l.startswith("+++ ")
+            or l.startswith("new file mode ")
+            or l.startswith("deleted file mode ")
+            or l.startswith("rename from ")
+            or l.startswith("rename to ")
         )
 
     for l in lines:
@@ -338,27 +345,26 @@ def _normalize_modified_hunks(text: str) -> str:
             continue
 
         if not in_section:
-            out.append(l); continue
+            out.append(l)
+            continue
 
         if l.startswith("@@ "):
             flush()
             in_hunk = True
             hdr_idx = len(out)
-            out.append(l)  # placeholder, will be rewritten on flush
+            out.append(l)  # placeholder
             old_count = 0
             new_count = 0
             continue
 
-        if is_file_header(l):
+        if is_header(l):
             flush()
             out.append(l)
             continue
 
         if in_hunk:
-            # Treat any bare line as context
             if not (l.startswith(" ") or l.startswith("+") or l.startswith("-") or l.startswith("\\")):
                 l = " " + l
-            # Count for header rewrite
             if l.startswith(" ") or l.startswith("-"):
                 old_count += 1
             if l.startswith(" ") or l.startswith("+"):
@@ -374,12 +380,74 @@ def _normalize_modified_hunks(text: str) -> str:
 def _sanitize_patch_text(text: str) -> tuple[str, dict]:
     s = _unwrap_and_clean(text)
     s = _ensure_file_headers(s)
-    s, stats = _normalize_and_synthesize_newfile_hunks(s)  # your existing new-file fixer
-    s = _normalize_modified_hunks(s)  # <-- add this line
+    s, stats = _normalize_and_synthesize_newfile_hunks(s)
+    s = _normalize_modified_hunks(s)
+    if not s.endswith("\n"):
+        s += "\n"
     return s, stats
 
+def _fix_patch_structure(patch_text: str) -> tuple[str, dict]:
+    """
+    Secondary structural pass: ensure per-file header order, dedup +++,
+    prefix bare lines, recompute counts. (Kept lightweight since the
+    main normalizers already do heavy lifting.)
+    """
+    s = (patch_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    # This sample keeps it simple and relies on the normalizers above.
+    # You can add extra checks here if you find more edge cases.
+    return s, {}
 
-# -------------------- Repo endpoints (bypass router) --------------------
+def _maybe_run_powershell_fix(patch_text: str) -> str:
+    """
+    If on Windows and tools\\fix-patch.ps1 exists, run it to post-fix the patch.
+    Opt-out by setting PATCH_FIXER=off.
+    """
+    try:
+        if os.environ.get("PATCH_FIXER", "").lower() == "off":
+            return patch_text
+        if os.name != "nt":
+            return patch_text
+        here = Path(__file__).resolve()
+        repo_root = here.parents[1] if len(here.parents) >= 2 else here.parent
+        script = repo_root / "tools" / "fix-patch.ps1"
+        if not script.exists():
+            return patch_text
+        ps = shutil.which("powershell")
+        if not ps:
+            return patch_text
+        with tempfile.TemporaryDirectory() as td:
+            inp = Path(td) / "in.patch"
+            outp = Path(td) / "out.patch"
+            inp.write_text(patch_text.replace("\r\n", "\n").replace("\r", "\n"), encoding="utf-8")
+            cmd = [
+                ps,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-InPath",
+                str(inp),
+                "-OutPath",
+                str(outp),
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+            if r.returncode == 0 and outp.exists():
+                fixed = outp.read_text(encoding="utf-8")
+                return fixed if fixed else patch_text
+    except Exception:
+        pass
+    return patch_text
+
+def _looks_like_unified_diff(text: str) -> bool:
+    if not text:
+        return False
+    if text.startswith("diff --git"):
+        return True
+    return text.startswith("--- ") and ("\n+++ " in text)
+
+# -------------------- Repo endpoints --------------------
+
 @app.post("/app/api/repo/query")
 def repo_query(payload: Dict[str, Any]):
     q = (payload or {}).get("task") or (payload or {}).get("question") or (payload or {}).get("q")
@@ -395,14 +463,7 @@ def repo_query(payload: Dict[str, Any]):
 
     try:
         out = answer_about_repo(
-            q,
-            repo=repo,
-            branch=branch,
-            k=k,
-            path_prefix=prefix,
-            commit=commit,
-            session=session,
-            thread_n=thread_n,
+            q, repo=repo, branch=branch, k=k, path_prefix=prefix, commit=commit, session=session, thread_n=thread_n
         )
         if isinstance(out, str):
             return PlainTextResponse(out)
@@ -412,7 +473,6 @@ def repo_query(payload: Dict[str, Any]):
         return out
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 @app.post("/app/api/repo/plan", response_model=None)
 async def repo_plan(request: Request) -> Response:
@@ -432,7 +492,7 @@ async def repo_plan(request: Request) -> Response:
     session = payload.get("session")
     thread_n = payload.get("thread_n")
 
-    # Optional caller-provided checks (regex lists)
+    # Optional checks/lint inputs from caller
     checks = payload.get("checks") or {}
     required = checks.get("required") or []
     forbidden = checks.get("forbidden") or []
@@ -454,60 +514,43 @@ async def repo_plan(request: Request) -> Response:
     accept = (request.headers.get("accept") or "").lower()
     wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
 
-    # Build/obtain patch text (for both JSON & patch modes)
+    # Patch text (from model or from out['patch'])
     raw_patch = (out.get("patch") if isinstance(out, dict) else None) or ""
     if not raw_patch:
-        # generate from prompt when available
+        # fallback: try to generate from a prompt the agent returned
         raw_patch = generate_patch_from_prompt(out.get("prompt", "")) or ""
 
-    # Sanitize/gate before linting/return
+    # Sanitize / normalize
     sanitized, stats = _sanitize_patch_text(raw_patch)
     is_sanitized = (sanitized != (raw_patch or "").strip())
+
+    # Secondary structural pass (currently a no-op hook; keep for future)
+    sanitized, struct_stats = _fix_patch_structure(sanitized)
+    if struct_stats:
+        is_sanitized = True
+        stats = (stats or {})
+        stats.update(struct_stats)
+
+    # Optional local PowerShell fixer (Windows dev only)
+    sanitized = _maybe_run_powershell_fix(sanitized)
+
     if wants_patch:
-        # For patch responses, enforce structure up front
         if not _looks_like_unified_diff(sanitized):
             return PlainTextResponse(
-                "No patch generated or invalid diff. Re-run in JSON mode and fix the plan.",
+                "No patch generated or invalid diff.",
                 status_code=400,
                 media_type="text/plain",
             )
+        headers = {
+            "x-rms-sanitized": "true" if is_sanitized else "false",
+            "x-rms-sanitizer-stats": json.dumps(stats or {}),
+        }
+        return PlainTextResponse(sanitized, media_type="text/x-patch; charset=utf-8", headers=headers)
 
-    # Lint the (sanitized) patch
-    lint = lint_patch(
-        patch=sanitized,
-        path_prefix=prefix,
-        required=required,
-        forbidden=forbidden,
-        max_files=max_files,
-        max_bytes=max_bytes,
-    )
-    followup = None if lint["ok"] else make_followup_prompt(task=task, issues=lint["issues"], path_prefix=prefix)
+    # Otherwise, return a JSON plan (legacy behavior)
+    return JSONResponse(out)
 
-    if not wants_patch:
-        # JSON mode: include linter results + ready-to-send followup prompt
-        enriched = dict(out)
-        enriched["lint"] = lint
-        if followup:
-            enriched["followup_prompt"] = followup
-        return JSONResponse(enriched)
-
-    # Patch mode: return plain text with headers
-    if not sanitized:
-        return PlainTextResponse(
-            "No patch generated for this task. Use JSON mode to inspect the plan/prompt.",
-            status_code=400,
-            media_type="text/plain",
-        )
-
-    headers: Dict[str, str] = {}
-    if not lint["ok"]:
-        summary = str(lint["summary"])[:180]
-        headers["X-RMS-Warnings"] = f"{summary} (+{max(0, len(lint['issues'])-1)} more)"
-    headers["X-RMS-Sanitized"] = "true" if is_sanitized else "false"
-    headers["X-RMS-Sanitizer-Stats"] = json.dumps(stats, separators=(",", ":"))
-    headers["Content-Disposition"] = 'attachment; filename="repo_plan.patch"'
-
-    return PlainTextResponse(content=sanitized, media_type="text/x-patch", headers=headers)
+# -------------------- Memory endpoints --------------------
 
 @app.post("/app/api/repo/memory/reset")
 def repo_memory_reset(payload: Dict[str, Any]):
@@ -532,13 +575,13 @@ def repo_memory_export(session: str, limit: int = 50):
         raise HTTPException(status_code=400, detail="Missing 'session'")
     return {"ok": True, "session": session, "limit": int(limit), "messages": conv.export_messages(session, limit)}
 
-# -------------------- Middleware --------------------
+# -------------------- Natural-language response middleware --------------------
+
 class NaturalLanguageMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         try:
             response = await call_next(request)
 
-            # Only transform JSONResponse payloads
             if not isinstance(response, JSONResponse):
                 return response
 
@@ -548,7 +591,7 @@ class NaturalLanguageMiddleware(BaseHTTPMiddleware):
                 async for chunk in response.body_iterator:  # type: ignore[attr-defined]
                     body_bytes += chunk
             except Exception:
-                return response  # if we can't read it, return as-is
+                return response  # return as-is if we can't read it
 
             response.body_iterator = None  # prevent double iteration
 
@@ -582,13 +625,9 @@ class NaturalLanguageMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(NaturalLanguageMiddleware)
 
-# -------------------- Helpers --------------------
+# -------------------- Helpers for router endpoint --------------------
+
 def _extract_query(query: str | None, body: Dict[str, Any] | None) -> Tuple[str | None, Dict[str, Any] | None]:
-    """
-    Accepts either:
-      - form 'query'
-      - JSON { query | prompt | q }
-    """
     if query:
         return query, body
     if body and isinstance(body, dict):
@@ -608,13 +647,13 @@ def _normalize(agent: str, raw_result: Any) -> AgentResponse:
         return {"agent": agent, "intent": "list", "data": raw_result}
     return {"agent": agent, "intent": "unknown", "message": str(raw_result)}
 
-# -------------------- Universal request endpoint (router path) --------------------
+# -------------------- Universal request endpoint --------------------
+
 @app.post("/api/request")
 @app.post("/app/api/request")
-@app.post("/api/route")       # alias to support earlier clients/tests
-@app.post("/app/api/route")   # alias to support earlier clients/tests
+@app.post("/api/route")
+@app.post("/app/api/route")
 async def handle_request(request: Request):
-    # Try JSON first (don’t declare Body param so form requests don’t get validated as JSON)
     body: Dict[str, Any] | None = None
     try:
         if request.headers.get("content-type", "").lower().startswith("application/json"):
@@ -624,7 +663,6 @@ async def handle_request(request: Request):
     except Exception:
         body = None
 
-    # Fall back to form fields
     form_query: str | None = None
     if body is None:
         try:
@@ -663,6 +701,7 @@ async def handle_request(request: Request):
     return JSONResponse(natural)
 
 # -------------------- Static frontend (SPA at /app) --------------------
+
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 if os.path.isdir(static_dir):

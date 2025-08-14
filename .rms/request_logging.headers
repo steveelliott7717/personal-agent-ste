@@ -1,11 +1,11 @@
 HTTP/1.1 200 OK
-date: Thu, 14 Aug 2025 19:30:42 GMT
+date: Thu, 14 Aug 2025 22:02:20 GMT
 server: Fly/90dd1273b (2025-08-14)
 x-rms-sanitized: true
 x-rms-sanitizer-stats: {"sections":3,"newfile_hunks":2,"prefixed_lines":2,"rewritten_headers":2,"synth_hunks":0}
 content-disposition: attachment; filename="repo_plan.patch"
-content-length: 2654
+content-length: 2278
 content-type: text/x-patch; charset=utf-8
 via: 1.1 fly.io, 1.1 fly.io
-fly-request-id: 01K2N10BBZ8GTR6RBZEMNK9EHY-ord
+fly-request-id: 01K2N9NZ5MXRBNDKD70RJZHWAZ-ord
 

@@ -1,0 +1,8 @@
+{
+    "task": "STRICT FOLLOW-UP (rebase only): Re-emit ONLY the backend/main.py modification for the request logging + correlation ID task, rebased on the CURRENT repo state. Do NOT touch other files unless strictly necessary. Preserve functionality: (1) call configure_logging() once at startup; (2) register RequestLoggingMiddleware. Constraints: scope strictly backend/; minimal changes; no response shape changes; no heavy deps.\n\nDiff requirements:\n- Output a valid unified diff that applies cleanly with 'git apply --whitespace=fix' after CRLF→LF normalization.\n- Provide file headers in order (diff --git, --- a/…, +++ b/…), then hunks.\n- In hunks, every body line must start with ' ', '+' or '-' (no bare lines). Hunk headers must match line counts.\n\nAcceptance:\n- Patch applies cleanly on Windows after LF normalization.\n- After applying, app startup configures logging and adds RequestLoggingMiddleware (no API response changes). Verification: server boots; logs include correlation_id when LOG_REQUESTS=true.",
+    "repo": "personal-agent-ste",
+    "branch": "main",
+    "path_prefix": "backend/",
+    "k": 6,
+    "session": "s1"
+}

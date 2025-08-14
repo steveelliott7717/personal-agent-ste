@@ -1,0 +1,23 @@
+{
+  "task": "STRICT FOLLOW-UP (structure only): Re-emit the SAME request logging + correlation ID change set as a valid unified diff that applies cleanly. Do not change functionality. Scope strictly backend/.\n\nRequirements:\n1) Each file section must appear in order: 'diff --git a/<path> b/<path>' ; optional 'index …' ; '--- a/<path>' (or '--- /dev/null' for new files) ; '+++ b/<path>' ; then hunks.\n2) NEW files ('--- /dev/null'): every body line in hunks MUST start with '+'.\n3) MODIFIED files (e.g., backend/main.py): every hunk body line MUST start with ' ', '+' or '-' (no bare lines). If needed, split into multiple hunks or add context so headers match bodies.\n4) All hunk headers must match the exact number of added/removed/context lines. Ensure the patch ends with a trailing newline.\n5) No markdown fences, no C-style block comments, no ellipses.\n\nAcceptance:\n- After CRLF→LF normalization, 'git apply --check' then 'git apply --whitespace=fix' succeed on Windows.\n\nScope reminder (no new functionality):\n- backend/logging_utils.py (new) — ContextVar utils + CorrelationIdFilter + configure_logging().\n- backend/middleware/request_logging.py (new) — RequestLoggingMiddleware (UUID4, request.state.correlation_id, LOG_REQUESTS toggle, start/end logs, clear token in finally).\n- backend/main.py (modified) — call configure_logging() once; register RequestLoggingMiddleware; no response shape changes.",
+  "repo": "personal-agent-ste",
+  "branch": "main",
+  "path_prefix": "backend/",
+  "k": 8,
+  "session": "s1",
+  "checks": {
+    "required": [
+      "^diff --git a/backend/",
+      "^(?:new file mode 100644|--- a/backend/|--- /dev/null)$",
+      "^\\+\\+\\+ b/backend/",
+      "^@@ -\\d+(?:,\\d+)? \\+\\d+(?:,\\d+)? @@"
+    ],
+    "forbidden": [
+      "```",
+      "/\\*.*?\\*/",
+      "^\\s*\\.\\.\\.\\s*$"
+    ],
+    "max_files": 10,
+    "max_bytes": 120000
+  }
+}
