@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, File
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from starlette.middleware.base import BaseHTTPMiddleware
-
+from backend.utils.patch_linter import lint_patch, make_followup_prompt
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -89,14 +89,9 @@ def repo_query(payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+
 @app.post("/app/api/repo/plan", response_model=None)
 async def repo_plan(request: Request) -> Response:
-    """
-    Default: return JSON plan (backward compatible).
-    Patch mode: return text/x-patch unified diff when:
-      - query param ?format=patch OR
-      - Accept header contains text/x-patch or text/x-diff
-    """
     try:
         payload: Dict[str, Any] = await request.json()
     except Exception:
@@ -105,12 +100,20 @@ async def repo_plan(request: Request) -> Response:
     task = payload.get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
+
     repo   = payload.get("repo", "personal-agent-ste")
     branch = payload.get("branch", "main")
-    prefix = payload.get("path_prefix")
+    prefix = payload.get("path_prefix")  # e.g., "backend/"
     k      = int(payload.get("k", 12))
     session = payload.get("session")
     thread_n = payload.get("thread_n")
+
+    # Optional caller-provided checks (regex lists)
+    checks = payload.get("checks") or {}
+    required = checks.get("required") or []
+    forbidden = checks.get("forbidden") or []
+    max_files = checks.get("max_files")
+    max_bytes = checks.get("max_bytes")
 
     out = propose_changes(
         task,
@@ -127,22 +130,46 @@ async def repo_plan(request: Request) -> Response:
     accept = (request.headers.get("accept") or "").lower()
     wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
 
-    if not wants_patch:
-        return JSONResponse(out)
-
-    patch_text = out.get("patch") if isinstance(out, dict) else None
+    # Produce (or fetch) patch text when needed for linting (we lint even if returning JSON)
+    patch_text = (out.get("patch") if isinstance(out, dict) else None) or ""
     if not patch_text:
-        patch_text = generate_patch_from_prompt(out.get("prompt", ""))
+        # generate from prompt when available
+        patch_text = generate_patch_from_prompt(out.get("prompt", "")) or ""
 
+    # Run linter against produced patch (if any)
+    lint = lint_patch(
+        patch=patch_text,
+        path_prefix=prefix,
+        required=required,
+        forbidden=forbidden,
+        max_files=max_files,
+        max_bytes=max_bytes,
+    )
+    followup = None if lint["ok"] else make_followup_prompt(task=task, issues=lint["issues"], path_prefix=prefix)
+
+    if not wants_patch:
+        # JSON mode: include linter results + ready-to-send followup prompt
+        enriched = dict(out)
+        enriched["lint"] = lint
+        if followup:
+            enriched["followup_prompt"] = followup
+        return JSONResponse(enriched)
+
+    # Patch mode: return plain text with warning headers (if any)
     if not patch_text:
         return PlainTextResponse(
-            "No patch generated for this task. Use default JSON mode to inspect the plan/prompt.",
+            "No patch generated for this task. Use JSON mode to inspect the plan/prompt.",
             status_code=400,
             media_type="text/plain",
         )
 
-    return PlainTextResponse(content=patch_text, media_type="text/x-patch")
+    headers = {}
+    if not lint["ok"]:
+        # Keep headers short; first issue as summary + count
+        summary = str(lint["summary"])[:180]
+        headers["X-RMS-Warnings"] = f"{summary} (+{max(0, len(lint['issues'])-1)} more)"
 
+    return PlainTextResponse(content=patch_text, media_type="text/x-patch", headers=headers)
 
 @app.post("/app/api/repo/memory/reset")
 def repo_memory_reset(payload: Dict[str, Any]):
