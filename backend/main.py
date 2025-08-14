@@ -49,6 +49,10 @@ def root_redirect():
     return RedirectResponse(url="/app/")
 
 # -------------------- Sanitizer / gate for patch responses --------------------
+# -------------------- Sanitizer / gate for patch responses --------------------
+import re
+import json  # ensure json is imported for headers later
+
 # Strip wrappers/noise first
 _CODEBLOCK_RE     = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 _CBLOCK_RE        = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -60,28 +64,96 @@ _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
 #   2-number: @@ -0,0 +20 @@  (start omitted on + side)
 _HUNK_HDR_RE_ANY = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@")
 
-def _is_file_header(l: str) -> bool:
-    return (
-        l.startswith("diff --git ") or
-        l.startswith("index ") or
-        l.startswith("--- ") or
-        l.startswith("+++ ") or
-        l.startswith("new file mode ") or
-        l.startswith("deleted file mode ") or
-        l.startswith("rename from ") or
-        l.startswith("rename to ")
-    )
+# diff --git line
+_DIFF_GIT_RE = re.compile(r"^diff --git a/(.+?) b/(.+?)$")
 
 def _unwrap_and_clean(text: str) -> str:
     if not text:
         return ""
     m = _CODEBLOCK_RE.search(text)
     s = (m.group("body") if m else text)
-    # Normalize to LF early; remove C-style blocks and standalone ellipses
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = _CBLOCK_RE.sub("", s)
-    s = _ELLIPSIS_LINE_RE.sub("", s)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")  # normalize to LF
+    s = _CBLOCK_RE.sub("", s)                        # strip C-style block comments
+    s = _ELLIPSIS_LINE_RE.sub("", s)                 # strip standalone ellipsis lines
     return s.strip()
+
+def _ensure_file_headers(text: str) -> str:
+    """
+    Guarantee every '@@ ... @@' hunk sits under a valid file header within its section.
+    If a hunk appears before '---'/'+++':
+      - Insert '--- /dev/null' if the section has 'new file mode'
+      - Else insert '--- a/<path>' (path from 'diff --git')
+      - Always insert '+++ b/<path>'
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+
+    in_section = False
+    have_old = False
+    have_new = False
+    new_file_mode = False
+    current_path_b: str | None = None  # from 'diff --git a/<a> b/<b>'
+
+    def start_section():
+        nonlocal have_old, have_new, new_file_mode
+        have_old = False
+        have_new = False
+        new_file_mode = False
+
+    for i, l in enumerate(lines):
+        if l.startswith("diff --git "):
+            # New section
+            in_section = True
+            start_section()
+            m = _DIFF_GIT_RE.match(l)
+            current_path_b = m.group(2) if m else None
+            out.append(l)
+            continue
+
+        if not in_section:
+            out.append(l)
+            continue
+
+        if l.startswith("new file mode "):
+            new_file_mode = True
+            out.append(l)
+            continue
+
+        if l.startswith("--- "):
+            have_old = True
+            out.append(l)
+            continue
+
+        if l.startswith("+++ "):
+            have_new = True
+            out.append(l)
+            continue
+
+        if l.startswith("@@ "):
+            # If hunks appear without headers in this section, synthesize them
+            if not have_old or not have_new:
+                # We need a path to build headers
+                path_b = current_path_b or ""
+                if new_file_mode:
+                    out.append("--- /dev/null")
+                else:
+                    out.append(f"--- a/{path_b}")
+                out.append(f"+++ b/{path_b}")
+                have_old = True
+                have_new = True
+            out.append(l)
+            continue
+
+        # A new file header line also resets have_old/have_new if we see another 'diff --git'
+        if l.startswith("index ") or l.startswith("rename from ") or l.startswith("rename to "):
+            # index/rename lines appear between diff and headers; leave flags as-is
+            out.append(l)
+            continue
+
+        # Any other line is part of hunks or context; just pass through
+        out.append(l)
+
+    return "\n".join(out)
 
 def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
     """
@@ -122,6 +194,14 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
         plus_count = 0
         hunk_is_newfile = False
 
+    def is_file_header(l: str) -> bool:
+        return (
+            l.startswith("diff --git ") or l.startswith("index ") or
+            l.startswith("--- ") or l.startswith("+++ ") or
+            l.startswith("new file mode ") or l.startswith("deleted file mode ") or
+            l.startswith("rename from ") or l.startswith("rename to ")
+        )
+
     for l in lines:
         if l.startswith("diff --git "):
             flush_hunk()
@@ -159,7 +239,7 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
             plus_count = 0
             continue
 
-        if _is_file_header(l):
+        if is_file_header(l):
             flush_hunk()
             in_hunk = False
             out.append(l)
@@ -187,8 +267,13 @@ def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
     }
 
 def _sanitize_patch_text(text: str) -> tuple[str, dict]:
-    """Strip junk, then auto-fix all new-file hunks. Returns (sanitized_text, debug_stats)."""
+    """
+    1) Unwrap + normalize, strip forbidden patterns
+    2) Ensure each hunk has proper file headers (---/+++), synthesizing as needed
+    3) Auto-fix all new-file hunks (+ prefixes and header lengths)
+    """
     s = _unwrap_and_clean(text)
+    s = _ensure_file_headers(s)
     fixed, stats = _auto_fix_newfile_hunks(s)
     return fixed, stats
 
@@ -199,6 +284,7 @@ def _looks_like_unified_diff(text: str) -> bool:
         return True
     # fallback: single-file unified diff with ---/+++ present
     return text.startswith("--- ") and ("\n+++ " in text)
+
 
 # -------------------- Repo endpoints (bypass router) --------------------
 @app.post("/app/api/repo/query")

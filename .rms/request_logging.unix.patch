@@ -1,96 +1,110 @@
+HTTP/1.1 200 OK
+date: Thu, 14 Aug 2025 18:51:46 GMT
+server: Fly/90dd1273b (2025-08-14)
+x-rms-sanitized: true
+x-rms-sanitizer-stats: {"sections":3,"newfile_hunks":2,"prefixed_lines":2,"rewritten_headers":2}
+content-disposition: attachment; filename="repo_plan.patch"
+content-length: 3177
+content-type: text/x-patch; charset=utf-8
+via: 1.1 fly.io, 1.1 fly.io
+fly-request-id: 01K2MYS1SKSG4AN4V07KGJ1RX0-ord
+
 diff --git a/backend/logging_utils.py b/backend/logging_utils.py
 new file mode 100644
 --- /dev/null
 +++ b/backend/logging_utils.py
-@@ -0,0 +1,20 @@
-import logging
-import os
-import uuid
-from contextvars import ContextVar
-
-correlation_id_var = ContextVar("correlation_id", default=None)
-
-class CorrelationIdFilter(logging.Filter):
-    def filter(self, record):
-        record.correlation_id = correlation_id_var.get()
-        return True
-
-def set_correlation_id(value):
-    token = correlation_id_var.set(value)
-    return token
-
-def clear_correlation_id(token):
-    correlation_id_var.reset(token)
-
-def configure_logging(level=logging.INFO):
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(levelname)s - %(message)s - %(correlation_id)s',
-    )
-    logging.getLogger().addFilter(CorrelationIdFilter())
-
-# RMS GPT no-op touch: 2023-10-05T12:00:00Z  (Python)
-
+@@ -0,0 +1,28 @@
++# backend/logging_utils.py
++import logging
++import os
++import uuid
++from contextvars import ContextVar
++
++correlation_id_var = ContextVar("correlation_id", default=None)
++
++class CorrelationIdFilter(logging.Filter):
++    def filter(self, record):
++        record.correlation_id = correlation_id_var.get() or "N/A"
++        return True
++
++def set_correlation_id(value: str) -> str:
++    token = correlation_id_var.set(value)
++    return token
++
++def clear_correlation_id(token: str) -> None:
++    correlation_id_var.reset(token)
++
++def configure_logging(level=logging.INFO) -> None:
++    logging.basicConfig(
++        level=level,
++        format='%(asctime)s - %(levelname)s - %(message)s - %(correlation_id)s'
++    )
++
++configure_logging()
++
 diff --git a/backend/middleware/request_logging.py b/backend/middleware/request_logging.py
 new file mode 100644
 --- /dev/null
 +++ b/backend/middleware/request_logging.py
-@@ -0,0 +1,34 @@
-import time
-import logging
-import os
-import uuid
-from starlette.middleware.base import BaseHTTPMiddleware
-from backend.logging_utils import set_correlation_id, clear_correlation_id
-
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        if os.getenv("LOG_REQUESTS", "true").lower() != "true":
-            return await call_next(request)
-
-        correlation_id = str(uuid.uuid4())
-        token = set_correlation_id(correlation_id)
-
-        start_time = time.time()
-        response = await call_next(request)
-        duration_ms = (time.time() - start_time) * 1000
-
-        logging.info(
-            "Request start",
-            extra={"method": request.method, "path": request.url.path, "correlation_id": correlation_id}
-        )
-        logging.info(
-            "Request end",
-            extra={"status": response.status_code, "duration_ms": duration_ms, "correlation_id": correlation_id}
-        )
-
-        clear_correlation_id(token)
-        return response
-
-# RMS GPT no-op touch: 2023-10-05T12:00:00Z  (Python)
-
+@@ -0,0 +1,40 @@
++# backend/middleware/request_logging.py
++import time
++import logging
++from starlette.middleware.base import BaseHTTPMiddleware
++from starlette.requests import Request
++from starlette.responses import Response
++from backend.logging_utils import set_correlation_id, clear_correlation_id
++import os
++import uuid
++
++class RequestLoggingMiddleware(BaseHTTPMiddleware):
++    async def dispatch(self, request: Request, call_next):
++        if os.getenv("LOG_REQUESTS", "true").lower() != "true":
++            return await call_next(request)
++
++        correlation_id = str(uuid.uuid4())
++        token = set_correlation_id(correlation_id)
++        start_time = time.time()
++
++        try:
++            response: Response = await call_next(request)
++            duration_ms = (time.time() - start_time) * 1000
++            logging.info(
++                "Request start: %s %s - correlation_id: %s",
++                request.method,
++                request.url.path,
++                correlation_id
++            )
++            logging.info(
++                "Request end: %s %s - status: %d - duration: %.2f ms - correlation_id: %s",
++                request.method,
++                request.url.path,
++                response.status_code,
++                duration_ms,
++                correlation_id
++            )
++            return response
++        finally:
++            clear_correlation_id(token)
++
 diff --git a/backend/main.py b/backend/main.py
 @@ -10,6 +10,7 @@
 from fastapi import FastAPI, Request, HTTPException
++from backend.middleware.request_logging import RequestLoggingMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-+from backend.logging_utils import configure_logging
 from starlette.middleware.base import BaseHTTPMiddleware
++from backend.logging_utils import configure_logging
 
-from dotenv import load_dotenv
 load_dotenv()
-@@ -12,6 +13,7 @@
+ 
 app = FastAPI(title="Personal Agent API")
 +configure_logging()
 
-# backend/main.py
-from fastapi import FastAPI
-import os
+app.add_middleware(RequestLoggingMiddleware)
 
-app = FastAPI()
-@@ -225,6 +227,7 @@
-app.add_middleware(NaturalLanguageMiddleware)
-+app.add_middleware(RequestLoggingMiddleware)
-
-# RMS GPT no-op touch: 2023-10-05T12:00:00Z  (Python)
+# -------------------- Health --------------------
+@app.get("/health")
+def health():
+    return {"status": "ok"}
