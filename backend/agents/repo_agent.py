@@ -20,7 +20,33 @@ REPO_BRANCH = os.getenv("RMS_BRANCH", "main")
 EMBED_MODEL = os.getenv("RMS_EMBED_MODEL", "text-embedding-3-small")
 CHAT_MODEL = os.getenv("RMS_CHAT_MODEL", "gpt-5")  # keep placeholder; you can change later
 
+# Baseline system prompt (can be disabled or extended via env; see _build_system_prompt)
+DEFAULT_RMS_SYSTEM_PROMPT = (
+    "You are RMS GPT, a repo modification and Q&A assistant.\n"
+    "- When planning changes, produce unified diffs (git-apply ready) and minimal, reversible edits.\n"
+    "- Do NOT invent databases, schemas, or large frameworks; keep scope to the task and acceptance criteria.\n"
+    "- Respect path_prefix and avoid unrelated files.\n"
+    "- Prefer small, safe patches with clear verification steps.\n"
+    "- If uncertain, state assumptions and keep changes minimal."
+)
+
 _openai = OpenAI()
+
+
+def _build_system_prompt() -> Optional[str]:
+    """
+    Returns the effective baseline system prompt or None if disabled.
+    Env:
+      - RMS_BASE_PROMPT_DISABLE=true  -> disable entirely
+      - RMS_BASE_PROMPT               -> appended after baseline (team-specific guardrails)
+    """
+    if str(os.getenv("RMS_BASE_PROMPT_DISABLE", "")).lower() == "true":
+        return None
+    base = DEFAULT_RMS_SYSTEM_PROMPT.strip()
+    extra = (os.getenv("RMS_BASE_PROMPT") or "").strip()
+    if extra:
+        return f"{base}\n\n{extra}"
+    return base
 
 
 def _last_n_messages(session: str, n: int = 10) -> list[dict]:
@@ -133,9 +159,17 @@ def propose_changes(
         cite = _format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
         ctx_parts.append(f"{cite}\n```\n{h['content']}\n```")
 
-    # You can later swap to a full “planning” prompt. For now, just echo.
+    baseline = _build_system_prompt()
+    header = f"SYSTEM\n{baseline}\n\n" if baseline else ""
+
+    # You can later swap to a full “planning” prompt. For now, include baseline explicitly.
     draft = "No automatic changes proposed in this stub."
-    return {"hits": hits, "draft": draft, "prompt": f"TASK\n{task}\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")}
+    return {
+        "hits": hits,
+        "draft": draft,
+        "prompt": header + "TASK\n" + task + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)"),
+        "meta": {"system_prompt": baseline} if baseline else {"system_prompt": None},
+    }
 
 
 # ---------- Repo Q&A / Endpoint handler ----------
@@ -167,6 +201,7 @@ def answer_about_repo(
             "answer": "pong",
             "session": session,
             "thread_n": thread_n,
+            "meta": {"system_prompt": _build_system_prompt()},
         }
 
     # --- Session memory: explicit store
@@ -178,6 +213,7 @@ def answer_about_repo(
             "answer": "Acknowledged. I’ll remember this for this session.",
             "session": session,
             "thread_n": thread_n,
+            "meta": {"system_prompt": _build_system_prompt()},
         }
 
     # --- Session memory: recall
@@ -190,6 +226,7 @@ def answer_about_repo(
                 "answer": f"The token is: {recalled}",
                 "session": session,
                 "thread_n": thread_n,
+                "meta": {"system_prompt": _build_system_prompt()},
             }
         else:
             return {
@@ -198,6 +235,7 @@ def answer_about_repo(
                 "answer": "I don’t have a token stored for this session yet.",
                 "session": session,
                 "thread_n": thread_n,
+                "meta": {"system_prompt": _build_system_prompt()},
             }
 
     # --- Normal RMS-backed Q&A ---
@@ -210,6 +248,7 @@ def answer_about_repo(
             "message": f"embedding failed: {getattr(e, 'message', None) or str(e)}",
             "session": session,
             "thread_n": thread_n,
+            "meta": {"system_prompt": _build_system_prompt()},
         }
 
     # choose dims + rpc via helper; collect top-k hits
@@ -226,6 +265,7 @@ def answer_about_repo(
             },
             "session": session,
             "thread_n": thread_n,
+            "meta": {"system_prompt": _build_system_prompt()},
         }
 
     # Build a concise, cite-aware answer by concatenating contexts (simple baseline)
@@ -244,6 +284,7 @@ def answer_about_repo(
         "hits": hits,
         "session": session,
         "thread_n": thread_n,
+        "meta": {"system_prompt": _build_system_prompt()},
     }
 
 
