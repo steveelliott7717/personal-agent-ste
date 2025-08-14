@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import json
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Union
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse, PlainTextResponse
@@ -16,7 +16,7 @@ load_dotenv()
 
 # ✅ package-qualified imports (works when running: uvicorn backend.main:app)
 from backend.agents.router_agent import route_request
-from backend.agents.repo_agent import propose_changes, answer_about_repo
+from backend.agents.repo_agent import propose_changes, answer_about_repo, generate_patch_from_prompt
 from backend.utils.nl_formatter import ensure_natural
 from backend.utils.agent_protocol import AgentResponse
 from backend.services import conversation as conv
@@ -81,7 +81,7 @@ def repo_query(payload: Dict[str, Any]):
         if isinstance(out, str):
             return PlainTextResponse(out)
         if isinstance(out, dict) and out.get("agent") == "repo":
-            text = out.get("answer") or out.get("message") or out.get("data") or out.get("text") or json.dumps(out, ensure_ascii=False)
+            text = out.get("answer") or out.get("message") or out.get("data") or json.dumps(out, ensure_ascii=False)
             return PlainTextResponse(str(text))
         return out
     except Exception as e:
@@ -90,7 +90,18 @@ def repo_query(payload: Dict[str, Any]):
 
 
 @app.post("/app/api/repo/plan")
-def repo_plan(payload: Dict[str, Any]):
+async def repo_plan(request: Request) -> Union[JSONResponse, PlainTextResponse, Dict[str, Any]]:
+    """
+    Default: return JSON plan (backward compatible).
+    Patch mode: return text/x-patch unified diff when:
+      - query param ?format=patch OR
+      - Accept header contains text/x-patch or text/x-diff
+    """
+    try:
+        payload: Dict[str, Any] = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
     task = payload.get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
@@ -111,7 +122,30 @@ def repo_plan(payload: Dict[str, Any]):
         session=session,
         thread_n=thread_n,
     )
-    return out
+
+    # Decide response format
+    fmt = (request.query_params.get("format") or "").lower()
+    accept = (request.headers.get("accept") or "").lower()
+    wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
+
+    if not wants_patch:
+        # Backward-compatible JSON (NaturalLanguageMiddleware will pretty it)
+        return out
+
+    # Patch mode: if caller wants a diff, try to use an existing 'patch' field first; otherwise generate from prompt.
+    patch_text = out.get("patch") if isinstance(out, dict) else None
+    if not patch_text:
+        patch_text = generate_patch_from_prompt(out.get("prompt", ""))
+
+    if not patch_text:
+        # No patch could be produced for this task
+        return PlainTextResponse(
+            "No patch generated for this task. Use default JSON mode to inspect the plan/prompt.",
+            status_code=400,
+            media_type="text/plain",
+        )
+
+    return PlainTextResponse(content=patch_text, media_type="text/x-patch")
 
 
 @app.post("/app/api/repo/memory/reset")

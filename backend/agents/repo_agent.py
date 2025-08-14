@@ -203,6 +203,109 @@ def _recall_session_token(session: Optional[str]) -> Optional[str]:
     return None
 
 
+# ---------- Patch-generation helpers (NEW) ----------
+
+_CODEBLOCK_RE = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
+
+def _extract_patch_from_text(text: str) -> Optional[str]:
+    """
+    Try to extract a unified diff from model output. Accepts fenced or raw text.
+    """
+    if not text:
+        return None
+    m = _CODEBLOCK_RE.search(text)
+    candidate = (m.group("body") if m else text).strip()
+    # Heuristics for a valid unified diff
+    if candidate.startswith("diff --git"):
+        return candidate
+    if candidate.startswith("--- ") or candidate.startswith("+++ "):
+        return candidate
+    for header in ("diff --git", "--- ", "+++ "):
+        idx = candidate.find(header)
+        if idx != -1:
+            return candidate[idx:].strip()
+    return None
+
+
+def _coalesce_response_text(resp: Any) -> str:
+    """
+    Best-effort extraction across OpenAI client variants.
+    """
+    if not resp:
+        return ""
+    try:
+        if hasattr(resp, "output_text"):
+            return resp.output_text or ""
+    except Exception:
+        pass
+    try:
+        if getattr(resp, "choices", None):
+            return resp.choices[0].message.content or ""
+    except Exception:
+        pass
+    try:
+        parts = []
+        for item in getattr(resp, "output", []) or []:
+            if getattr(item, "type", "") == "message":
+                for c in getattr(item, "content", []) or []:
+                    if getattr(c, "type", "") == "output_text":
+                        parts.append(getattr(c, "text", ""))
+        return "\n".join(parts).strip()
+    except Exception:
+        return ""
+
+
+def generate_patch_from_prompt(
+    prompt: str,
+    model_env: str = "RMS_PATCH_MODEL",
+    default_model: str = "gpt-4o-mini",
+    temperature: float = 0.0,
+) -> Optional[str]:
+    """
+    Ask the LLM to emit a unified diff ONLY (no fences, no prose).
+    Returns None if not configured or output doesn't look like a diff.
+    """
+    if not prompt:
+        return None
+    model = os.getenv(model_env, default_model)
+
+    system_msg = (
+        "You output software patches as unified diffs ONLY. "
+        "No prose, no explanations, no code fences."
+    )
+    user_msg = (
+        "Produce a unified diff patch for the following repo task. "
+        "Output ONLY the diff. No backticks, no commentary.\n\n"
+        f"{prompt}"
+    )
+
+    try:
+        resp = _openai.responses.create(
+            model=model,
+            temperature=temperature,
+            input=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+        text = _coalesce_response_text(resp)
+    except Exception:
+        try:
+            resp = _openai.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+            )
+            text = (resp.choices[0].message.content if resp and resp.choices else "") or ""
+        except Exception:
+            text = ""
+
+    return _extract_patch_from_text(text)
+
+
 # ---------- “Propose changes” (kept minimal for completeness) ----------
 
 def propose_changes(
@@ -230,13 +333,17 @@ def propose_changes(
     baseline = _build_system_prompt()
     header = f"SYSTEM\n{baseline}\n\n" if baseline else ""
 
-    # You can later swap to a full “planning” prompt. For now, include baseline explicitly.
     draft = "No automatic changes proposed in this stub."
+    prompt = header + "TASK\n" + task + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")
+
+    # Back-compat JSON (additive hints for callers)
     return {
         "hits": hits,
         "draft": draft,
-        "prompt": header + "TASK\n" + task + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)"),
+        "prompt": prompt,
         "meta": {"system_prompt": baseline} if baseline else {"system_prompt": None},
+        "summary": "Repo plan generated (JSON mode). Use patch mode to fetch a diff.",
+        "patch_present": False,
     }
 
 
