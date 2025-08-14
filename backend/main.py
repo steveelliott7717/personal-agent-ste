@@ -5,7 +5,7 @@ import os
 import json
 from typing import Any, Dict, Tuple, Union
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -89,8 +89,8 @@ def repo_query(payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/app/api/repo/plan")
-async def repo_plan(request: Request) -> Union[JSONResponse, PlainTextResponse, Dict[str, Any]]:
+@app.post("/app/api/repo/plan", response_model=None)
+async def repo_plan(request: Request) -> Response:
     """
     Default: return JSON plan (backward compatible).
     Patch mode: return text/x-patch unified diff when:
@@ -107,7 +107,7 @@ async def repo_plan(request: Request) -> Union[JSONResponse, PlainTextResponse, 
         raise HTTPException(status_code=400, detail="Missing 'task'")
     repo   = payload.get("repo", "personal-agent-ste")
     branch = payload.get("branch", "main")
-    prefix = payload.get("path_prefix")  # e.g., "backend/" or "frontend/"
+    prefix = payload.get("path_prefix")
     k      = int(payload.get("k", 12))
     session = payload.get("session")
     thread_n = payload.get("thread_n")
@@ -123,22 +123,18 @@ async def repo_plan(request: Request) -> Union[JSONResponse, PlainTextResponse, 
         thread_n=thread_n,
     )
 
-    # Decide response format
     fmt = (request.query_params.get("format") or "").lower()
     accept = (request.headers.get("accept") or "").lower()
     wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
 
     if not wants_patch:
-        # Backward-compatible JSON (NaturalLanguageMiddleware will pretty it)
-        return out
+        return JSONResponse(out)
 
-    # Patch mode: if caller wants a diff, try to use an existing 'patch' field first; otherwise generate from prompt.
     patch_text = out.get("patch") if isinstance(out, dict) else None
     if not patch_text:
         patch_text = generate_patch_from_prompt(out.get("prompt", ""))
 
     if not patch_text:
-        # No patch could be produced for this task
         return PlainTextResponse(
             "No patch generated for this task. Use default JSON mode to inspect the plan/prompt.",
             status_code=400,
