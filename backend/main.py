@@ -48,88 +48,87 @@ def repo_health():
 def root_redirect():
     return RedirectResponse(url="/app/")
 
-# -------------------- Minimal sanitizer/gate for patch responses --------------------
-# --- begin sanitizer/gate helpers (REPLACE your existing block) ---
-import re
-
+# -------------------- Sanitizer / gate for patch responses --------------------
 # Strip wrappers/noise first
 _CODEBLOCK_RE     = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 _CBLOCK_RE        = re.compile(r"/\*.*?\*/", re.DOTALL)
 _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
 
-# Hunk header patterns:
+# Hunk headers:
 #   4-number: @@ -a,b +c,d @@
-#   2-number: @@ -a +c,d @@   (old len omitted)  OR  @@ -a,b +d @@ (new len omitted)
-#   Some models also emit:     @@ -0,0 +20 @@     (i.e., +start omitted, +len present)
-_HUNK_HDR_RE_ANY = re.compile(
-    r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@"
-)
+#   3-number: @@ -a,b +d @@   (new len only)  OR  @@ -a +c,d @@ (old len omitted)
+#   2-number: @@ -0,0 +20 @@  (start omitted on + side)
+_HUNK_HDR_RE_ANY = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@")
 
-def _auto_fix_newfile_hunks_for_all(text: str) -> str:
+def _is_file_header(l: str) -> bool:
+    return (
+        l.startswith("diff --git ") or
+        l.startswith("index ") or
+        l.startswith("--- ") or
+        l.startswith("+++ ") or
+        l.startswith("new file mode ") or
+        l.startswith("deleted file mode ") or
+        l.startswith("rename from ") or
+        l.startswith("rename to ")
+    )
+
+def _unwrap_and_clean(text: str) -> str:
+    if not text:
+        return ""
+    m = _CODEBLOCK_RE.search(text)
+    s = (m.group("body") if m else text)
+    # Normalize to LF early; remove C-style blocks and standalone ellipses
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = _CBLOCK_RE.sub("", s)
+    s = _ELLIPSIS_LINE_RE.sub("", s)
+    return s.strip()
+
+def _auto_fix_newfile_hunks(text: str) -> tuple[str, dict]:
     """
-    Normalize ANY new-file hunk so it's git-apply-ready:
-      - A hunk is 'new file' if the section has '--- /dev/null' OR the minus-length is 0 (or omitted/empty).
-      - Inside those hunks, every content line MUST start with '+' (unless already '+', '-', ' ', or '\\').
-      - After fixing, rewrite the header to '@@ -0,0 +<start>,<len> @@' where <len> equals the '+' line count.
-      - Supports multiple files and hunks. Does NOT touch modified/deleted hunks.
+    Brute-force, hunk-aware normalizer:
+      - Marks a hunk as 'new file' if the section has '--- /dev/null' OR minus-len == 0 (or omitted while minus-start == 0).
+      - Inside such hunks, prefixes '+' on any non-control line (including empty lines).
+      - Rewrites header to '@@ -0,0 +<start>,<len> @@' where <len> is the actual '+' count.
+      - Returns (fixed_text, debug_stats).
     """
     if not text:
-        return text
+        return "", {"sections": 0, "newfile_hunks": 0, "prefixed_lines": 0, "rewritten_headers": 0}
 
     lines = text.split("\n")
     out: list[str] = []
+
+    sections = 0
+    newfile_hunks = 0
+    prefixed = 0
+    rewritten = 0
 
     in_section = False
     section_saw_devnull = False
     in_hunk = False
     hunk_is_newfile = False
-    hunk_hdr_idx: int | None = None
+    hdr_idx: int | None = None
     plus_start = 1
     plus_count = 0
 
-    def is_file_header(l: str) -> bool:
-        return (
-            l.startswith("diff --git ")
-            or l.startswith("index ")
-            or l.startswith("--- ")
-            or l.startswith("+++ ")
-            or l.startswith("new file mode ")
-            or l.startswith("deleted file mode ")
-            or l.startswith("rename from ")
-            or l.startswith("rename to ")
-        )
-
-    def parse_hunk_header(hdr: str) -> tuple[int, int | None, int | None, int | None]:
-        """
-        Returns (minus_start, minus_len, plus_start, plus_len) where the *_len may be None if omitted.
-        """
-        m = _HUNK_HDR_RE_ANY.match(hdr)
-        if not m:
-            return (0, None, None, None)
-        ms = int(m.group(1))
-        ml = int(m.group(2)) if m.group(2) is not None else None
-        ps = int(m.group(3)) if m.group(3) is not None else None
-        pl = int(m.group(4)) if m.group(4) is not None else None
-        return (ms, ml, ps, pl)
-
     def flush_hunk():
-        nonlocal hunk_hdr_idx, plus_start, plus_count, hunk_is_newfile
-        if hunk_hdr_idx is not None and hunk_is_newfile:
-            # Rewrite header to canonical new-file form using actual plus_count
+        nonlocal hdr_idx, plus_start, plus_count, hunk_is_newfile, rewritten, newfile_hunks
+        if hdr_idx is not None and hunk_is_newfile:
             ps = plus_start if (plus_start and plus_start > 0) else 1
-            out[hunk_hdr_idx] = f"@@ -0,0 +{ps},{max(0, plus_count)} @@"
-        hunk_hdr_idx = None
+            out[hdr_idx] = f"@@ -0,0 +{ps},{max(0, plus_count)} @@"
+            rewritten += 1
+            newfile_hunks += 1
+        hdr_idx = None
         plus_start = 1
         plus_count = 0
         hunk_is_newfile = False
 
     for l in lines:
-        # New diff section
         if l.startswith("diff --git "):
             flush_hunk()
             in_section = True
             section_saw_devnull = False
             in_hunk = False
+            sections += 1
             out.append(l)
             continue
 
@@ -137,72 +136,69 @@ def _auto_fix_newfile_hunks_for_all(text: str) -> str:
             out.append(l)
             continue
 
-        # Track '--- /dev/null'
         if l.startswith("--- "):
             if l.strip() == "--- /dev/null":
                 section_saw_devnull = True
 
-        # Hunk header
         if l.startswith("@@ "):
             flush_hunk()
             in_hunk = True
-            hunk_hdr_idx = len(out)
+            hdr_idx = len(out)
             out.append(l)  # placeholder; may be rewritten
             # Decide if this hunk is a 'new file' hunk
-            ms, ml, ps, pl = parse_hunk_header(l)
+            ms = ml = ps = pl = None
+            m = _HUNK_HDR_RE_ANY.match(l)
+            if m:
+                ms = int(m.group(1))
+                ml = int(m.group(2)) if m.group(2) is not None else None
+                ps = int(m.group(3)) if m.group(3) is not None else None
+                pl = int(m.group(4)) if m.group(4) is not None else None
             minus_len_zero = (ml == 0) or (ml is None and ms == 0)
             hunk_is_newfile = bool(section_saw_devnull or minus_len_zero)
             plus_start = ps if (ps and ps > 0) else 1
             plus_count = 0
             continue
 
-        # Any file-level header ends a hunk
-        if is_file_header(l):
+        if _is_file_header(l):
             flush_hunk()
             in_hunk = False
             out.append(l)
             continue
 
-        # Inside hunk content
         if in_hunk and hunk_is_newfile:
-            # Prefix '+' if missing and line is not a control line
+            # Prefix '+' if missing and not a control line
             if not (l.startswith("+") or l.startswith("-") or l.startswith(" ") or l.startswith("\\")):
                 l = "+" + l
+                prefixed += 1
             if l.startswith("+"):
                 plus_count += 1
             out.append(l)
             continue
 
-        # Default passthrough
         out.append(l)
 
-    # End of file
     flush_hunk()
-    return "\n".join(out)
 
-def _sanitize_patch_text(text: str) -> str:
-    """Strip fences/comments/ellipsis, normalize LF, then fix all new-file hunks."""
-    if not text:
-        return ""
-    m = _CODEBLOCK_RE.search(text)
-    s = (m.group("body") if m else text)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    s = _CBLOCK_RE.sub("", s)
-    s = _ELLIPSIS_LINE_RE.sub("", s)
-    s = s.strip()
-    s = _auto_fix_newfile_hunks_for_all(s)
-    return s
+    return "\n".join(out), {
+        "sections": sections,
+        "newfile_hunks": newfile_hunks,
+        "prefixed_lines": prefixed,
+        "rewritten_headers": rewritten,
+    }
+
+def _sanitize_patch_text(text: str) -> tuple[str, dict]:
+    """Strip junk, then auto-fix all new-file hunks. Returns (sanitized_text, debug_stats)."""
+    s = _unwrap_and_clean(text)
+    fixed, stats = _auto_fix_newfile_hunks(s)
+    return fixed, stats
 
 def _looks_like_unified_diff(text: str) -> bool:
     if not text:
         return False
     if text.startswith("diff --git"):
         return True
+    # fallback: single-file unified diff with ---/+++ present
     return text.startswith("--- ") and ("\n+++ " in text)
-# --- end sanitizer/gate helpers ---
-
-
-
 
 # -------------------- Repo endpoints (bypass router) --------------------
 @app.post("/app/api/repo/query")
@@ -286,7 +282,7 @@ async def repo_plan(request: Request) -> Response:
         raw_patch = generate_patch_from_prompt(out.get("prompt", "")) or ""
 
     # Sanitize/gate before linting/return
-    sanitized = _sanitize_patch_text(raw_patch)
+    sanitized, stats = _sanitize_patch_text(raw_patch)
     is_sanitized = (sanitized != (raw_patch or "").strip())
     if wants_patch:
         # For patch responses, enforce structure up front
@@ -328,8 +324,8 @@ async def repo_plan(request: Request) -> Response:
     if not lint["ok"]:
         summary = str(lint["summary"])[:180]
         headers["X-RMS-Warnings"] = f"{summary} (+{max(0, len(lint['issues'])-1)} more)"
-    if is_sanitized:
-        headers["X-RMS-Sanitized"] = "true"
+    headers["X-RMS-Sanitized"] = "true" if is_sanitized else "false"
+    headers["X-RMS-Sanitizer-Stats"] = json.dumps(stats, separators=(",", ":"))
     headers["Content-Disposition"] = 'attachment; filename="repo_plan.patch"'
 
     return PlainTextResponse(content=sanitized, media_type="text/x-patch", headers=headers)
