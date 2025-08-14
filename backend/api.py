@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -81,6 +81,17 @@ def route(incoming: RouteIn):
         # attach meta if present
         if incoming.client_meta:
             payload.setdefault("meta", {})["client_meta"] = incoming.client_meta
+
+        # Special-case: if the routed agent is "repo", return text/plain for humans.
+        if (payload.get("agent") == "repo"):
+            # Prefer explicit 'answer', then 'message', then stringify the raw result.
+            text = (
+                (payload.get("answer") if isinstance(payload, dict) else None)
+                or (payload.get("message") if isinstance(payload, dict) else None)
+                or (str(result) if result is not None else "")
+            )
+            return PlainTextResponse(text)
+
         return payload
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

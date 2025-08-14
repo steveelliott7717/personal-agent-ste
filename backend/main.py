@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, Tuple
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -67,7 +67,7 @@ def repo_query(payload: Dict[str, Any]):
     thread_n = payload.get("thread_n")
 
     try:
-        return answer_about_repo(
+        out = answer_about_repo(
             q,
             repo=repo,
             branch=branch,
@@ -77,6 +77,14 @@ def repo_query(payload: Dict[str, Any]):
             session=session,
             thread_n=thread_n,
         )
+        # For repo responses, prefer returning text/plain to clients.
+        if isinstance(out, dict) and (out.get("agent") == "repo"):
+            text = out.get("answer") or out.get("message") or json.dumps(out, ensure_ascii=False)
+            return PlainTextResponse(str(text))
+        # If it's already a string, also return text/plain
+        if isinstance(out, str):
+            return PlainTextResponse(out)
+        return out
     except Exception as e:
         # bubble up precise error so we can see the RPC’s complaint
         raise HTTPException(status_code=400, detail=str(e))
@@ -104,6 +112,7 @@ def repo_plan(payload: Dict[str, Any]):
         session=session,
         thread_n=thread_n,
     )
+    # For planning responses, keep JSON (these are typically structured)
     return out
 
 
@@ -252,6 +261,15 @@ async def handle_request(request: Request):
             "message": f"Formatting error: {e}",
             "raw": resp,
         }
+
+    # If the routed agent is the repo agent, return plain text instead of JSON
+    try:
+        if isinstance(resp, dict) and resp.get("agent") == "repo":
+            text = resp.get("answer") or resp.get("message") or json.dumps(natural, ensure_ascii=False)
+            return PlainTextResponse(str(text))
+    except Exception:
+        # fall back to JSON if anything goes wrong
+        pass
 
     return JSONResponse(natural)
 
