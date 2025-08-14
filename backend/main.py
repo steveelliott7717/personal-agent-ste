@@ -77,13 +77,12 @@ def repo_query(payload: Dict[str, Any]):
             session=session,
             thread_n=thread_n,
         )
-        # For repo responses, prefer returning text/plain to clients.
-        if isinstance(out, dict) and (out.get("agent") == "repo"):
-            text = out.get("answer") or out.get("message") or json.dumps(out, ensure_ascii=False)
-            return PlainTextResponse(str(text))
-        # If it's already a string, also return text/plain
+        # If the repo agent produced a string, or we can infer it's a repo-agent dict, return text/plain.
         if isinstance(out, str):
             return PlainTextResponse(out)
+        if isinstance(out, dict) and out.get("agent") == "repo":
+            text = out.get("answer") or out.get("message") or out.get("data") or out.get("text") or json.dumps(out, ensure_ascii=False)
+            return PlainTextResponse(str(text))
         return out
     except Exception as e:
         # bubble up precise error so we can see the RPC’s complaint
@@ -112,7 +111,6 @@ def repo_plan(payload: Dict[str, Any]):
         session=session,
         thread_n=thread_n,
     )
-    # For planning responses, keep JSON (these are typically structured)
     return out
 
 
@@ -251,6 +249,12 @@ async def handle_request(request: Request):
     agent, raw_result = route_request(q)
     resp = _normalize(agent, raw_result)
 
+    # If the routed agent is the repo agent, return text/plain so the client gets raw text.
+    if isinstance(resp, dict) and resp.get("agent") == "repo":
+        # Pull a plausible textual field; if unavailable, fall back to the whole normalized/pretty object.
+        text = resp.get("answer") or resp.get("message") or resp.get("data") or json.dumps(resp, ensure_ascii=False)
+        return PlainTextResponse(str(text))
+
     # Pre-format so clients without middleware still get a nice shape
     try:
         natural = ensure_natural(resp)
@@ -261,15 +265,6 @@ async def handle_request(request: Request):
             "message": f"Formatting error: {e}",
             "raw": resp,
         }
-
-    # If the routed agent is the repo agent, return plain text instead of JSON
-    try:
-        if isinstance(resp, dict) and resp.get("agent") == "repo":
-            text = resp.get("answer") or resp.get("message") or json.dumps(natural, ensure_ascii=False)
-            return PlainTextResponse(str(text))
-    except Exception:
-        # fall back to JSON if anything goes wrong
-        pass
 
     return JSONResponse(natural)
 

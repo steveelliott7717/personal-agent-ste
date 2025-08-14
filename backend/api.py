@@ -73,25 +73,31 @@ class RouteIn(BaseModel):
 def route(incoming: RouteIn):
     try:
         agent, result = route_request(query=incoming.text, user_id=incoming.user_id or "web-guest")
-        # result might already be a dict/str from your make_response; normalize
+
+        # If the router chose the repo agent, respond as text/plain rather than JSON.
+        if agent == "repo":
+            # Try to unwrap common shapes; otherwise stringify.
+            if isinstance(result, dict):
+                text = (
+                    result.get("answer")
+                    or result.get("message")
+                    or result.get("data")
+                    or result.get("text")
+                    or str(result)
+                )
+            else:
+                text = str(result)
+            return PlainTextResponse(text)
+
+        # Otherwise keep returning JSON as before.
         if isinstance(result, dict):
             payload = result
         else:
             payload = {"agent": agent, "intent": "unknown", "message": str(result)}
+
         # attach meta if present
         if incoming.client_meta:
             payload.setdefault("meta", {})["client_meta"] = incoming.client_meta
-
-        # Special-case: if the routed agent is "repo", return text/plain for humans.
-        if (payload.get("agent") == "repo"):
-            # Prefer explicit 'answer', then 'message', then stringify the raw result.
-            text = (
-                (payload.get("answer") if isinstance(payload, dict) else None)
-                or (payload.get("message") if isinstance(payload, dict) else None)
-                or (str(result) if result is not None else "")
-            )
-            return PlainTextResponse(text)
-
         return payload
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
