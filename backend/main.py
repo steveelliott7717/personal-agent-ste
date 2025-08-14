@@ -63,15 +63,30 @@ _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
 _DIFF_GIT_RE      = re.compile(r"^diff --git a/(.+?) b/(.+?)$")
 _HUNK_HDR_RE_ANY  = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:,([0-9]+))?\s+@@")
 
+# Replace your existing _unwrap_and_clean with this:
 def _unwrap_and_clean(text: str) -> str:
     if not text:
         return ""
-    m = _CODEBLOCK_RE.search(text)
-    s = (m.group("body") if m else text)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")   # normalize to LF
-    s = _CBLOCK_RE.sub("", s)                         # strip C-style comment blocks
-    s = _ELLIPSIS_LINE_RE.sub("", s)                  # strip standalone ellipsis lines
+    s = text.replace("\r\n", "\n").replace("\r", "\n")  # normalize to LF
+
+    # 1) Remove ALL fenced code blocks, keeping inner bodies
+    #    Handles ```diff, ```patch, or bare ``` fences, repeated anywhere.
+    fence = re.compile(r"```(?:diff|patch)?\s*([\s\S]*?)```", re.IGNORECASE)
+    while True:
+        before = s
+        s = fence.sub(lambda m: (m.group(1) or ""), s)
+        if s == before:
+            break
+
+    # 2) Remove any stray standalone fence lines that slipped through
+    s = re.sub(r"(?m)^\s*```\s*$", "", s)
+
+    # 3) Strip C-style comment blocks and standalone ellipsis lines
+    s = _CBLOCK_RE.sub("", s)
+    s = _ELLIPSIS_LINE_RE.sub("", s)
+
     return s.strip()
+
 
 def _ensure_file_headers(text: str) -> str:
     """
