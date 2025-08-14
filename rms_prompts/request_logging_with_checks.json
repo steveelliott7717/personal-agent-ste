@@ -1,0 +1,25 @@
+{
+  "task": "Implement minimal request logging + correlation IDs for FastAPI with built-in guardrails.\n\nGoal:\nAdd a lightweight middleware and logging filter so each request gets a UUID4 correlation ID that appears on ALL log lines during that request. Provide an env toggle LOG_REQUESTS (default true). Keep changes small, stdlib-only, and confined to backend/.\n\nRequirements:\n1) Logging utils (backend/logging_utils.py):\n   - A ContextVar to store correlation_id, a CorrelationIdFilter that injects it into LogRecord (record.correlation_id), and helpers set_correlation_id(value)->token and clear_correlation_id(token).\n   - configure_logging(level=INFO) to set a root logging format including %(correlation_id)s (e.g., '... [cid=%(correlation_id)s] ...') and attach the filter to the root logger.\n2) Middleware (backend/middleware/request_logging.py):\n   - Generate UUID4 per request, set via set_correlation_id, and reset in finally using the token (no leakage across requests).\n   - Respect LOG_REQUESTS env var (default true). When true, log one 'start' and one 'end' line with method, path, status, duration_ms, and correlation_id (include fields in the message so they render with the existing formatter).\n   - Always set correlation ID even when LOG_REQUESTS=false so other logs in the request still include it.\n3) Wire-up (backend/main.py):\n   - Call configure_logging() once at startup before adding the middleware.\n   - Register RequestLoggingMiddleware. Do not change any existing routes’ response schemas; default JSON behavior remains.\n4) Backward compatibility:\n   - No API response shape changes; stdlib only; keep diffs minimal and under backend/.\n\nAcceptance Criteria:\n- request.state.correlation_id is available for every request.\n- All log lines during a request include the same correlation_id via %(correlation_id)s.\n- With LOG_REQUESTS=true (default), logs show exactly one start and one end line per request, including method, path, status, duration_ms.\n- With LOG_REQUESTS=false, start/end lines are suppressed but other logs still include correlation_id.\n- Two consecutive requests produce different correlation IDs; no ContextVar leakage.\n\nVerification Steps:\n1) Deploy with LOG_REQUESTS=true. Call GET /health twice; confirm two distinct cids and start/end lines with status and duration_ms appear. Inspect with 'fly logs --since 5m'.\n2) Set LOG_REQUESTS=false, redeploy, repeat requests; confirm start/end lines are absent while other logs still include cid.\n3) Trigger any handler that logs internally and confirm those lines include the same cid as the middleware lines.\n\nConstraints:\n- Python stdlib only; no structlog or external deps.\n- Changes limited to backend/.\n\nChecks (for linter/warnings):\n- required patterns:\n  - \"configure_logging\\(\"\n  - \"class\\s+RequestLoggingMiddleware\\(\"\n  - \"ContextVar\\(\\s*\\\"correlation_id\\\"\"\n  - \"set_correlation_id\\(\"\n  - \"clear_correlation_id\\(\"\n  - \"LOG_REQUESTS\"\n  - \"app.add_middleware\\(RequestLoggingMiddleware\\)\"\n- forbidden patterns:\n  - \"```\"\n  - \"structlog\\.\"\n- max_files: 10\n- max_bytes: 120000\n\nOutput format:\nReturn a unified diff patch modifying/adding files ONLY under backend/ that implements the above.",
+  "repo": "personal-agent-ste",
+  "branch": "main",
+  "path_prefix": "backend/",
+  "k": 12,
+  "session": "s1",
+  "checks": {
+    "required": [
+      "configure_logging\\(",
+      "class\\s+RequestLoggingMiddleware\\(",
+      "ContextVar\\(\\s*\\\"correlation_id\\\"",
+      "set_correlation_id\\(",
+      "clear_correlation_id\\(",
+      "LOG_REQUESTS",
+      "app.add_middleware\\(RequestLoggingMiddleware\\)"
+    ],
+    "forbidden": [
+      "```",
+      "structlog\\."
+    ],
+    "max_files": 10,
+    "max_bytes": 120000
+  }
+}
