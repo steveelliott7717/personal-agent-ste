@@ -95,6 +95,13 @@ def _parse_files_artifact(text: str) -> list[tuple[str, str]]:
 def health():
     return {"status": "ok"}
 
+# add somewhere near your other health routes in backend/main.py
+
+@app.get("/app/api/repo/health")
+def repo_health():
+    return {"ok": True, "model": os.getenv("CHAT_MODEL", "gpt-5")}
+
+
 
 @app.get("/", include_in_schema=False)
 def root_redirect():
