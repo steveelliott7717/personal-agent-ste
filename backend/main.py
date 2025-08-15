@@ -26,7 +26,7 @@ from backend.logging_utils import setup_logging, RequestLoggingMiddleware
 
 app = FastAPI(title="Personal Agent API")
 
-setup_logging()
+
 app.add_middleware(RequestLoggingMiddleware)
 
 _BEGIN_RE = re.compile(r"^BEGIN_FILE\s+(.+)$")
