@@ -515,14 +515,17 @@ async def repo_plan(request: Request) -> Response:
     wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
 
     # Extract raw model text / patch
+    # ...
     raw_patch = ""
     if isinstance(out, dict):
         raw_patch = out.get("patch") or ""
         if not raw_patch:
-            # fallback: attempt from agent-provided prompt
             maybe_prompt = out.get("prompt") or ""
             if maybe_prompt:
-                raw_patch = generate_patch_from_prompt(maybe_prompt) or ""
+                # 👇 pass session so the generator can remember this patch
+                raw_patch = generate_patch_from_prompt(maybe_prompt, session=session) or ""
+    # ...
+
     # if out is not a dict, skip fallback to avoid attribute errors
 
     # Sanitize / normalize

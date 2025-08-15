@@ -1,0 +1,10 @@
+{
+    "task": {
+        "repo": "personal-agent-ste",
+        "branch": "main",
+        "path_prefix": "backend/",
+        "k": 1,
+        "session": "reqlog-followup-001",
+        "task": "Follow-up fix for request logging & correlation IDs.\n\nAcceptance criteria:\n1) In middleware, set request.state.correlation_id to the UUID. Log ONE line at end of request with method, path, status, duration_ms, correlation_id.\n2) Add LOG_REQUESTS toggle with default true. Treat (\"true\",\"1\",\"yes\",\"on\",\"t\") as enabled, case-insensitive. When disabled, still set request.state.correlation_id but skip the info log.\n3) Fix imports to use package-qualified paths (e.g., from backend.logging_utils import set_correlation_id, get_correlation_id, CorrelationIdFilter) and remove any bare 'from logging_utils ...' imports.\n4) In configure_logging(), avoid duplicate handlers (attach CorrelationIdFilter once; do not add multiple StreamHandlers on repeated calls). Keep format including %(correlation_id)s.\n5) Keep changes minimal and only under backend/; no response shape changes; no heavy dependencies.\n\nVerification steps:\n- Start app, call /health with LOG_REQUESTS default (true): observe a single info line 'Request completed method=GET path=/health status=200 duration_ms=...' with a correlation_id.\n- Set LOG_REQUESTS=false and restart: call /health; correlation_id still present on request.state but no info line emitted.\n- No import errors; no duplicate log lines across multiple startups.\n\nConstraints:\n- Output ONLY a single unified diff (git-apply ready) starting with 'diff --git'.\n- Valid hunk headers and body prefixes; LF endings."
+    }
+}

@@ -23,59 +23,70 @@ diff --git a/backend/logging_utils.py b/backend/logging_utils.py
 +        return True
 +
 +def configure_logging() -> None:
-+    """Configure logging with correlation ID support."""
++    """Configure logging to include correlation ID."""
 +    logging.basicConfig(level=logging.INFO)
 +    logger = logging.getLogger()
 +    logger.addFilter(CorrelationIdFilter())
 +
-+    # Optionally, you can add a custom formatter to include the correlation ID in log messages
++    # Example of adding a handler that formats the log messages
 +    handler = logging.StreamHandler()
 +    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s - Correlation ID: %(correlation_id)s')
 +    handler.setFormatter(formatter)
 +    logger.addHandler(handler)
 +
-+    logging.info("Logging configured with correlation ID support.")
++    logger.info("Logging configured with correlation ID support.")
 +
 diff --git a/backend/middleware/request_logging.py b/backend/middleware/request_logging.py
 --- /dev/null
 +++ b/backend/middleware/request_logging.py
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,33 @@
 +import logging
 +import uuid
 +from starlette.middleware.base import BaseHTTPMiddleware
-+from starlette.requests import Request
-+from starlette.responses import Response
-+from backend.logging_utils import set_correlation_id
++from starlette.middleware.cors import CORSMiddleware
++from fastapi import Request
++from logging_utils import set_correlation_id
 +
 +class RequestLoggingMiddleware(BaseHTTPMiddleware):
 +    async def dispatch(self, request: Request, call_next):
 +        correlation_id = str(uuid.uuid4())
 +        set_correlation_id(correlation_id)
 +
-+        logging.info(f"Start request: {request.method} {request.url} - Correlation ID: {correlation_id}")
-+        response: Response = await call_next(request)
-+        logging.info(f"End request: {request.method} {request.url} - Status: {response.status_code} - Correlation ID: {correlation_id}")
++        logger = logging.getLogger()
++        logger.info(f"Start request: {request.method} {request.url} - Correlation ID: {correlation_id}")
++
++        response = await call_next(request)
++
++        logger.info(f"End request: {request.method} {request.url} - Correlation ID: {correlation_id}")
 +
 +        return response
 +
-+def add_request_logging(app):
++def add_cors_middleware(app):
++    app.add_middleware(
++        CORSMiddleware,
++        allow_origins=["*"],
++        allow_credentials=True,
++        allow_methods=["*"],
++        allow_headers=["*"],
++    )
++
++def add_request_logging_middleware(app):
 +    app.add_middleware(RequestLoggingMiddleware)
 +
 diff --git a/backend/main.py b/backend/main.py
 --- a/backend/main.py
 +++ b/backend/main.py
-@@ -10,6 +10,7 @@
- from backend.utils.nl_formatter import ensure_natural
- from backend.utils.agent_protocol import AgentResponse
- from backend.services import conversation as conv
-+from backend.logging_utils import configure_logging
- from backend.middleware.request_logging import add_request_logging
- 
+@@ -10,4 +10,5 @@
+ from fastapi.staticfiles import StaticFiles
++from logging_utils import configure_logging
+ from starlette.middleware.base import BaseHTTPMiddleware
+ from dotenv import load_dotenv
+ load_dotenv()
+@@ -25,6 +26,7 @@
+ # backend/main.py
  app = FastAPI(title="Personal Agent API")
-@@ -20,5 +21,6 @@
  
- # Configure logging
 +configure_logging()
  
- # Add request logging middleware
- add_request_logging(app)
+ @app.get("/app/api/debug/supabase-key")
+ async def debug_supabase_key():

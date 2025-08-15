@@ -264,6 +264,8 @@ def _coalesce_response_text(resp: Any) -> str:
 
 def generate_patch_from_prompt(
     prompt: str,
+    *,
+    session: Optional[str] = None,          # ← add this
     model_env: str = "RMS_PATCH_MODEL",
     default_model: str = "gpt-4o-mini",
     temperature: float = 0.0,
@@ -276,29 +278,24 @@ def generate_patch_from_prompt(
         return None
     model = os.getenv(model_env, default_model)
 
-    # Use the active strict system prompt
     system_msg = _build_system_prompt() or (
         "You output software patches as unified diffs ONLY. "
         "No prose, no explanations, no code fences. "
         "Do not include C-style comments (/* ... */). Use LF newlines."
     )
-
     user_msg = (
         "Produce a unified diff patch for the following repo task. "
         "Output ONLY the diff. No backticks, no commentary, no placeholders.\n\n"
         f"{prompt}"
     )
 
-    # Prefer Chat Completions; fallback to Responses
     text = ""
     try:
         resp = _openai.chat.completions.create(
             model=model,
             temperature=temperature,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
+            messages=[{"role": "system", "content": system_msg},
+                      {"role": "user", "content": user_msg}],
         )
         text = (resp.choices[0].message.content if resp and resp.choices else "") or ""
     except Exception:
@@ -306,16 +303,28 @@ def generate_patch_from_prompt(
             resp = _openai.responses.create(
                 model=model,
                 temperature=temperature,
-                input=[
-                    {"role": "system", "content": system_msg},
-                    {"role": "user", "content": user_msg},
-                ],
+                input=[{"role": "system", "content": system_msg},
+                       {"role": "user", "content": user_msg}],
             )
             text = _coalesce_response_text(resp)
-        except Exception:
-            text = ""
+        except Exception as e:
+            # Remember the error and re-raise
+            try:
+                _remember(session, "error", f"{type(e).__name__}: {e}")
+            except Exception:
+                pass
+            raise
 
-    return _extract_patch_from_text(text)
+    patch = _extract_patch_from_text(text)
+
+    # 🧠 Remember the generated patch (raw or cleaned) for follow-ups
+    try:
+        _remember(session, "patch", patch or text or "")
+    except Exception:
+        pass
+
+    return patch
+
 
 
 # ---------- “Propose changes” (kept minimal for completeness) ----------
