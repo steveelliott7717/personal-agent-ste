@@ -231,6 +231,7 @@ def generate_artifact_from_task(
     mode: str = "files",               # "files" (default) or "patch"
     model_env: str = "RMS_PATCH_MODEL",
     default_model: str = "gpt-5",
+    k: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Call the LLM to produce either:
