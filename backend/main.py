@@ -10,6 +10,9 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+# add near your other imports
+from backend.agents.repo_agent import generate_artifact_from_task
+from fastapi.responses import PlainTextResponse
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -104,20 +107,43 @@ def _validate_files_mode(files: dict[str, str]) -> tuple[bool, str]:
 from fastapi import Request  # ensure this import exists
 
 @app.post("/app/api/repo/plan")
-async def repo_plan(payload: Dict[str, Any], request: Request):
+def repo_plan(payload: Dict[str, Any], request: Request):
     task = payload.get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
 
-    repo   = payload.get("repo", "personal-agent-ste")
-    branch = payload.get("branch", "main")
-    prefix = payload.get("path_prefix")
-    k      = int(payload.get("k", 12))
+    repo    = payload.get("repo", "personal-agent-ste")
+    branch  = payload.get("branch", "main")
+    prefix  = payload.get("path_prefix")
+    k       = int(payload.get("k", 12))
     session = payload.get("session")
     thread_n = payload.get("thread_n")
 
-    fmt = request.query_params.get("format", "").lower()
+    # NEW: honor ?format=files|patch
+    fmt = request.query_params.get("format") or request.headers.get("X-RMS-Format")
+    if fmt in ("files", "patch"):
+        try:
+            art = generate_artifact_from_task(
+                task if isinstance(task, str) else json.dumps(task),
+                repo=repo,
+                branch=branch,
+                path_prefix=prefix,
+                session=session,
+                mode=fmt,
+            )
+            if fmt == "files":
+                # Stitch BEGIN_FILE blocks for the client to materialize
+                blocks = []
+                for path, content in art["files"]:
+                    # ASCII/LF already normalized inside repo_agent
+                    blocks.append(f"BEGIN_FILE {path}\n{content}END_FILE\n")
+                return PlainTextResponse("".join(blocks), media_type="text/plain; charset=utf-8")
+            else:
+                return PlainTextResponse(art["patch"], media_type="text/x-patch; charset=utf-8")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
+    # Fallback: original JSON “plan” mode (unchanged)
     out = propose_changes(
         task,
         repo=repo,
@@ -128,21 +154,8 @@ async def repo_plan(payload: Dict[str, Any], request: Request):
         session=session,
         thread_n=thread_n,
     )
-
-    if fmt == "files":
-        # Depending on your repo_agent, pick the field that contains the raw BEGIN_FILE blocks.
-        files_text = out.get("draft") or out.get("prompt") or ""
-        try:
-            files = _parse_files_blocks(files_text)
-            ok, msg = _validate_files_mode(files)
-            if not ok:
-                raise ValueError(msg)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"files-mode validation failed: {e}")
-
-        return PlainTextResponse(files_text, media_type="text/plain; charset=utf-8")
-
     return out
+
 
 
 

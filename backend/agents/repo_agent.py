@@ -40,41 +40,101 @@ DEFAULT_RMS_SYSTEM_PROMPT_PATCH = (
 DEFAULT_RMS_SYSTEM_PROMPT_FILES = (
     "You are RMS GPT. Return updated files, not a diff.\n\n"
     "OUTPUT FORMAT (STRICT):\n"
-    "- For each file to write, emit:\n"
+    "- For each file to write, emit exactly:\n"
     "  BEGIN_FILE <path>\n"
     "  <full file content>\n"
     "  END_FILE\n"
-    "- Use ONLY ASCII characters. Use LF line endings. One trailing LF at file end.\n"
-    "- Do NOT emit any text outside these blocks. No prose, JSON, or markdown fences.\n\n"
+    "- ASCII only. LF line endings. Exactly one trailing LF per file.\n"
+    "- No text outside these blocks. No prose, JSON, or markdown fences.\n\n"
     "SCOPE:\n"
-    "- Edit ONLY files under the provided path_prefix. Do not create, modify, or touch files outside it.\n\n"
-    "CONTENT RULES:\n"
-    "- Each BEGIN_FILE path must be under path_prefix.\n"
-    "- If you modify an existing file, output its complete new content in one block.\n"
-    "- Keep changes minimal and reversible. No heavy dependencies. Preserve API shapes unless requested.\n"
-    "- Ensure the code is syntactically valid and imports resolve.\n\n"
+    "- Edit ONLY under path_prefix. Each BEGIN_FILE path must start with path_prefix.\n\n"
     "SELF-CHECK BEFORE ANSWERING:\n"
-    "1) Output consists solely of one or more BEGIN_FILE/END_FILE blocks.\n"
-    "2) All file paths are under path_prefix.\n"
-    "3) All file content is ASCII-only and uses LF line endings with exactly one trailing LF.\n"
-    "4) No extra commentary or markup."
-   """FILES MODE — HARD RULES
-- Output only BEGIN_FILE/END_FILE blocks, ASCII-only, LF-only, one trailing LF.
-- No placeholders like "...", no C-style comments, no markdown fences.
-- Do not re-declare existing singletons (e.g., `app = FastAPI(...)`) unless explicitly told.
-- Use task-provided ANCHORS to integrate edits; if an anchor is missing, do NOT guess—emit a comment at top of the file stating which anchor was missing.
-SELF-CHECK (must pass):
-1) No "..." anywhere.
-2) No new `app = FastAPI(` in backend/main.py.
-3) All referenced names (e.g., `logger`) are defined/imported.
-4) Only allowed files are emitted; each ends with exactly one LF."""
+    "1) First non-empty line of the entire reply is 'BEGIN_FILE '.\n"
+    "2) One or more BEGIN_FILE/END_FILE blocks, nothing else.\n"
+    "3) All paths under path_prefix; content is ASCII/LF; one trailing LF per file.\n"
+)
 
-).strip()
 
 
 # =========================
 # Utilities
 # =========================
+
+# --- Files-context helpers (add near imports) ---
+import os
+from pathlib import Path
+from typing import Iterable
+
+def _safe_read_text(p: Path, max_bytes: int = 100_000) -> str:
+    try:
+        if not p.is_file():
+            return ""
+        data = p.read_bytes()[:max_bytes]
+        # Force ASCII-ish by replacing non-ASCII with '?'
+        return data.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+def _excerpt_around(text: str, needle: str, pre: int = 10, post: int = 10) -> str:
+    if not text or not needle:
+        return ""
+    lines = text.splitlines()
+    # find first occurrence
+    idx = next((i for i, line in enumerate(lines) if needle in line), None)
+    if idx is None:
+        return ""
+    start = max(0, idx - pre)
+    end = min(len(lines), idx + post + 1)
+    numbered = [f"{i+1:04d}: {lines[i]}" for i in range(start, end)]
+    return "\n".join(numbered)
+
+def _head(text: str, n: int = 80) -> str:
+    if not text:
+        return ""
+    lines = text.splitlines()
+    numbered = [f"{i+1:04d}: {line}" for i, line in enumerate(lines[:n])]
+    return "\n".join(numbered)
+
+def _collect_context_files(path_prefix: str) -> Iterable[Path]:
+    """
+    Minimal, deterministic context set. Expand if needed, but keep tiny.
+    """
+    root = Path(__file__).resolve().parents[2]  # repo root (…/backend/agents/ -> repo)
+    targets = []
+    # Always include main.py if under this prefix
+    main_py = root / "backend" / "main.py"
+    if str(main_py).startswith(str(root / path_prefix.strip("/"))):
+        targets.append(main_py)
+    # You can add other high-signal files here if desired.
+    return [p for p in targets if p.exists()]
+
+def _build_files_context(path_prefix: str | None) -> str:
+    """
+    Returns compact, high-signal context from existing files:
+    - Top-of-file header
+    - Excerpt around 'app = FastAPI(' anchor
+    - Excerpt around a stable import anchor
+    """
+    if not path_prefix:
+        return ""
+
+    parts: list[str] = []
+    for p in _collect_context_files(path_prefix):
+        txt = _safe_read_text(p)
+        if not txt:
+            continue
+        head = _head(txt, 60)
+        a1 = _excerpt_around(txt, "app = FastAPI(", 8, 8)
+        a2 = _excerpt_around(txt, "from backend.utils.agent_protocol import AgentResponse", 8, 8)
+
+        parts.append(
+            f"=== FILE: {p.as_posix()} ===\n"
+            f"-- HEAD (first 60 lines) --\n{head}\n\n"
+            f"-- ANCHOR (app = FastAPI) --\n{a1 or '(not found)'}\n\n"
+            f"-- ANCHOR (AgentResponse import) --\n{a2 or '(not found)'}\n"
+        )
+    return "\n".join(parts).strip()
+
 
 _ASCII_RE = re.compile(r"^[\x00-\x7F]*$")
 
@@ -170,8 +230,7 @@ def generate_artifact_from_task(
     session: Optional[str] = None,
     mode: str = "files",               # "files" (default) or "patch"
     model_env: str = "RMS_PATCH_MODEL",
-    default_model: str = "gpt-4o-mini",
-    temperature: float = 0.0,
+    default_model: str = "gpt-5",
 ) -> Dict[str, Any]:
     """
     Call the LLM to produce either:
@@ -193,10 +252,19 @@ def generate_artifact_from_task(
         "Return output in {} mode only."
     ).format(task, repo, branch, path_prefix or "", mode.upper())
 
+    # --- Inject live file context (tiny, deterministic anchors) ---
+    files_ctx = _build_files_context(path_prefix or "backend/")
+    if files_ctx:
+        user_msg = (
+            user_msg
+            + "\n\nCONTEXT: EXISTING FILES (READ-ONLY)\n"
+            + files_ctx
+            + "\n\nNOTE: Respect anchors above; do not redeclare `app` or move load_dotenv/CORS."
+        )
+
     # Chat Completions (Responses API removed to avoid schema mismatches)
     resp = _openai.chat.completions.create(
         model=os.getenv(model_env, default_model),
-        temperature=temperature,
         messages=[
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_msg},
@@ -215,7 +283,6 @@ def generate_artifact_from_task(
         raise ValueError("Invalid patch output (missing 'diff --git').")
     _remember(session, "patch", "(patch)")
     return {"mode": "patch", "patch": text}
-
 
 def propose_changes(
     task: str,

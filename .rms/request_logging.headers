@@ -1,8 +1,9 @@
-HTTP/1.1 200 OK
-date: Fri, 15 Aug 2025 16:22:05 GMT
-server: Fly/90dd1273b (2025-08-14)
-content-length: 1671
-content-type: text/plain; charset=utf-8
+HTTP/1.1 400 Bad Request
+date: Fri, 15 Aug 2025 16:43:19 GMT
+server: Fly/487eb11d0 (2025-08-15)
+content-length: 78
+content-type: application/json
+x-correlation-id: 66579a4cf1ff409b9dfb0d1f87e6dc63
 via: 1.1 fly.io, 1.1 fly.io
-fly-request-id: 01K2Q8KPMB3VBBEDZ9661Y7WN3-ord
+fly-request-id: 01K2Q9TJGFXBQN4ZJZ9Z2WWMYZ-ord
 
