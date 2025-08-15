@@ -260,11 +260,11 @@ def repo_files(payload: Dict[str, Any]):
             task_text,
             repo=repo,
             branch=branch,
-            k=k,
             path_prefix=path_prefix,
             session=session,
-            thread_n=thread_n,
+            mode="files",
         )
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Upstream generation error: {e}")
 

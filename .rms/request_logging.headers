@@ -1,9 +1,9 @@
 HTTP/1.1 200 OK
-date: Fri, 15 Aug 2025 17:17:34 GMT
+date: Fri, 15 Aug 2025 17:53:24 GMT
 server: Fly/487eb11d0 (2025-08-15)
-content-length: 1870
-content-type: text/plain; charset=utf-8
-x-correlation-id: 79cf269f945e4203926451749fd59bfb
+content-length: 3423
+content-type: application/json
+x-correlation-id: c9e7fa56776b47fea024b6f7c9b100ba
 via: 1.1 fly.io, 1.1 fly.io
-fly-request-id: 01K2QBS8W18EFEEB57J9F0X006-ord
+fly-request-id: 01K2QDTWPH9R0Q7SF2ZZK5VEYJ-ord
 
