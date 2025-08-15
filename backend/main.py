@@ -225,22 +225,56 @@ import re  # (keep if you already import re)
 
 def _enforce_trailing_lf_per_file(artifact: str) -> str:
     """
-    For each BEGIN_FILE/END_FILE block, convert CRLF->LF and ensure the file body
-    ends with exactly one LF before END_FILE. Returns rebuilt artifact.
+    Normalize CRLF -> LF and ensure each file body ends with exactly one '\n'
+    *as parsed by line-join validators* (which requires two blank lines for empty files).
+    Re-emits strict BEGIN_FILE/END_FILE blocks.
     """
     t = artifact.replace("\r\n", "\n").replace("\r", "\n")
+    lines = t.split("\n")
+    out_parts: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.startswith("BEGIN_FILE "):
+            i += 1
+            continue
+        path = line[len("BEGIN_FILE "):].strip()
+        i += 1
+        body_lines: list[str] = []
+        while i < len(lines) and lines[i].strip() != "END_FILE":
+            body_lines.append(lines[i])
+            i += 1
+        if i >= len(lines):
+            raise ValueError(f"Missing END_FILE for {path}")
+        # Move past END_FILE
+        i += 1
 
-    def _fix_block(m: re.Match) -> str:
-        path = m.group(1)
-        body = m.group(2).rstrip("\n") + "\n"
-        return f"BEGIN_FILE {path}\n{body}END_FILE\n"
+        # Normalize body and enforce trailing LF semantics
+        body_text = "\n".join(body_lines).replace("\r\n", "\n").replace("\r", "\n")
 
-    # (?ms): dot matches newlines, ^/$ are multiline
-    fixed = re.sub(r"(?ms)^BEGIN_FILE\s+(.+?)\n(.*?)(?=^END_FILE$)^END_FILE$",
-                   lambda m: _fix_block(m),
-                   t)
+        if body_text == "":  # truly empty file
+            # Emit TWO blank lines so join([...]) in validator yields "\n"
+            rebuilt = f"BEGIN_FILE {path}\n\n\nEND_FILE\n"
+        else:
+            # Ensure exactly one trailing LF in the serialized block:
+            # represent with a final blank line between header and END_FILE.
+            if not body_text.endswith("\n"):
+                body_text += "\n"
+            # Split and strip any extra terminal blanks, then add ONE blank for the trailing LF
+            bl = body_text.split("\n")
+            # remove any empty tail elements caused by the trailing newline
+            while bl and bl[-1] == "":
+                bl.pop()
+            # rebuild with one explicit blank line at the end
+            rebuilt_body = "\n".join(bl) + "\n"
+            rebuilt = f"BEGIN_FILE {path}\n{rebuilt_body}\nEND_FILE\n"
+
+        out_parts.append(rebuilt)
+
     # Ensure the whole artifact ends with exactly one LF
-    return fixed.rstrip("\n") + "\n"
+    out = "".join(out_parts)
+    return out.rstrip("\n") + "\n"
+
 
 
 # -------------------- Repo endpoints --------------------
@@ -301,7 +335,7 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         task, repo=repo, branch=branch, commit="HEAD", k=k, path_prefix=prefix, session=session, thread_n=thread_n
     )
     return out@app.post("/app/api/repo/files")
-@app.post("/app/api/repo/files")
+
 def repo_files(payload: Dict[str, Any]):
     """
     Strict files-mode endpoint: returns only BEGIN_FILE/END_FILE blocks (ASCII+LF),
