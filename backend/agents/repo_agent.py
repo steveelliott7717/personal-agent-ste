@@ -237,12 +237,15 @@ def generate_patch_from_prompt(
     default_model: str = CHAT_MODEL,
     temperature: float = 0.0,
 ) -> Optional[str]:
-    """
-    Ask the LLM to emit a unified diff ONLY (no fences, no prose).
-    Uses Chat Completions exclusively (no Responses fallback).
-    """
+    # NEW: accept dicts or other types safely
+    if not isinstance(prompt, str):
+        try:
+            prompt = json.dumps(prompt, ensure_ascii=False)
+        except Exception:
+            prompt = str(prompt)
     if not prompt:
         return None
+
 
     model = os.getenv(model_env, default_model) or "gpt-4o-mini"
 
@@ -298,27 +301,33 @@ def propose_changes(
     path_prefix: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """
-    Generates a draft diff (very light-weight stub) + a prompt for RMS GPT.
-    Now includes small, session-scoped memory to make follow-ups incremental.
-    """
     session: Optional[str] = kwargs.get("session")
     thread_n: Optional[int] = kwargs.get("thread_n")
 
-    # 1) Build search context
-    vec = _embed(task)
+    # 0) Stringify task for embeddings + prompt composition (prevents dict concat errors)
+    try:
+        task_str = task if isinstance(task, str) else json.dumps(task, ensure_ascii=False)
+    except Exception:
+        task_str = str(task)
+
+    # 1) Build search context (embed the stringified task)
+    vec = _embed(task_str)
     hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
 
     ctx_parts: List[str] = []
     for i, h in enumerate(hits, start=1):
-        cite = _format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
-        ctx_parts.append(f"{cite}\n```\n{h['content']}\n```")
+        path = h.get("path", "")
+        start_line = int(h.get("start_line", 1) or 1)
+        end_line = int(h.get("end_line", start_line) or start_line)
+        cite = _format_citation(i, path, start_line, end_line, h.get("commit_sha"))
+        content = h.get("content", "")
+        ctx_parts.append(f"{cite}\n```\n{content}\n```")
 
-    # 2) System prompt
+    # 2) Effective system prompt
     baseline = _build_system_prompt()
     header = f"SYSTEM\n{baseline}\n\n" if baseline else ""
 
-    # 3) Session digest → follow-up bias
+    # 3) Session digest → bias toward minimal follow-up
     prev = _context_digest(session)
     if prev:
         task_for_model = (
@@ -327,19 +336,22 @@ def propose_changes(
             "Do not restate previous changes; adjust just what is necessary.\n\n"
             f"{prev}\n\n"
             "----- NEW REQUEST -----\n"
-            f"{task}"
+            f"{task_str}"
         )
     else:
-        task_for_model = task
+        task_for_model = task_str
 
-    # 4) Compose model prompt
+    # 4) Compose the model-facing prompt (JSON mode returns this for the /plan call)
     draft = "No automatic changes proposed in this stub."
-    prompt = header + "TASK\n" + task_for_model + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")
+    prompt = header + "TASK\n" + task_for_model + "\n\nCONTEXT\n" + (
+        "\n\n".join(ctx_parts) if ctx_parts else "(no context)"
+    )
 
-    # 5) Remember current task/prompt
-    _remember(session, "task", task)
+    # 5) Remember current task + prompt for follow-ups
+    _remember(session, "task", task_str)
     _remember(session, "prompt", prompt)
 
+    # 6) Back-compat JSON
     return {
         "hits": hits,
         "draft": draft,
