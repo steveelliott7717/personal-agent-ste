@@ -1,0 +1,9 @@
+{
+    "task": "Add request logging middleware with correlation IDs in FastAPI. Use a middleware class that generates a UUID per request, stores it in a ContextVar, logs start and end of requests with the correlation ID, and configures logging to include it. Apply middleware to the app in main.py. Ensure CORS middleware is also applied.",
+    "repo": "personal-agent-ste",
+    "branch": "main",
+    "path_prefix": "backend/",
+    "session": "reqlog1",
+    "thread_n": 1,
+    "k": 12
+}
