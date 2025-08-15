@@ -359,5 +359,7 @@ def repo_files(payload: Dict[str, Any]):
         content = _enforce_trailing_lf_per_file(content)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
+    
+    content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
 
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
