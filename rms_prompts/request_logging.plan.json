@@ -4,7 +4,7 @@
         "branch": "main",
         "path_prefix": "backend/",
         "k": 6,
-        "session": "s2",
+        "session": "s5",
         "task": "PINNED MUST-HAVES (NON-NEGOTIABLE):\\n1) Touch ONLY these files unless stated: backend/main.py, backend/logging_utils.py.\\n2) Create backend/logging_utils.py with: ContextVar-based correlation ID; CorrelationIdFilter; setup_logging(); RequestLoggingMiddleware that sets request.state.correlation_id, logs start/end/errors; sets X-Correlation-ID; logging gated by env LOG_REQUESTS (default true for values in {true,1,t,yes}).\\n3) Modify backend/main.py (EXISTING FILE, MODIFIED-FILE DIFF): import RequestLoggingMiddleware and setup_logging from backend.logging_utils; call setup_logging() immediately after app = FastAPI(...); add app.add_middleware(RequestLoggingMiddleware) once (no duplicates).\\n4) Do NOT redefine or reassign app; do NOT alter load_dotenv(...); do NOT change CORS config.\\n5) FILE-EXISTENCE RULES: If path exists, use '--- a/<path>' then '+++ b/<path>'; only use '--- /dev/null' for new files. No hunk without a preceding 'diff --git' header. NEW-file hunks: all body lines '+'. Modified-file hunks: body lines only ' ', '+', '-', or '\\\\'. Correct header order, one section per file, no duplicate '+++'.\\n6) OUTPUT: One unified diff starting with 'diff --git'. LF newlines, UTF-8 (no BOM), exactly one trailing newline. Must pass: git apply --check --whitespace=nowarn.\\nACCEPTANCE: Server boots; /health OK; responses include X-Correlation-ID; when LOG_REQUESTS=true, logs include correlation ID for each request.\\nDELIVERABLE: A single unified diff touching only backend/main.py and backend/logging_utils.py."
     }
 }

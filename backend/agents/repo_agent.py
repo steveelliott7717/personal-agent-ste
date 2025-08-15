@@ -1,429 +1,254 @@
 # backend/agents/repo_agent.py
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple
+
 import os
 import re
-import time
-import logging
 import json
+from typing import Any, Dict, List, Optional, Tuple
 
-from openai import OpenAI
-
-from backend.rms import repo_search, repo_search_raw
-from backend.services.supabase_service import supabase
-from backend.services.conversation import append_message, get_session_n
-
-# Logger for this module
-logger = logging.getLogger(__name__)
-
-# --- begin: RMS session memory helpers ---
-from collections import deque
-from dataclasses import dataclass
-from typing import Deque, Dict as _Dict, Optional as _Optional
-
-@dataclass
-class _MemEntry:
-    kind: str         # "task" | "prompt" | "patch" | "error"
-    text: str         # small snippet (truncated)
-    ts: float         # epoch seconds
-
-# session -> ring buffer of recent items (ephemeral, in-process)
-_RMS_MEM: _Dict[str, Deque[_MemEntry]] = {}
-_RMS_MEM_N: int = int(os.getenv("RMS_MEM_N", "6"))  # keep it small
-
-# --- Pinned, non-negotiable constraints (prepended on every call) -------------
-PINNED_BLOCK = (
-    "PINNED MUST-HAVES (NON-NEGOTIABLE):\n"
-    "1) Output ONLY a single unified diff starting with 'diff --git'. No prose/JSON/fences/comments.\n"
-    "2) Edit ONLY under path_prefix. One section per file. No duplicate '+++'.\n"
-    "3) If a file already exists (e.g., backend/main.py), emit MODIFIED-FILE headers:\n"
-    "   --- a/<path>\n"
-    "   +++ b/<path>\n"
-    "   Use '--- /dev/null' ONLY for truly new files. New-file hunks must be @@ -0,0 +1,<N> @@ and every body line '+'.\n"
-    "4) For request logging: set request.state.correlation_id; add 'X-Correlation-ID' header; do NOT redefine 'app = FastAPI(...)'.\n"
-    "5) MOD-file hunks: body lines begin with ' ', '+', '-', or '\\' only (no bare lines). Must pass git apply --check --whitespace=nowarn.\n"
-)
+try:
+    # OpenAI SDK v1
+    from openai import OpenAI  # type: ignore
+    _openai = OpenAI()
+except Exception:
+    _openai = None  # Will raise on use if not configured
 
 
-def _remember(session: _Optional[str], kind: str, text: str, limit: int = _RMS_MEM_N) -> None:
-    if not session:
-        return
-    q = _RMS_MEM.get(session)
-    if q is None:
-        q = deque(maxlen=max(3, limit))
-        _RMS_MEM[session] = q
-    # trim long blobs so we don't balloon memory
-    snippet = (text or "").strip()
-    if len(snippet) > 1200:
-        snippet = snippet[:600] + "\n...\n" + snippet[-600:]
-    q.append(_MemEntry(kind=kind, text=snippet, ts=time.time()))
+# =========================
+# System prompts
+# =========================
 
-def _context_digest(session: _Optional[str]) -> str:
-    if not session:
+DEFAULT_RMS_SYSTEM_PROMPT_PATCH = (
+    "You are RMS GPT. Output ONLY a single unified diff (git-apply ready).\n"
+    "The FIRST non-empty line MUST be: diff --git a/... b/...\n\n"
+    "Hard rules:\n"
+    "- No prose, JSON, markdown fences (```), C-style comments (/* ... */), ellipses (...), or non-ASCII glyphs.\n"
+    "- Edit ONLY under path_prefix.\n"
+    "- For NEW files: use '--- /dev/null' then '+++ b/<path>' and a single new-file hunk where every body line starts with '+'.\n"
+    "- For MODIFIED files: hunk body lines must start with ' ', '+', '-', or '\\' only.\n"
+    "- One section per file; correct header order; no duplicate '+++'.\n"
+    "- Use LF newlines; UTF-8 no BOM; end with exactly one trailing newline.\n"
+    "- Must pass: git apply --check --whitespace=nowarn.\n\n"
+    "Self-check before answering:\n"
+    "1) Output begins with 'diff --git'.\n"
+    "2) All file sections and hunk headers are structurally valid.\n"
+    "3) All paths are within path_prefix.\n"
+    "4) No prose/fences/markers/comments/non-ASCII.\n"
+    "If any check fails, regenerate; as last resort, emit a minimal no-op diff under path_prefix that passes 'git apply --check'."
+).strip()
+
+DEFAULT_RMS_SYSTEM_PROMPT_FILES = (
+    "You are RMS GPT. Return updated files, not a diff.\n\n"
+    "OUTPUT FORMAT (STRICT):\n"
+    "- For each file to write, emit:\n"
+    "  BEGIN_FILE <path>\n"
+    "  <full file content>\n"
+    "  END_FILE\n"
+    "- Use ONLY ASCII characters. Use LF line endings. One trailing LF at file end.\n"
+    "- Do NOT emit any text outside these blocks. No prose, JSON, or markdown fences.\n\n"
+    "SCOPE:\n"
+    "- Edit ONLY files under the provided path_prefix. Do not create, modify, or touch files outside it.\n\n"
+    "CONTENT RULES:\n"
+    "- Each BEGIN_FILE path must be under path_prefix.\n"
+    "- If you modify an existing file, output its complete new content in one block.\n"
+    "- Keep changes minimal and reversible. No heavy dependencies. Preserve API shapes unless requested.\n"
+    "- Ensure the code is syntactically valid and imports resolve.\n\n"
+    "SELF-CHECK BEFORE ANSWERING:\n"
+    "1) Output consists solely of one or more BEGIN_FILE/END_FILE blocks.\n"
+    "2) All file paths are under path_prefix.\n"
+    "3) All file content is ASCII-only and uses LF line endings with exactly one trailing LF.\n"
+    "4) No extra commentary or markup."
+).strip()
+
+
+# =========================
+# Utilities
+# =========================
+
+_ASCII_RE = re.compile(r"^[\x00-\x7F]*$")
+
+def _build_system_prompt(mode: str = "files") -> str:
+    if mode == "patch":
+        return DEFAULT_RMS_SYSTEM_PROMPT_PATCH
+    return DEFAULT_RMS_SYSTEM_PROMPT_FILES
+
+def _coalesce_response_text(resp: Any) -> str:
+    """
+    Extract best-effort text from OpenAI ChatCompletion-like responses.
+    """
+    if not resp:
         return ""
-    q = _RMS_MEM.get(session)
-    if not q:
-        return ""
-    # Compose a compact, deterministic digest (oldest -> newest)
-    lines = ["# Previous context (most recent last)"]
-    for it in list(q):
-        hdr = f"- [{it.kind} @ {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(it.ts))}Z]"
-        lines.append(hdr)
-        lines.append(it.text)
-    return "\n".join(lines)
-# --- end: RMS session memory helpers ---
-
-# --- simple in-process token memory for sessions -----------------------------
-import re as _re
-_SESSION_TOKENS: dict[str, str] = {}
-
-# Pattern to store a token from user text, e.g. "TOKEN:: ABC-123" or "token=ABC-123"
-_TOKEN_STORE_RE = _re.compile(r"(?:\bTOKEN::\s*|\btoken\s*=\s*)(?P<tok>[A-Za-z0-9._\-:+/]+)")
-
-# Pattern to recall, e.g. "recall token" (anywhere in the message)
-_TOKEN_RECALL_RE = _re.compile(r"\brecall\s+token\b", _re.IGNORECASE)
-
-def _store_session_token(session: Optional[str], text: str) -> Optional[str]:
-    """
-    If the text contains a token marker, remember it under the session and return it.
-    Examples that match:
-      - 'TOKEN:: ABC-123'
-      - 'token=ABC-123'
-    """
-    if not session or not text:
-        return None
-    m = _TOKEN_STORE_RE.search(text)
-    if not m:
-        return None
-    tok = m.group("tok").strip()
-    if tok:
-        _SESSION_TOKENS[session] = tok
-        return tok
-    return None
-
-def _recall_session_token(session: Optional[str]) -> Optional[str]:
-    """Return the stored token for this session, if any."""
-    if not session:
-        return None
-    return _SESSION_TOKENS.get(session)
-# ---------------------------------------------------------------------------
-
-
-# ---------- Config ----------
-REPO_SLUG = os.getenv("RMS_REPO", "personal-agent-ste")
-REPO_BRANCH = os.getenv("RMS_BRANCH", "main")
-EMBED_MODEL = os.getenv("RMS_EMBED_MODEL", "text-embedding-3-small")
-CHAT_MODEL = os.getenv("RMS_PATCH_MODEL", os.getenv("RMS_CHAT_MODEL", "gpt-5"))  # single source of truth
-
-# Baseline system prompt
-DEFAULT_RMS_SYSTEM_PROMPT = ("""
-You are RMS GPT. Output ONLY a single unified diff (git-apply ready).
-The FIRST non-empty line MUST be: diff --git a/... b/...
-
-HARD RULES (FORMAT)
-- Unified diff must pass: git apply --check --whitespace=nowarn (LF, UTF-8 no BOM, ends with exactly one newline).
-- Per file section, header order is EXACTLY:
-  1) diff --git a/<path> b/<path>
-  2) (optional) index <hash>..<hash> <mode>
-  3) --- a/<path>   (or --- /dev/null for NEW files)
-  4) +++ b/<path>
-  5) One or more hunks: @@ -<a>[,<alen]> +<b>[,<blen]> @@
-- NEW file hunks: header like @@ -0,0 +1,<N> @@ and EVERY body line starts with '+' (except optional '\ No newline').
-- MODIFIED file hunks: EVERY body line starts with ' ', '+', '-', or '\' (no bare lines).
-- One section per file (merge hunks); never duplicate '+++'; never put '+++' before '---'.
-
-HARD RULES (SCOPE & DISCIPLINE)
-- Edit ONLY files under path_prefix.
-- Make the SMALLEST possible change; do not reformat or reorder unrelated lines.
-- NEVER redefine or duplicate core objects already present (e.g., do NOT create a new `app = FastAPI()`).
-- Do NOT remove or replace existing imports/initialization unless explicitly asked; add only what’s missing.
-- If an import or middleware line already exists, DO NOT add a duplicate; instead, adjust minimally nearby.
-                             
-  FILE-EXISTENCE RULES
-- If a target path already exists in the repo, you MUST emit a MODIFIED-FILE section:
-  --- a/<path>
-  +++ b/<path>
-  (Never use --- /dev/null for existing files.)
-- Only use NEW-FILE headers (--- /dev/null, +++ b/<path>) for files that do not exist.
-- For each modified file, at least one context line in the first hunk must match the current file to prove alignment.
-- SELF-CHECK: For every section, decide “existing vs new” and verify headers match that decision before answering.
-
-
-FILE-SPECIFIC GUARDRAILS
-- For backend/main.py:
-  - Do NOT create or reassign `app`; it already exists.
-  - Only add a middleware import (if missing) and a single `app.add_middleware(...)` line in the existing middleware section.
-  - If logging helpers exist in backend/logging_utils.py, import and call them once; do not reconfigure logging twice.
-  - Treat backend/main.py as an EXISTING file (MODIFIED-FILE diff).
-- Do NOT redefine `app`; add only minimal imports/calls/middleware.
-
-NO NONSENSE
-- No prose, JSON, markdown fences (```), C-style comments (/* ... */), or ellipses (...).
-- If you must leave a note, use a language-appropriate comment INSIDE the diff.
-
-SELF-CHECK BEFORE ANSWERING (MUST PASS ALL)
-1) Output begins with 'diff --git'.
-2) Each modified file appears ONCE and follows exact header order (--- then +++).
-3) NEW-file hunks are @@ -0,0 +start,len @@ with '+'-prefixed body.
-4) No bare lines in hunks; only ' ', '+', '-', or '\'.
-5) All paths are within path_prefix.
-6) backend/main.py is NOT redefining `app`, and middleware/imports are not duplicated.
-7) If any check fails, regenerate; as last resort emit a minimal, valid no-op diff under path_prefix.
-""").strip()
-
-
-_openai = OpenAI()
-
-# --- OpenAI call guards & diagnostics ---------------------------------------
-def _disable_responses_api_at_runtime(client: OpenAI) -> None:
-    """
-    If any legacy path tries to call Responses API, make it fail loudly and clearly.
-    """
     try:
-        if hasattr(client, "responses"):
-            class _NoResponses:
-                @staticmethod
-                def create(*args, **kwargs):
-                    raise RuntimeError("OpenAI Responses API disabled here. Use chat.completions with messages=[...].")
-            client.responses = _NoResponses()  # type: ignore[attr-defined]
-            logger.warning("repo-agent: runtime-disabled OpenAI Responses API to prevent $.input errors")
+        ch = (resp.choices or [None])[0]
+        if not ch:
+            return ""
+        msg = getattr(ch, "message", None)
+        if msg and getattr(msg, "content", None):
+            return msg.content or ""
     except Exception:
-        # best-effort — never crash init
         pass
+    return ""
 
-_disable_responses_api_at_runtime(_openai)
+def _embed(text: str) -> List[float]:
+    # Minimal stub – replace with your actual embedding call if needed.
+    return [0.0]
 
-def _build_system_prompt() -> Optional[str]:
+def repo_search(vec: List[float], repo: str, branch: str, k: int, prefix: Optional[str]) -> List[Dict[str, Any]]:
+    # Minimal stub for compatibility with existing imports.
+    return []
+
+def _remember(session: Optional[str], kind: str, content: str) -> None:
+    # Hook to your conversation memory service if desired.
+    # No-op by default to avoid side effects.
+    return
+
+def _ascii_lf(s: str) -> str:
+    # Normalize CRLF to LF and enforce ASCII by stripping non-ASCII
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    if not _ASCII_RE.match(s):
+        # Replace non-ASCII with '?'
+        s = "".join(ch if ord(ch) < 128 else "?" for ch in s)
+    # Ensure single trailing LF
+    if not s.endswith("\n"):
+        s += "\n"
+    return s
+
+def _extract_fileset(text: str, path_prefix: Optional[str]) -> List[Tuple[str, str]]:
     """
-    Returns the effective baseline system prompt or None if disabled.
-    Env:
-      - RMS_BASE_PROMPT_DISABLE=true  -> disable entirely
-      - RMS_BASE_PROMPT               -> appended after baseline (team-specific guardrails)
+    Parse BEGIN_FILE blocks into (path, content) tuples.
+    Enforce path_prefix and ASCII/LF constraints.
     """
-    if str(os.getenv("RMS_BASE_PROMPT_DISABLE", "")).lower() == "true":
-        return None
-    base = DEFAULT_RMS_SYSTEM_PROMPT
-    extra = (os.getenv("RMS_BASE_PROMPT") or "").strip()
-    if extra:
-        return f"{base}\n\n{extra}"
-    return base
+    files: List[Tuple[str, str]] = []
+    # Robust, line-based parse
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("BEGIN_FILE "):
+            relpath = line[len("BEGIN_FILE "):].strip()
+            i += 1
+            buf: List[str] = []
+            while i < len(lines) and lines[i].strip() != "END_FILE":
+                buf.append(lines[i])
+                i += 1
+            if i >= len(lines):
+                raise ValueError("Missing END_FILE for path: {}".format(relpath))
+            content = "\n".join(buf)
+            content = _ascii_lf(content)
+            # Prefix enforcement
+            if path_prefix and not relpath.startswith(path_prefix):
+                raise ValueError("File outside path_prefix: {}".format(relpath))
+            files.append((relpath, content))
+        i += 1
 
-def _last_n_messages(session: str, n: int = 10) -> list[dict]:
-    """Fallback: read the most recent n conversation rows for a session from Supabase."""
-    try:
-        res = (
-            supabase.table("conversations")
-            .select("role,content,created_at")
-            .eq("session", session)
-            .order("id", desc=True)
-            .limit(n)
-            .execute()
-        )
-        rows = res.data or []
-        rows.reverse()  # oldest → newest
-        return rows
-    except Exception:
-        return []
+    if not files:
+        raise ValueError("No BEGIN_FILE blocks found.")
+    return files
 
-# ---------- Utilities ----------
-def _embed(x: Any) -> List[float]:
-    """
-    Embeddings API expects a string (or list of strings). To avoid 400 '$.input is invalid',
-    stringify anything that's not already a plain string.
-    """
-    try:
-        if isinstance(x, (str, bytes)):
-            s = x.decode("utf-8") if isinstance(x, bytes) else x
-        else:
-            s = json.dumps(x, ensure_ascii=False)
-    except Exception:
-        s = str(x)
 
-    logger.info("repo-agent: calling embeddings model=%s input_len=%s", EMBED_MODEL, len(s))
-    resp = _openai.embeddings.create(model=EMBED_MODEL, input=s)
-    return resp.data[0].embedding  # list[float]
+# =========================
+# Public API
+# =========================
 
-def _format_citation(idx: int, path: str, start: int, end: int, commit_sha: Optional[str]) -> str:
-    sha = (commit_sha or "HEAD")[:7]
-    return f"[{idx}] {path}:{start}–{end}@{sha}"
-
-# ---------- Patch sanitation/validation helpers ----------
-_CODEBLOCK_RE = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
-_CBLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
-
-def _sanitize_patch_text(text: str) -> str:
-    if not text:
-        return ""
-    m = _CODEBLOCK_RE.search(text)
-    candidate = (m.group("body") if m else text)
-    candidate = candidate.replace("\r\n", "\n").replace("\r", "\n")
-    candidate = _CBLOCK_RE.sub("", candidate)
-    candidate = _ELLIPSIS_LINE_RE.sub("", candidate)
-    return candidate.strip()
-
-def _looks_like_unified_diff(text: str) -> bool:
-    if not text:
-        return False
-    if text.startswith("diff --git"):
-        return True
-    if text.startswith("--- ") and ("\n+++ " in text):
-        return True
-    return False
-
-def _extract_patch_from_text(text: str) -> Optional[str]:
-    cleaned = _sanitize_patch_text(text)
-    if not _looks_like_unified_diff(cleaned):
-        return None
-    return cleaned
-
-# ---------- Patch-generation helpers ----------
-def generate_patch_from_prompt(
-    prompt: str,
+def generate_artifact_from_task(
+    task: str,
     *,
+    repo: str,
+    branch: str,
+    path_prefix: Optional[str] = None,
     session: Optional[str] = None,
+    mode: str = "files",               # "files" (default) or "patch"
     model_env: str = "RMS_PATCH_MODEL",
-    default_model: str = CHAT_MODEL,
-) -> Optional[str]:
-    # NEW: accept dicts or other types safely
-    if not isinstance(prompt, str):
-        try:
-            prompt = json.dumps(prompt, ensure_ascii=False)
-        except Exception:
-            prompt = str(prompt)
-    if not prompt:
-        return None
+    default_model: str = "gpt-4o-mini",
+    temperature: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    Call the LLM to produce either:
+      - files: BEGIN_FILE blocks (most robust), or
+      - patch: unified diff.
 
+    Returns a dict with:
+      { "mode": "files", "files": [(path, content), ...] }  OR
+      { "mode": "patch", "patch": "<diff text>" }
+    """
+    if not _openai:
+        raise RuntimeError("OpenAI client not configured.")
 
-    model = os.getenv(model_env, default_model) or "gpt-4o-mini"
-
-    system_msg = _build_system_prompt() or (
-        "You output software patches as unified diffs ONLY. "
-        "No prose, no explanations, no code fences. "
-        "Do not include C-style comments (/* ... */). Use LF newlines."
-    )
-    # Prepend pinned constraints every time to reduce drift.
+    system_msg = _build_system_prompt(mode)
+    # Keep the user prompt concise and explicit.
     user_msg = (
-        "Produce a unified diff patch for the following repo task. "
-        "Output ONLY the diff. No backticks, no commentary, no placeholders.\n\n"
-        f"{PINNED_BLOCK}\n\n"
-        f"{prompt}"
+        "TASK:\n{}\n\n"
+        "REPO: {}\nBRANCH: {}\nPATH_PREFIX: {}\n"
+        "Return output in {} mode only."
+    ).format(task, repo, branch, path_prefix or "", mode.upper())
+
+    # Chat Completions (Responses API removed to avoid schema mismatches)
+    resp = _openai.chat.completions.create(
+        model=os.getenv(model_env, default_model),
+        temperature=temperature,
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ],
     )
+    text = _coalesce_response_text(resp) or ""
+    text = _ascii_lf(text)
+
+    if mode == "files":
+        files = _extract_fileset(text, path_prefix)
+        _remember(session, "files", json.dumps([p for p, _ in files]))
+        return {"mode": "files", "files": files}
+
+    # mode == "patch"
+    if not text.lstrip().startswith("diff --git"):
+        raise ValueError("Invalid patch output (missing 'diff --git').")
+    _remember(session, "patch", "(patch)")
+    return {"mode": "patch", "patch": text}
 
 
-    logger.info("repo-agent: calling chat.completions model=%s session=%s", model, session)
-    try:
-        resp = _openai.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-        )
-        text = (resp.choices[0].message.content if resp and resp.choices else "") or ""
-    except Exception as e:
-        # Remember the error (for follow-up context) and bubble it up
-        try:
-            _remember(session, "error", f"{type(e).__name__}: {e}")
-        except Exception:
-            pass
-        logger.exception("repo-agent: chat.completions failed session=%s", session)
-        raise
-
-    patch = _extract_patch_from_text(text)
-
-    # Remember the generated patch (raw or cleaned) for follow-ups
-    try:
-        _remember(session, "patch", patch or text or "")
-    except Exception:
-        pass
-
-    return patch
-
-# ---------- “Propose changes” ----------
 def propose_changes(
     task: str,
     *,
-    repo: str = "personal-agent-ste",
-    branch: str = "main",
+    repo: str,
+    branch: str,
     commit: str = "HEAD",
     k: int = 12,
     path_prefix: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-
+    """
+    JSON 'plan' response for callers that want a preview plus the input prompt.
+    This preserves compatibility with existing clients in JSON mode.
+    """
     session: Optional[str] = kwargs.get("session")
     thread_n: Optional[int] = kwargs.get("thread_n")
 
-    # 0) Stringify task for embeddings + prompt composition (prevents dict concat errors)
-    try:
-        task_str = task if isinstance(task, str) else json.dumps(task, ensure_ascii=False)
-    except Exception:
-        task_str = str(task)
+    # Minimal context search placeholder (kept for interface stability)
+    vec = _embed(task if isinstance(task, str) else json.dumps(task))
+    hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
 
-    # 1) Build search context (embed the stringified task)
-    vec = _embed(task_str)
-    k_cap = min(int(k or 6), 6)
-
-    hits = repo_search(vec, repo=repo, branch=branch, k=k_cap, prefix=path_prefix) or []
-
-
-    ctx_parts: List[str] = []
-    for i, h in enumerate(hits, start=1):
-        path = h.get("path", "")
-        start_line = int(h.get("start_line", 1) or 1)
-        end_line = int(h.get("end_line", start_line) or start_line)
-        cite = _format_citation(i, path, start_line, end_line, h.get("commit_sha"))
-        content = h.get("content", "")
-        ctx_parts.append(f"{cite}\n```\n{content}\n```")
-
-    # 2) Effective system prompt
-    baseline = _build_system_prompt()
+    baseline = _build_system_prompt("files")
     header = f"SYSTEM\n{baseline}\n\n" if baseline else ""
+    prompt = header + "TASK\n" + (task if isinstance(task, str) else json.dumps(task)) + "\n\nCONTEXT\n(no context)"
 
-    # 3) Session digest → bias toward minimal follow-up
-    prev = _context_digest(kwargs.get("session"))
-    if prev:
-        task_for_model = (
-            f"{PINNED_BLOCK}\n\n"
-            "Apply a minimal FOLLOW-UP fix based on prior context below. "
-            "Output ONLY a single unified diff (git-apply ready). "
-            "Do not restate previous changes; adjust only what is necessary.\n\n"
-            f"{prev}\n\n"
-            "----- NEW REQUEST -----\n"
-            f"{task_str}"
-        )
-    else:
-        task_for_model = f"{PINNED_BLOCK}\n\n{task_str}"
+    # Memory breadcrumbs
+    try:
+        _remember(session, "task", task if isinstance(task, str) else json.dumps(task))
+        _remember(session, "prompt", prompt)
+    except Exception:
+        pass
 
-    # 4) Compose the model-facing prompt (JSON mode returns this for the /plan call)
-    draft = "No automatic changes proposed in this stub."
-    prompt = header + "TASK\n" + task_for_model + "\n\nCONTEXT\n" + (
-        "\n\n".join(ctx_parts) if ctx_parts else "(no context)"
-    )
-
-    # 5) Remember current task + prompt for follow-ups
-    _remember(session, "task", task_str)
-    _remember(session, "prompt", prompt)
-
-    # 6) Back-compat JSON
     return {
         "hits": hits,
-        "draft": draft,
+        "draft": "No automatic changes proposed in this stub.",
         "prompt": prompt,
-        "meta": {
-            "system_prompt": baseline,
-            "session": session,
-            "thread_n": thread_n,
-        },
-        "summary": "Repo plan generated (JSON mode). Use patch mode to fetch a diff.",
+        "meta": {"system_prompt": baseline, "session": session, "thread_n": thread_n},
+        "summary": "Repo plan generated (JSON mode). Use `format=files` or `format=patch` to fetch an artifact.",
         "patch_present": False,
     }
 
-# ---------- Repo Q&A / Endpoint wrapper ----------
-# NOTE: This file references _store_session_token / _recall_session_token / _TOKEN_RECALL_RE
-# which are assumed to be defined elsewhere in this module or imported. We leave them unchanged.
 
+# Back-compat Q&A entrypoint (used elsewhere)
 def answer_about_repo(
     question: str,
     *,
@@ -434,117 +259,6 @@ def answer_about_repo(
     commit: Optional[str] = None,
     session: Optional[str] = None,
     thread_n: Optional[int] = None,
-    **kwargs: Any,
 ) -> Dict[str, Any]:
-    """
-    Primary entry the HTTP route uses. It also handles ping + session memory.
-    Returns a dict with (at least): agent, intent, answer, session, thread_n.
-    """
-    q = (question or "").strip()
-
-    # Health check: no RMS calls
-    if q.lower() == "ping":
-        return {
-            "agent": "repo",
-            "intent": "pong",
-            "answer": "pong",
-            "session": session,
-            "thread_n": thread_n,
-            "meta": {"system_prompt": _build_system_prompt()},
-        }
-
-    # Session memory: explicit store
-    
-    token = _store_session_token(session, q)
-    if token:
-        return {
-            "agent": "repo",
-            "intent": "memory.store",
-            "answer": "Acknowledged. I’ll remember this for this session.",
-            "session": session,
-            "thread_n": thread_n,
-            "meta": {"system_prompt": _build_system_prompt()},
-        }
-
-    # Session memory: recall
-    if _TOKEN_RECALL_RE.search(q):
-        recalled = _recall_session_token(session)
-        if recalled:
-            return {
-                "agent": "repo",
-                "intent": "memory.recall",
-                "answer": f"The token is: {recalled}",
-                "session": session,
-                "thread_n": thread_n,
-                "meta": {"system_prompt": _build_system_prompt()},
-            }
-        else:
-            return {
-                "agent": "repo",
-                "intent": "memory.miss",
-                "answer": "I don’t have a token stored for this session yet.",
-                "session": session,
-                "thread_n": thread_n,
-                "meta": {"system_prompt": _build_system_prompt()},
-            }
-
-    # Normal RMS-backed Q&A
-    try:
-        vec = _embed(q)
-    except Exception as e:
-        return {
-            "agent": "repo",
-            "intent": "error",
-            "message": f"embedding failed: {getattr(e, 'message', None) or str(e)}",
-            "session": session,
-            "thread_n": thread_n,
-            "meta": {"system_prompt": _build_system_prompt()},
-        }
-
-    try:
-        hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
-    except Exception as e:
-        err = getattr(e, "message", None) or str(e)
-        return {
-            "agent": "repo",
-            "intent": "error",
-            "message": f"repo_search RPC failed: {err}",
-            "debug": {
-                "params": {"repo_in": repo, "branch_in": branch, "prefix_in": path_prefix, "query_embedding": vec, "match_count": int(k)},
-            },
-            "session": session,
-            "thread_n": thread_n,
-            "meta": {"system_prompt": _build_system_prompt()},
-        }
-
-    if hits:
-        cites = []
-        for i, h in enumerate(hits[:3], start=1):
-            cites.append(_format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha")))
-        answer = "Here’s what I found in the repo:\n" + "\n".join(cites)
-    else:
-        answer = "No relevant matches in the repo memory."
-
-    return {
-        "agent": "repo",
-        "intent": "answer",
-        "answer": answer,
-        "hits": hits,
-        "session": session,
-        "thread_n": thread_n,
-        "meta": {"system_prompt": _build_system_prompt()},
-    }
-
-def handle(task: str, *, session: Optional[str] = None, thread_n: Optional[int] = None,
-           repo: Optional[str] = None, branch: Optional[str] = None,
-           k: int = 8, path_prefix: Optional[str] = None) -> Dict[str, Any]:
-    """Thin wrapper used by the route."""
-    return answer_about_repo(
-        task,
-        repo=(repo or REPO_SLUG),
-        branch=(branch or REPO_BRANCH),
-        k=k,
-        path_prefix=path_prefix,
-        session=session,
-        thread_n=thread_n,
-    )
+    # Minimal placeholder so imports do not break
+    return {"agent": "repo", "intent": "say", "message": "Q&A is not implemented in this stub."}
