@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse, PlainTextResponse
+from backend.utils.patch_sanitizer import sanitize_patch, validate_patch_structure
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 # add near your other imports
@@ -25,6 +26,8 @@ from backend.agents.repo_agent import propose_changes, generate_artifact_from_ta
 from backend.logging_utils import setup_logging, RequestLoggingMiddleware
 
 app = FastAPI(title="Personal Agent API")
+
+setup_logging()
 
 
 app.add_middleware(RequestLoggingMiddleware)
@@ -89,6 +92,38 @@ def _parse_files_artifact(text: str) -> list[tuple[str, str]]:
 
     return blocks
 
+from typing import Optional
+from pathlib import Path
+
+def _try_fix_patch_with_ps1(patch_text: str) -> Optional[str]:
+    """
+    Optionally invoke tools/fix-patch.ps1 if available in runtime.
+    Returns fixed text on success, or None if not executed or failed.
+    """
+    script_rel = Path(__file__).resolve().parents[1] / "tools" / "fix-patch.ps1"
+    if not script_rel.exists():
+        return None
+    # Prefer pwsh if present
+    for exe in ("pwsh", "powershell"):
+        try:
+            import subprocess, tempfile
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f_in:
+                f_in.write(patch_text)
+                in_path = f_in.name
+            out_path = in_path + ".out.patch"
+            cmd = [
+                exe, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(script_rel),
+                "-InPath", in_path,
+                "-OutPath", out_path
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+            if proc.returncode == 0 and Path(out_path).exists():
+                fixed = Path(out_path).read_text(encoding="utf-8")
+                return fixed
+        except Exception:
+            continue
+    return None
 
 # -------------------- Health --------------------
 @app.get("/health")
@@ -177,136 +212,81 @@ from fastapi import Request  # ensure this import exists
 
 @app.post("/app/api/repo/plan")
 def repo_plan(payload: Dict[str, Any], request: Request):
-    task = payload.get("task")
+    """
+    RMS plan endpoint with strict output enforcement.
+    - ?format=files -> returns BEGIN_FILE/END_FILE blocks as text/plain
+    - ?format=patch -> returns unified diff as text/x-patch after sanitation+validation
+    - default -> JSON preview for UI
+    """
+    task = (payload or {}).get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
-
     repo    = payload.get("repo", "personal-agent-ste")
     branch  = payload.get("branch", "main")
-    prefix  = payload.get("path_prefix")
+    prefix  = payload.get("path_prefix", "backend/")
     k       = int(payload.get("k", 12))
     session = payload.get("session")
     thread_n = payload.get("thread_n")
-
-    # NEW: honor ?format=files|patch
     fmt = request.query_params.get("format") or request.headers.get("X-RMS-Format")
-    if fmt in ("files", "patch"):
-        try:
-            art = generate_artifact_from_task(
-                task if isinstance(task, str) else json.dumps(task),
-                repo=repo,
-                branch=branch,
-                path_prefix=prefix,
-                session=session,
-                mode=fmt,
-            )
-            if fmt == "files":
-                # Stitch BEGIN_FILE blocks for the client to materialize
-                blocks = []
-                for path, content in art["files"]:
-                    # ASCII/LF already normalized inside repo_agent
-                    blocks.append(f"BEGIN_FILE {path}\n{content}END_FILE\n")
-                return PlainTextResponse("".join(blocks), media_type="text/plain; charset=utf-8")
-            else:
-                return PlainTextResponse(art["patch"], media_type="text/x-patch; charset=utf-8")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
 
-    # Fallback: original JSON “plan” mode (unchanged)
-    out = propose_changes(
-        task,
-        repo=repo,
-        branch=branch,
-        commit="HEAD",
-        k=k,
-        path_prefix=prefix,
-        session=session,
-        thread_n=thread_n,
-    )
-    return out
-from fastapi.responses import PlainTextResponse
-import logging
-logger = logging.getLogger("app.files")
-
-@app.post("/app/api/repo/files")
-def repo_files(payload: Dict[str, Any]):
-    """
-    Returns BEGIN_FILE/END_FILE blocks for 'files' mode.
-    Expected JSON:
-      {
-        "task": "<instructions>",
-        "repo": "personal-agent-ste",
-        "branch": "main",
-        "path_prefix": "backend/",
-        "session": "optional"
-      }
-    """
-    try:
-        task_text = (payload or {}).get("task")
-        if not task_text:
-            raise HTTPException(status_code=400, detail="Missing 'task'")
-        repo = payload.get("repo", "personal-agent-ste")
-        branch = payload.get("branch", "main")
-        prefix = payload.get("path_prefix", "backend/")
-        session = payload.get("session")
-
-        out = generate_artifact_from_task(
-            task_text,
-            repo=repo,
-            branch=branch,
-            path_prefix=prefix,
-            session=session,
-            mode="files",           # IMPORTANT: force files mode
+    if fmt == "files":
+        art = generate_artifact_from_task(
+            task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="files"
         )
-
-        if not isinstance(out, dict):
-            raise HTTPException(status_code=500, detail="Upstream returned non-dict")
-
-        if not out.get("ok"):
-            warn = out.get("warning") or "files-mode validation failed"
-            raise HTTPException(status_code=400, detail=f"{warn}")
-
-        content = out.get("content") or ""
-        if not content.strip():
-            raise HTTPException(status_code=400, detail="Empty files content")
-
-        # Return raw text blocks
+        if not art.get("ok"):
+            # Return raw content for inspection but mark 422
+            return PlainTextResponse(str(art.get("content","")), status_code=422, media_type="text/plain; charset=utf-8")
+        content = art.get("content","")
+        # Lightweight validation: ASCII/LF + BEGIN/END markers + trailing LF per file
+        try:
+            _ = _parse_files_artifact(content)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
         return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("files-mode generation failed")
-        return JSONResponse(
-            {
-                "agent": "system",
-                "intent": "error",
-                "message": f"Upstream generation error: {type(e).__name__}: {e}",
-            },
-            status_code=500,
+    if fmt == "patch":
+        art = generate_artifact_from_task(
+            task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="patch"
         )
+        patch = art.get("patch") or art.get("content") or ""
+        # Sanitize and validate
+        patch, warnings = sanitize_patch(patch)
+        ok, msg = validate_patch_structure(patch, path_prefix=prefix)
+        if not ok:
+            # Optional: attempt external fixer if enabled
+            fixed = _try_fix_patch_with_ps1(patch)
+            if fixed is not None:
+                patch = fixed
+                ok, msg = validate_patch_structure(patch, path_prefix=prefix)
+        if not ok:
+            raise HTTPException(status_code=422, detail=f"Invalid patch: {msg}")
+        return PlainTextResponse(patch, media_type="text/x-patch; charset=utf-8")
 
+    # Default JSON preview (no strict guarantees)
+    out = propose_changes(
+        task, repo=repo, branch=branch, commit="HEAD", k=k, path_prefix=prefix, session=session, thread_n=thread_n
+    )
+    return out@app.post("/app/api/repo/files")
+def repo_files(payload: Dict[str, Any]):
+    """
+    Strict files-mode endpoint: returns only BEGIN_FILE/END_FILE blocks (ASCII+LF).
+    """
+    task = (payload or {}).get("task")
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task'")
+    repo    = payload.get("repo", "personal-agent-ste")
+    branch  = payload.get("branch", "main")
+    prefix  = payload.get("path_prefix", "backend/")
+    session = payload.get("session")
 
+    art = generate_artifact_from_task(
+        task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="files"
+    )
+    content = art.get("content","")
+    # Validate files artifact
+    try:
+        _ = _parse_files_artifact(content)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
 
-# -------------------- Static frontend (SPA at /app) --------------------
-static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.isdir(static_dir):
-    INDEX_FILE = Path(static_dir) / "index.html"
-
-    app.mount("/app", StaticFiles(directory=static_dir, html=True), name="static")
-
-    @app.get("/app", include_in_schema=False, response_class=HTMLResponse)
-    @app.get("/app/", include_in_schema=False, response_class=HTMLResponse)
-    def serve_index():
-        if INDEX_FILE.exists():
-            return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
-        raise HTTPException(status_code=404, detail="Frontend build not found.")
-
-    @app.get("/app/{path:path}", include_in_schema=False, response_class=HTMLResponse)
-    def spa_fallback(path: str):
-        candidate = Path(static_dir) / path
-        if candidate.is_file():
-            return FileResponse(str(candidate))
-        if INDEX_FILE.exists():
-            return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
-        raise HTTPException(status_code=404, detail="Frontend build not found.")
+    return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
