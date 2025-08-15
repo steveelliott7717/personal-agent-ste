@@ -258,7 +258,6 @@ def generate_patch_from_prompt(
     session: Optional[str] = None,
     model_env: str = "RMS_PATCH_MODEL",
     default_model: str = CHAT_MODEL,
-    temperature: float = 0.0,
 ) -> Optional[str]:
     # NEW: accept dicts or other types safely
     if not isinstance(prompt, str):
@@ -287,7 +286,6 @@ def generate_patch_from_prompt(
     try:
         resp = _openai.chat.completions.create(
             model=model,
-            temperature=temperature,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
