@@ -267,12 +267,10 @@ def _enforce_trailing_lf_per_file(artifact: str) -> str:
     L = len(lines)
 
     while i < L:
-        line = lines[i]
-        if not line.startswith("BEGIN_FILE "):
+        if not lines[i].startswith("BEGIN_FILE "):
             i += 1
             continue
-
-        path = line[len("BEGIN_FILE ") :].strip()
+        path = lines[i][len("BEGIN_FILE ") :].strip()
         i += 1
 
         body_lines = []
@@ -281,19 +279,13 @@ def _enforce_trailing_lf_per_file(artifact: str) -> str:
             i += 1
         if i >= L:
             raise ValueError(f"Missing END_FILE for {path}")
+        i += 1  # skip END_FILE
 
-        # skip END_FILE
-        i += 1
-
-        # join and enforce exactly one trailing LF in the body
         body = "\n".join(body_lines).replace("\r\n", "\n").replace("\r", "\n")
-        body = body.rstrip("\n") + "\n"
-
+        body = body.rstrip("\n") + "\n"  # <-- the critical bit
         out.append(f"BEGIN_FILE {path}\n{body}END_FILE\n")
 
-    # ensure the entire artifact ends with exactly one LF
-    clean = "".join(out)
-    return clean.rstrip("\n") + "\n"
+    return ("".join(out)).rstrip("\n") + "\n"
 
 
 # -------------------- Repo endpoints --------------------
@@ -329,7 +321,6 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             mode="files",
         )
         if not art.get("ok"):
-            # Return the raw content for inspection but still use text/plain
             return PlainTextResponse(
                 str(art.get("content", "")),
                 status_code=422,
@@ -337,9 +328,8 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             )
 
         content = art.get("content", "")
-
-        # Normalize CR/CRLF->LF, enforce per-file trailing LF, and artifact-level LF
         content = _enforce_trailing_lf_per_file(content)
+        content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
 
         return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
@@ -406,13 +396,10 @@ def repo_files(payload: Dict[str, Any]):
         session=session,
         mode="files",
     )
-
     content = art.get("content", "")
 
-    try:
-        # Normalize CR/CRLF->LF, enforce per-file trailing LF, and artifact-level LF
-        content = _enforce_trailing_lf_per_file(content)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
+    # Enforce newline rules per-file and for the whole artifact
+    content = _enforce_trailing_lf_per_file(content)
+    content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
 
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
