@@ -42,6 +42,7 @@ Examples:
 }
 """
 
+
 class MealsAgent(BaseAgent):
     AGENT_META = {
         "slug": "meals",
@@ -51,12 +52,23 @@ class MealsAgent(BaseAgent):
         # "module_path": "agents.meals_agent",
         # "callable_name": "class:MealsAgent",
         "namespaces": ["meals"],
-        "capabilities": ["Daylist","Swap","Complete","Plan"],
-        "keywords": ["meal","meals","eat","food","recipe","daylist","breakfast","lunch","dinner","snack"],
+        "capabilities": ["Daylist", "Swap", "Complete", "Plan"],
+        "keywords": [
+            "meal",
+            "meals",
+            "eat",
+            "food",
+            "recipe",
+            "daylist",
+            "breakfast",
+            "lunch",
+            "dinner",
+            "snack",
+        ],
         "status": "enabled",
         "version": "v1",
         # Hints for the planner (also overridable via agent_settings.default_tables)
-        "default_tables": ["recipe_templates","meal_plan","meal_log"],
+        "default_tables": ["recipe_templates", "meal_plan", "meal_log"],
         "instruction_tags": [],
         "fallback_system": FALLBACK_SYSTEM,
         # Post hooks can be configured here or in agent_settings.post_hooks
@@ -74,6 +86,7 @@ class MealsAgent(BaseAgent):
         if any(w in text for w in ["done", "complete", "log"]):
             tags.append("logging")
         return tags
+
 
 def handle_meals(query: str):
     return MealsAgent().handle(query)

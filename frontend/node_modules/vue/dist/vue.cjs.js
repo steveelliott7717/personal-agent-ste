@@ -50,7 +50,7 @@ function compileToFunction(template, options) {
     {
       hoistStatic: true,
       onError: onError ,
-      onWarn: (e) => onError(e, true) 
+      onWarn: (e) => onError(e, true)
     },
     options
   );

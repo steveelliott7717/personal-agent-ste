@@ -108,6 +108,6 @@ logs/
 *.log
 *.out
 *.err
-"patches/" 
-"prompt_director.py"  
-prompt_director.py 
+"patches/"
+"prompt_director.py"
+prompt_director.py

@@ -5,8 +5,10 @@ from backend.utils.agent_registry import register_agent
 
 logger = logging.getLogger("agent-bootstrap")
 
+
 def bootstrap_register_all():
     import backend.agents as agents_pkg  # package where your agents live
+
     for m in pkgutil.iter_modules(agents_pkg.__path__, agents_pkg.__name__ + "."):
         try:
             mod = importlib.import_module(m.name)

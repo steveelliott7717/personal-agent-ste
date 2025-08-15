@@ -4,9 +4,9 @@ from typing import Any, Dict, List, Optional, TypedDict, Union
 
 
 class AgentResponse(TypedDict, total=False):
-    agent: str                 # e.g. "finance"
-    intent: str                # e.g. "list_expenses", "log_expense"
-    message: str               # natural language response
+    agent: str  # e.g. "finance"
+    intent: str  # e.g. "list_expenses", "log_expense"
+    message: str  # natural language response
     data: Union[List[Dict[str, Any]], Dict[str, Any], None]
     meta: Dict[str, Any]
 

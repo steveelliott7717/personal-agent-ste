@@ -4,7 +4,8 @@ from __future__ import annotations
 import sys, re
 
 _BEGIN = re.compile(r"^BEGIN_FILE\s+(.+)$")
-_END   = re.compile(r"^END_FILE\s*$")
+_END = re.compile(r"^END_FILE\s*$")
+
 
 def is_ascii(s: str) -> bool:
     try:
@@ -12,6 +13,7 @@ def is_ascii(s: str) -> bool:
         return True
     except UnicodeEncodeError:
         return False
+
 
 def validate(text: str) -> tuple[bool, str]:
     t = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -53,6 +55,7 @@ def validate(text: str) -> tuple[bool, str]:
         i += 1  # move past END_FILE
     return True, "ok"
 
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("Usage: python tools/test_files_validate.py <files.out>", file=sys.stderr)
@@ -66,6 +69,7 @@ def main() -> int:
     else:
         print("INVALID:", msg, file=sys.stderr)
         return 1
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

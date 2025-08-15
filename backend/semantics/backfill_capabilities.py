@@ -11,7 +11,12 @@ def run() -> None:
     Populate/refresh public.agent_capabilities by embedding each enabled agent's description.
     Expects an 'agents' table with (slug, title, description, status).
     """
-    res = supabase.table("agents").select("slug, title, description").eq("status", "enabled").execute()
+    res = (
+        supabase.table("agents")
+        .select("slug, title, description")
+        .eq("status", "enabled")
+        .execute()
+    )
     rows: List[Dict[str, Any]] = getattr(res, "data", None) or []
     if not rows:
         print("[cap-backfill] no agents found")
@@ -30,7 +35,12 @@ def run() -> None:
     embs = embed_batch(descs)
     for slug, text, emb in zip(keys, descs, embs):
         supabase.table("agent_capabilities").upsert(
-            {"agent_slug": slug, "description": text, "param_schema": {}, "embedding": emb},
+            {
+                "agent_slug": slug,
+                "description": text,
+                "param_schema": {},
+                "embedding": emb,
+            },
             on_conflict="agent_slug",
         ).execute()
 

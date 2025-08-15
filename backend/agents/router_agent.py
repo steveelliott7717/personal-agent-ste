@@ -12,10 +12,18 @@ import time
 
 from backend.services.supabase_service import supabase
 
-def _log_decision(agent_slug: str, user_id: str, query_text: str, was_success: bool,
-                  latency_ms: int = 0, reason: str | None = None,
-                  confidence: float | None = None, error: str | None = None,
-                  extra: dict | None = None) -> None:
+
+def _log_decision(
+    agent_slug: str,
+    user_id: str,
+    query_text: str,
+    was_success: bool,
+    latency_ms: int = 0,
+    reason: str | None = None,
+    confidence: float | None = None,
+    error: str | None = None,
+    extra: dict | None = None,
+) -> None:
     try:
         payload = {
             "agent_slug": agent_slug,
@@ -27,14 +35,13 @@ def _log_decision(agent_slug: str, user_id: str, query_text: str, was_success: b
                 "reason": reason,
                 "confidence": confidence,
                 "error": error,
-                **(extra or {})
-            }
+                **(extra or {}),
+            },
         }
         payload["extra"] = {k: v for k, v in payload["extra"].items() if v is not None}
         supabase.table("agent_decisions").insert(payload).execute()
     except Exception:
         logger.exception("[router] failed to log agent_decision")
-
 
 
 ROUTER_VERSION = "2025-08-09-supabase-registry-v1"
@@ -46,6 +53,7 @@ _REG: Dict[str, Dict[str, Any]] = {}
 _LAST: float = 0.0
 _TTL = 60.0  # seconds
 
+
 def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
     global _REG, _LAST
     if not force and _REG and (time.time() - _LAST < _TTL):
@@ -54,7 +62,18 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
     rows = []
     try:
         res = supabase.table("agents").select("*").eq("status", "enabled").execute()
-        print("[router] fetched agents:", [ (r.get("slug"), r.get("module_path"), r.get("callable_name"), r.get("status")) for r in rows ])
+        print(
+            "[router] fetched agents:",
+            [
+                (
+                    r.get("slug"),
+                    r.get("module_path"),
+                    r.get("callable_name"),
+                    r.get("status"),
+                )
+                for r in rows
+            ],
+        )
 
         rows = getattr(res, "data", None) or []
     except Exception:
@@ -85,16 +104,23 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
             }
             print(f"[router] registered agent: {slug} -> {module_path}.{callable_name}")
         except Exception:
-            logger.exception(f"[router] failed to import {module_path}.{callable_name} for slug={slug}")
+            logger.exception(
+                f"[router] failed to import {module_path}.{callable_name} for slug={slug}"
+            )
 
     _REG = reg
     _LAST = time.time()
     print(f"[router] registry loaded: {sorted(_REG.keys())}")
     return _REG
 
+
 def _catalog() -> Dict[str, Any]:
     reg = _load_registry()
-    return {k: {"desc": v["desc"], "capabilities": v["capabilities"]} for k, v in reg.items()}
+    return {
+        k: {"desc": v["desc"], "capabilities": v["capabilities"]}
+        for k, v in reg.items()
+    }
+
 
 # ----- LLM prompt -----
 ROUTER_SYSTEM = """You are the routing coordinator for a personal-agents app.
@@ -137,8 +163,10 @@ def _build_prompt(user_text: str, user_id: str) -> str:
         "Return ONLY the JSON."
     )
 
+
 def _parse_json(raw: str) -> Optional[Dict[str, Any]]:
-    if not isinstance(raw, str): return None
+    if not isinstance(raw, str):
+        return None
     s = raw.strip()
     if s.startswith("```"):
         s = s.strip("`")
@@ -146,12 +174,14 @@ def _parse_json(raw: str) -> Optional[Dict[str, Any]]:
         if lines and lines[0].lower().startswith("json"):
             s = "\n".join(lines[1:])
     start, end = s.find("{"), s.rfind("}")
-    if start == -1 or end == -1 or end <= start: return None
+    if start == -1 or end == -1 or end <= start:
+        return None
     try:
-        return json.loads(s[start:end+1])
+        return json.loads(s[start : end + 1])
     except Exception:
         logger.exception("[router] LLM parse error")
         return None
+
 
 def _llm_route(user_text: str, user_id: str) -> Optional[Dict[str, Any]]:
     try:
@@ -185,7 +215,9 @@ def _llm_route(user_text: str, user_id: str) -> Optional[Dict[str, Any]]:
 
     except Exception as e:
         logger.exception("[router] reasoner failed")
-        _log_decision("router", user_id, user_text, False, reason="reasoner_failed", error=str(e))
+        _log_decision(
+            "router", user_id, user_text, False, reason="reasoner_failed", error=str(e)
+        )
         return None
 
 
@@ -200,22 +232,61 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
 
         # Direct answer
         if decision and decision.get("agent") == "none":
-            _log_decision("router", user_id, query, True, extra={"reason": decision.get("reason"), "confidence": decision.get("confidence")})
-            return "router", make_response(agent="router", intent="answer",
-                                        data={"response": decision.get("response"),
-                                                "reason": decision.get("reason"),
-                                                "confidence": decision.get("confidence")})
-
+            _log_decision(
+                "router",
+                user_id,
+                query,
+                True,
+                extra={
+                    "reason": decision.get("reason"),
+                    "confidence": decision.get("confidence"),
+                },
+            )
+            return "router", make_response(
+                agent="router",
+                intent="answer",
+                data={
+                    "response": decision.get("response"),
+                    "reason": decision.get("reason"),
+                    "confidence": decision.get("confidence"),
+                },
+            )
 
         # Clarify (or low confidence)
-        if not decision or decision.get("agent") == "clarify" or decision.get("confidence", 0) < 0.55:
-            opts = decision.get("options") if decision and decision.get("options") else allowed
-            q = decision.get("question") if decision and decision.get("question") else "Which agent should handle this?"
-            _log_decision("router", user_id, query, False, extra={"reason": (decision or {}).get("reason"), "confidence": (decision or {}).get("confidence")})
-            return "router", make_response(agent="router", intent="clarify",
-                                        data={"question": q, "options": opts,
-                                                "suggested_rewrite": decision.get("rewrite") if decision else None})
-
+        if (
+            not decision
+            or decision.get("agent") == "clarify"
+            or decision.get("confidence", 0) < 0.55
+        ):
+            opts = (
+                decision.get("options")
+                if decision and decision.get("options")
+                else allowed
+            )
+            q = (
+                decision.get("question")
+                if decision and decision.get("question")
+                else "Which agent should handle this?"
+            )
+            _log_decision(
+                "router",
+                user_id,
+                query,
+                False,
+                extra={
+                    "reason": (decision or {}).get("reason"),
+                    "confidence": (decision or {}).get("confidence"),
+                },
+            )
+            return "router", make_response(
+                agent="router",
+                intent="clarify",
+                data={
+                    "question": q,
+                    "options": opts,
+                    "suggested_rewrite": decision.get("rewrite") if decision else None,
+                },
+            )
 
         # Normal route
         agent = str(decision.get("agent") or "").strip().lower()
@@ -224,7 +295,9 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
 
             # Log to routing memory for future retrieval
             try:
-                doc_id = f"{user_id}:{int(time.time())}"  # or a short hash if you prefer
+                doc_id = (
+                    f"{user_id}:{int(time.time())}"  # or a short hash if you prefer
+                )
                 emb_upsert(
                     namespace="routing",
                     doc_id=doc_id,
@@ -251,26 +324,35 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
                 query_text=text,
                 was_success=True,  # flip to False if you detect failures in result handling
                 latency_ms=_latency_ms,
-                extra={"reason": decision.get("reason"), "confidence": decision.get("confidence")}
+                extra={
+                    "reason": decision.get("reason"),
+                    "confidence": decision.get("confidence"),
+                },
             )
 
             return agent, result
 
-
-    
-    
-
         # If the agent isn’t in registry, clarify (no fallback)
-        _log_decision("router", user_id, query, False, extra={"reason": "agent_not_in_registry"})
-        return "router", make_response(agent="router", intent="clarify",
-                                    data={"question": "I don’t recognize that agent. Choose one:",
-                                            "options": allowed})
-
+        _log_decision(
+            "router", user_id, query, False, extra={"reason": "agent_not_in_registry"}
+        )
+        return "router", make_response(
+            agent="router",
+            intent="clarify",
+            data={
+                "question": "I don’t recognize that agent. Choose one:",
+                "options": allowed,
+            },
+        )
 
     except Exception:
         logger.exception("[router] fatal error")
         _log_decision("router", user_id, query, False, extra={"reason": "fatal_error"})
-        return "router", make_response(agent="router", intent="clarify",
-                                    data={"question": "Something went wrong. Which agent should handle this?",
-                                            "options": allowed})
-
+        return "router", make_response(
+            agent="router",
+            intent="clarify",
+            data={
+                "question": "Something went wrong. Which agent should handle this?",
+                "options": allowed,
+            },
+        )

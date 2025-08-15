@@ -7,10 +7,17 @@ from typing import Any, Dict, Tuple, Optional, List
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, FileResponse, PlainTextResponse
+from fastapi.responses import (
+    JSONResponse,
+    RedirectResponse,
+    HTMLResponse,
+    FileResponse,
+    PlainTextResponse,
+)
 from backend.utils.patch_sanitizer import sanitize_patch, validate_patch_structure
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+
 # add near your other imports
 from fastapi.responses import PlainTextResponse
 from backend.agents.repo_agent import generate_artifact_from_task
@@ -18,10 +25,12 @@ import re
 
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # Package-qualified imports
 from backend.agents.repo_agent import propose_changes, generate_artifact_from_task
+
 # Add these imports after the existing dotenv and package imports
 from backend.logging_utils import setup_logging, RequestLoggingMiddleware
 
@@ -35,12 +44,14 @@ app.add_middleware(RequestLoggingMiddleware)
 _BEGIN_RE = re.compile(r"^BEGIN_FILE\s+(.+)$")
 _END_RE = re.compile(r"^END_FILE\s*$")
 
+
 def _is_ascii_lf(s: str) -> bool:
     try:
         s.encode("ascii")
     except UnicodeEncodeError:
         return False
     return "\r" not in s
+
 
 def _parse_files_artifact(text: str) -> list[tuple[str, str]]:
     """
@@ -92,8 +103,10 @@ def _parse_files_artifact(text: str) -> list[tuple[str, str]]:
 
     return blocks
 
+
 from typing import Optional
 from pathlib import Path
+
 
 def _try_fix_patch_with_ps1(patch_text: str) -> Optional[str]:
     """
@@ -107,15 +120,24 @@ def _try_fix_patch_with_ps1(patch_text: str) -> Optional[str]:
     for exe in ("pwsh", "powershell"):
         try:
             import subprocess, tempfile
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f_in:
+
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", delete=False
+            ) as f_in:
                 f_in.write(patch_text)
                 in_path = f_in.name
             out_path = in_path + ".out.patch"
             cmd = [
-                exe, "-NoProfile", "-ExecutionPolicy", "Bypass",
-                "-File", str(script_rel),
-                "-InPath", in_path,
-                "-OutPath", out_path
+                exe,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_rel),
+                "-InPath",
+                in_path,
+                "-OutPath",
+                out_path,
             ]
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
             if proc.returncode == 0 and Path(out_path).exists():
@@ -125,24 +147,28 @@ def _try_fix_patch_with_ps1(patch_text: str) -> Optional[str]:
             continue
     return None
 
+
 # -------------------- Health --------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
 # add somewhere near your other health routes in backend/main.py
+
 
 @app.get("/app/api/repo/health")
 def repo_health():
     return {"ok": True, "model": os.getenv("CHAT_MODEL", "gpt-5")}
 
 
-
 @app.get("/", include_in_schema=False)
 def root_redirect():
     return RedirectResponse(url="/app/")
 
+
 # ---------- Files-mode validation helpers ----------
+
 
 def _rebuild_files_with_lf(artifact: str) -> str:
     """
@@ -168,12 +194,14 @@ _MAIN_SENTINELS = [
     "app.add_middleware(NaturalLanguageMiddleware)",
 ]
 
+
 def _ascii_lf_only(s: str) -> bool:
     try:
         s.encode("ascii")
     except UnicodeEncodeError:
         return False
     return ("\r" not in s) and s.endswith("\n")
+
 
 def _parse_files_blocks(text: str) -> dict[str, str]:
     files: dict[str, str] = {}
@@ -183,7 +211,7 @@ def _parse_files_blocks(text: str) -> dict[str, str]:
     while i < len(lines):
         line = lines[i].strip()
         if line.startswith("BEGIN_FILE "):
-            rel = line[len("BEGIN_FILE "):].strip()
+            rel = line[len("BEGIN_FILE ") :].strip()
             i += 1
             buf = []
             while i < len(lines) and lines[i].strip() != "END_FILE":
@@ -198,8 +226,9 @@ def _parse_files_blocks(text: str) -> dict[str, str]:
         i += 1
     if not files:
         raise ValueError("No BEGIN_FILE/END_FILE blocks found")
-    
+
     return files
+
 
 def _validate_files_mode(files: dict[str, str]) -> tuple[bool, str]:
     # 1) only allowed paths
@@ -221,64 +250,55 @@ def _validate_files_mode(files: dict[str, str]) -> tuple[bool, str]:
 
     return True, "ok"
 
+
 import re  # (keep if you already import re)
+
 
 def _enforce_trailing_lf_per_file(artifact: str) -> str:
     """
-    Normalize CRLF -> LF and ensure each file body ends with exactly one '\n'
-    *as parsed by line-join validators* (which requires two blank lines for empty files).
-    Re-emits strict BEGIN_FILE/END_FILE blocks.
+    Normalize CRLF/CR -> LF. For each BEGIN_FILE/END_FILE block, ensure the file body
+    ends with exactly one '\n'. Then ensure the WHOLE artifact ends with exactly one '\n'.
+    Works for empty file bodies too.
     """
     t = artifact.replace("\r\n", "\n").replace("\r", "\n")
     lines = t.split("\n")
-    out_parts: list[str] = []
+    out = []
     i = 0
-    while i < len(lines):
+    L = len(lines)
+
+    while i < L:
         line = lines[i]
         if not line.startswith("BEGIN_FILE "):
             i += 1
             continue
-        path = line[len("BEGIN_FILE "):].strip()
+
+        path = line[len("BEGIN_FILE ") :].strip()
         i += 1
-        body_lines: list[str] = []
-        while i < len(lines) and lines[i].strip() != "END_FILE":
+
+        body_lines = []
+        while i < L and lines[i].strip() != "END_FILE":
             body_lines.append(lines[i])
             i += 1
-        if i >= len(lines):
+        if i >= L:
             raise ValueError(f"Missing END_FILE for {path}")
-        # Move past END_FILE
+
+        # skip END_FILE
         i += 1
 
-        # Normalize body and enforce trailing LF semantics
-        body_text = "\n".join(body_lines).replace("\r\n", "\n").replace("\r", "\n")
+        # join and enforce exactly one trailing LF in the body
+        body = "\n".join(body_lines).replace("\r\n", "\n").replace("\r", "\n")
+        body = body.rstrip("\n") + "\n"
 
-        if body_text == "":  # truly empty file
-            # Emit TWO blank lines so join([...]) in validator yields "\n"
-            rebuilt = f"BEGIN_FILE {path}\n\n\nEND_FILE\n"
-        else:
-            # Ensure exactly one trailing LF in the serialized block:
-            # represent with a final blank line between header and END_FILE.
-            if not body_text.endswith("\n"):
-                body_text += "\n"
-            # Split and strip any extra terminal blanks, then add ONE blank for the trailing LF
-            bl = body_text.split("\n")
-            # remove any empty tail elements caused by the trailing newline
-            while bl and bl[-1] == "":
-                bl.pop()
-            # rebuild with one explicit blank line at the end
-            rebuilt_body = "\n".join(bl) + "\n"
-            rebuilt = f"BEGIN_FILE {path}\n{rebuilt_body}\nEND_FILE\n"
+        out.append(f"BEGIN_FILE {path}\n{body}END_FILE\n")
 
-        out_parts.append(rebuilt)
-
-    # Ensure the whole artifact ends with exactly one LF
-    out = "".join(out_parts)
-    return out.rstrip("\n") + "\n"
-
+    # ensure the entire artifact ends with exactly one LF
+    clean = "".join(out)
+    return clean.rstrip("\n") + "\n"
 
 
 # -------------------- Repo endpoints --------------------
 from fastapi import Request  # ensure this import exists
+
 
 @app.post("/app/api/repo/plan")
 def repo_plan(payload: Dict[str, Any], request: Request):
@@ -291,30 +311,46 @@ def repo_plan(payload: Dict[str, Any], request: Request):
     task = (payload or {}).get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
-    repo    = payload.get("repo", "personal-agent-ste")
-    branch  = payload.get("branch", "main")
-    prefix  = payload.get("path_prefix", "backend/")
-    k       = int(payload.get("k", 12))
+    repo = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix", "backend/")
+    k = int(payload.get("k", 12))
     session = payload.get("session")
     thread_n = payload.get("thread_n")
     fmt = request.query_params.get("format") or request.headers.get("X-RMS-Format")
 
     if fmt == "files":
         art = generate_artifact_from_task(
-            task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="files"
+            task,
+            repo=repo,
+            branch=branch,
+            path_prefix=prefix,
+            session=session,
+            mode="files",
         )
         if not art.get("ok"):
-            return PlainTextResponse(str(art.get("content", "")),
-                                    status_code=422,
-                                    media_type="text/plain; charset=utf-8")
+            # Return the raw content for inspection but still use text/plain
+            return PlainTextResponse(
+                str(art.get("content", "")),
+                status_code=422,
+                media_type="text/plain; charset=utf-8",
+            )
 
         content = art.get("content", "")
+
+        # Normalize CR/CRLF->LF, enforce per-file trailing LF, and artifact-level LF
         content = _enforce_trailing_lf_per_file(content)
+
         return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
     if fmt == "patch":
         art = generate_artifact_from_task(
-            task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="patch"
+            task,
+            repo=repo,
+            branch=branch,
+            path_prefix=prefix,
+            session=session,
+            mode="patch",
         )
         patch = art.get("patch") or art.get("content") or ""
         # Sanitize and validate
@@ -331,10 +367,17 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         return PlainTextResponse(patch, media_type="text/x-patch; charset=utf-8")
 
     # Default JSON preview (no strict guarantees)
-        # Default JSON preview (no strict guarantees)
-        # Default JSON preview (no strict guarantees)
+    # Default JSON preview (no strict guarantees)
+    # Default JSON preview (no strict guarantees)
     out = propose_changes(
-        task, repo=repo, branch=branch, commit="HEAD", k=k, path_prefix=prefix, session=session, thread_n=thread_n
+        task,
+        repo=repo,
+        branch=branch,
+        commit="HEAD",
+        k=k,
+        path_prefix=prefix,
+        session=session,
+        thread_n=thread_n,
     )
     return out
 
@@ -343,31 +386,33 @@ def repo_plan(payload: Dict[str, Any], request: Request):
 def repo_files(payload: Dict[str, Any]):
     """
     Strict files-mode endpoint: returns only BEGIN_FILE/END_FILE blocks (ASCII+LF),
-    with each file body ending in exactly one trailing LF and the artifact ending
-    in exactly one LF overall.
+    with each file body ending in exactly one trailing LF and the artifact itself
+    ending in exactly one LF.
     """
     task = (payload or {}).get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
 
-    repo    = payload.get("repo", "personal-agent-ste")
-    branch  = payload.get("branch", "main")
-    prefix  = payload.get("path_prefix", "backend/")
+    repo = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix", "backend/")
     session = payload.get("session")
 
     art = generate_artifact_from_task(
-        task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="files"
+        task,
+        repo=repo,
+        branch=branch,
+        path_prefix=prefix,
+        session=session,
+        mode="files",
     )
 
     content = art.get("content", "")
 
-    # 1) Normalize and enforce one trailing LF per file body (works for empty bodies too)
     try:
+        # Normalize CR/CRLF->LF, enforce per-file trailing LF, and artifact-level LF
         content = _enforce_trailing_lf_per_file(content)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
-
-    # 2) Normalize WHOLE artifact to LF and ensure exactly one final LF
-    content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
 
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")

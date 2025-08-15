@@ -7,6 +7,7 @@ from pathlib import Path
 
 try:
     from openai import OpenAI  # OpenAI SDK v1
+
     _openai = OpenAI()
 except Exception:
     _openai = None
@@ -41,8 +42,10 @@ PATCH_SYSTEM = (
     "- One section per file; no duplicate '+++'. All b/<path> start with PATH_PREFIX.\n"
 )
 
+
 def _ascii_lf(s: str) -> str:
     return s.replace("\r\n", "\n").replace("\r", "\n")
+
 
 def _is_ascii(s: str) -> bool:
     try:
@@ -50,6 +53,7 @@ def _is_ascii(s: str) -> bool:
         return True
     except UnicodeEncodeError:
         return False
+
 
 def _collect_context_files(path_prefix: Optional[str]) -> List[Path]:
     root = Path(__file__).resolve().parents[2]
@@ -62,13 +66,15 @@ def _collect_context_files(path_prefix: Optional[str]) -> List[Path]:
         out.append(cand)
     return out
 
+
 def _excerpt(txt: str, needle: str, before: int, after: int) -> str:
     i = txt.find(needle)
     if i < 0:
         return ""
     start = max(0, i - before * 80)
-    end   = min(len(txt), i + len(needle) + after * 80)
+    end = min(len(txt), i + len(needle) + after * 80)
     return txt[start:end]
+
 
 def _build_context(path_prefix: Optional[str]) -> str:
     parts: List[str] = []
@@ -78,8 +84,13 @@ def _build_context(path_prefix: Optional[str]) -> str:
         except Exception:
             continue
         head = "\n".join(t.splitlines()[:60])
-        ex1  = _excerpt(t, "app = FastAPI(", 8, 8)
-        ex2  = _excerpt(t, "from backend.logging_utils import setup_logging, RequestLoggingMiddleware", 8, 8)
+        ex1 = _excerpt(t, "app = FastAPI(", 8, 8)
+        ex2 = _excerpt(
+            t,
+            "from backend.logging_utils import setup_logging, RequestLoggingMiddleware",
+            8,
+            8,
+        )
         parts.append(f"FILE {p.as_posix()}\n{head}\n---\n{ex1}\n---\n{ex2}\n")
     pins = (
         "Pins for backend/main.py edits:\n"
@@ -90,9 +101,12 @@ def _build_context(path_prefix: Optional[str]) -> str:
     )
     return "\n\n".join(parts + [pins]) if parts else pins
 
-def _parse_files_output(text: str, *, path_prefix: Optional[str]) -> List[Tuple[str, str]]:
+
+def _parse_files_output(
+    text: str, *, path_prefix: Optional[str]
+) -> List[Tuple[str, str]]:
     lines = _ascii_lf(text).split("\n")
-    out: List[Tuple[str,str]] = []
+    out: List[Tuple[str, str]] = []
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -101,7 +115,7 @@ def _parse_files_output(text: str, *, path_prefix: Optional[str]) -> List[Tuple[
             continue
         if not line.startswith("BEGIN_FILE "):
             raise ValueError(f"Expected 'BEGIN_FILE <path>' at line {i+1}")
-        rel = line[len("BEGIN_FILE "):].strip()
+        rel = line[len("BEGIN_FILE ") :].strip()
         if not rel:
             raise ValueError(f"Empty path at line {i+1}")
         i += 1
@@ -126,16 +140,21 @@ def _parse_files_output(text: str, *, path_prefix: Optional[str]) -> List[Tuple[
         raise ValueError("No BEGIN_FILE/END_FILE blocks found")
     return out
 
+
 def _chat(model: str, system: str, user: str) -> str:
     if _openai is None:
         raise RuntimeError("OpenAI client is not configured")
     resp = _openai.chat.completions.create(
         model=model,
-        messages=[{"role":"system","content":system},{"role":"user","content":user}],
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
     )
     if not resp or not resp.choices:
         return ""
     return resp.choices[0].message.content or ""
+
 
 def generate_artifact_from_task(
     task: str,
@@ -170,6 +189,7 @@ def generate_artifact_from_task(
         if not _is_ascii(t):
             return {"ok": False, "warning": "Non-ASCII in patch", "patch": t}
         return {"ok": True, "patch": t}
+
 
 def propose_changes(
     task: str,

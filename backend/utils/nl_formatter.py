@@ -18,6 +18,7 @@ def register_formatter(agent: str, intent: str, fn: Formatter) -> None:
 
 # ---------------- helpers ----------------
 
+
 def _fmt_money(v: Any) -> str:
     try:
         return f"${float(v):,.2f}"
@@ -58,7 +59,11 @@ def _coerce_agent_response(resp_like: Any) -> AgentResponse:
         return out
 
     # String / number / list / whatever
-    text = json.dumps(resp_like, default=str) if not isinstance(resp_like, str) else resp_like
+    text = (
+        json.dumps(resp_like, default=str)
+        if not isinstance(resp_like, str)
+        else resp_like
+    )
     return {
         "agent": "unknown",
         "intent": "unknown",
@@ -68,6 +73,7 @@ def _coerce_agent_response(resp_like: Any) -> AgentResponse:
 
 
 # ---------------- core formatters ----------------
+
 
 def _default_formatter(resp: AgentResponse) -> AgentResponse:
     """
@@ -87,7 +93,9 @@ def _default_formatter(resp: AgentResponse) -> AgentResponse:
         preview = data[-5:]
 
         def one_line(row: dict) -> str:
-            desc = row.get("description") or row.get("name") or row.get("title") or "Item"
+            desc = (
+                row.get("description") or row.get("name") or row.get("title") or "Item"
+            )
             amount = row.get("amount") or row.get("value")
             created = row.get("created_at") or row.get("created") or row.get("date")
             bits = [str(desc)]
@@ -107,11 +115,16 @@ def _default_formatter(resp: AgentResponse) -> AgentResponse:
 
     # Dict payload -> generic success line
     if isinstance(data, dict):
-        resp["message"] = f"{resp['agent'].capitalize()} • {resp['intent'].replace('_',' ')} done."
+        resp["message"] = (
+            f"{resp['agent'].capitalize()} • {resp['intent'].replace('_',' ')} done."
+        )
         return resp
 
     # Fallback for any other type
-    resp["message"] = resp.get("message") or f"{resp['agent'].capitalize()} • {resp['intent'].replace('_',' ')}."
+    resp["message"] = (
+        resp.get("message")
+        or f"{resp['agent'].capitalize()} • {resp['intent'].replace('_',' ')}."
+    )
     return resp
 
 
@@ -145,4 +158,3 @@ def ensure_natural(resp_like: Any) -> AgentResponse:
     if not out.get("message"):
         out = _default_formatter(out)
     return out
-

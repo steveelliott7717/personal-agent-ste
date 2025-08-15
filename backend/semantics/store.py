@@ -34,7 +34,7 @@ def upsert(
         "namespace": namespace,
         "doc_id": doc_id,
         "text": text,
-        "embedding": emb,            # vector(1024) on the DB side
+        "embedding": emb,  # vector(1024) on the DB side
         "metadata": metadata or {},  # jsonb
     }
     if kind is not None:

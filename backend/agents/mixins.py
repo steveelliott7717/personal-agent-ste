@@ -1,5 +1,6 @@
 class SemanticAgentMixin:
     """Optional mixin for agents that want semantic memory + tools."""
+
     namespace: str = "generic"
 
     def build_knowledge(self):

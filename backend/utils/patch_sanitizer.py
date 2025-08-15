@@ -4,11 +4,14 @@ from __future__ import annotations
 import re
 from typing import Tuple, Optional
 
+
 def _to_lf(s: str) -> str:
     return s.replace("\r\n", "\n").replace("\r", "\n")
 
+
 def _strip_bom(s: str) -> str:
     return s.lstrip("\ufeff")
+
 
 def _strip_code_fences(s: str) -> str:
     # Remove common markdown fences like ``` or ```diff
@@ -19,6 +22,7 @@ def _strip_code_fences(s: str) -> str:
         lines.append(line)
     return "\n".join(lines)
 
+
 def _ascii_only(s: str) -> bool:
     try:
         s.encode("ascii")
@@ -26,12 +30,16 @@ def _ascii_only(s: str) -> bool:
     except UnicodeEncodeError:
         return False
 
+
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(?P<a>.+) b/(?P<b>.+)$")
 _TRIPLE_RE = re.compile(r"^\\-\\-\\-\\s+(a/.+|/dev/null)$")
 _PLUSPLUS_RE = re.compile(r"^\\+\\+\\+\\s+b/.+$")
 _HUNK_RE = re.compile(r"^@@\\s+-(\\d+)(?:,(\\d+))?\\s+\\+(\\d+)(?:,(\\d+))?\\s+@@")
 
-def validate_patch_structure(patch_text: str, path_prefix: Optional[str] = None) -> Tuple[bool, str]:
+
+def validate_patch_structure(
+    patch_text: str, path_prefix: Optional[str] = None
+) -> Tuple[bool, str]:
     """
     Lightweight structural validation for a unified diff.
     Ensures ASCII+LF, header order, and that b/<path> starts with path_prefix (if given).
@@ -74,7 +82,10 @@ def validate_patch_structure(patch_text: str, path_prefix: Optional[str] = None)
                 i += 1
 
             if i >= len(lines) or not _TRIPLE_RE.match(lines[i]):
-                return False, f"Expected '--- a/<path>' or '--- /dev/null' at line {i+1}"
+                return (
+                    False,
+                    f"Expected '--- a/<path>' or '--- /dev/null' at line {i+1}",
+                )
             i += 1
 
             if i >= len(lines) or not _PLUSPLUS_RE.match(lines[i]):
@@ -99,6 +110,7 @@ def validate_patch_structure(patch_text: str, path_prefix: Optional[str] = None)
     if not saw_any:
         return False, "No file sections found"
     return True, "ok"
+
 
 def sanitize_patch(patch_text: str) -> Tuple[str, list[str]]:
     """

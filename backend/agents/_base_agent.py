@@ -21,16 +21,15 @@ class BaseAgent:
         "title": "Base",
         "description": "",
         "handler_key": "base.handle",
-        "namespaces": [],            # e.g., ["meals"]
+        "namespaces": [],  # e.g., ["meals"]
         "capabilities": [],
         "keywords": [],
         "status": "enabled",
         # Optional hints (overridable via agent_settings):
-        "default_tables": [],        # e.g., ["recipe_templates","meal_plan"]
-        "instruction_tags": [],      # e.g., ["planning","logging"]
-        "fallback_system": "",       # used if agent_instructions/core is absent
-        "post_hooks": [],            # ["plugins.meals.attach_daylist_summary:post_summarize"]
-
+        "default_tables": [],  # e.g., ["recipe_templates","meal_plan"]
+        "instruction_tags": [],  # e.g., ["planning","logging"]
+        "fallback_system": "",  # used if agent_instructions/core is absent
+        "post_hooks": [],  # ["plugins.meals.attach_daylist_summary:post_summarize"]
         # Optional registry fields; auto-filled if omitted:
         # "module_path": "agents.meals_agent",
         # "callable_name": "class:MealsAgent"  or "handle_meals"
@@ -71,7 +70,11 @@ class BaseAgent:
     def _get_setting(self, key: str, default: Any = None) -> Any:
         if self._settings is None:
             self._settings = self._load_settings()
-        return self._settings.get(key, default) if isinstance(self._settings, dict) else default
+        return (
+            self._settings.get(key, default)
+            if isinstance(self._settings, dict)
+            else default
+        )
 
     # ---------- self-registration (UPSERT; safe if tables absent) ----------
     def _register_if_needed(self) -> None:
@@ -102,7 +105,14 @@ class BaseAgent:
         except Exception:
             # fallback: try insert once if table exists but row missing
             try:
-                exists = supabase.table("agents").select("id").eq("slug", slug).limit(1).execute().data
+                exists = (
+                    supabase.table("agents")
+                    .select("id")
+                    .eq("slug", slug)
+                    .limit(1)
+                    .execute()
+                    .data
+                )
                 if not exists:
                     supabase.table("agents").insert(row).execute()
             except Exception:
@@ -112,13 +122,15 @@ class BaseAgent:
     # ---------- instruction loading ----------
     def _get_instruction(self, tag: str) -> Optional[str]:
         try:
-            res = (supabase.table("agent_instructions")
-                   .select("instructions")
-                   .eq("agent_name", self.AGENT_META["slug"])
-                   .eq("tag", tag)
-                   .order("created_at", desc=True)
-                   .limit(1)
-                   .execute())
+            res = (
+                supabase.table("agent_instructions")
+                .select("instructions")
+                .eq("agent_name", self.AGENT_META["slug"])
+                .eq("tag", tag)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
             if getattr(res, "data", None):
                 return res.data[0]["instructions"]
         except Exception:
@@ -130,7 +142,9 @@ class BaseAgent:
         return []
 
     def _system_prompt(self, user_text: str) -> str:
-        core = self._get_instruction("core") or self.AGENT_META.get("fallback_system", "")
+        core = self._get_instruction("core") or self.AGENT_META.get(
+            "fallback_system", ""
+        )
         extras: List[str] = []
         for tag in self.choose_tags(user_text):
             text = self._get_instruction(tag)
@@ -140,15 +154,18 @@ class BaseAgent:
 
     # ---------- schema hint (merge meta + settings override) ----------
     def _schema_hint(self) -> str:
-        tables = self._get_setting("default_tables", None) or self.AGENT_META.get("default_tables", []) or []
+        tables = (
+            self._get_setting("default_tables", None)
+            or self.AGENT_META.get("default_tables", [])
+            or []
+        )
         hint = {"tables": {}}
         for t in tables:
             hint["tables"][t] = {"columns": table_columns(t)}
         return json.dumps(hint)
 
     def _build_action_prompt(self, user_text: str) -> str:
-        return (
-f"""{self._system_prompt(user_text)}
+        return f"""{self._system_prompt(user_text)}
 
 SCHEMA_HINT:
 {self._schema_hint()}
@@ -163,7 +180,6 @@ Return ONLY compact JSON with keys:
 
 If you need no DB calls, return operations: [].
 """
-        )
 
     # ---------- plan parsing ----------
     def _parse_plan(self, raw: str) -> Dict[str, Any]:
@@ -175,7 +191,7 @@ If you need no DB calls, return operations: [].
                 s = "\n".join(lines[1:])
         start, end = s.find("{"), s.rfind("}")
         if start != -1 and end != -1 and end > start:
-            s = s[start:end+1]
+            s = s[start : end + 1]
         return json.loads(s)
 
     # ---------- main entry ----------
@@ -186,22 +202,32 @@ If you need no DB calls, return operations: [].
                 agent_name=slug,
                 query=self._build_action_prompt(user_text),
                 namespace=(self.AGENT_META.get("namespaces") or [slug])[0],
-                k=8
+                k=8,
             )
         except Exception as e:
-            return make_response(agent=slug, intent="error", data={"message": f"reasoner error: {e}"})
+            return make_response(
+                agent=slug, intent="error", data={"message": f"reasoner error: {e}"}
+            )
         try:
-            plan = self._parse_plan(plan_raw if isinstance(plan_raw, str) else json.dumps(plan_raw))
+            plan = self._parse_plan(
+                plan_raw if isinstance(plan_raw, str) else json.dumps(plan_raw)
+            )
         except Exception as e:
-            return make_response(agent=slug, intent="error",
-                                 data={"message": f"Could not parse plan: {e}", "raw": str(plan_raw)})
+            return make_response(
+                agent=slug,
+                intent="error",
+                data={"message": f"Could not parse plan: {e}", "raw": str(plan_raw)},
+            )
 
         ops = plan.get("operations", []) or []
         try:
             results = execute_ops(ops)
         except Exception as e:
-            return make_response(agent=slug, intent="error",
-                                 data={"message": f"execution error: {e}", "operations": ops})
+            return make_response(
+                agent=slug,
+                intent="error",
+                data={"message": f"execution error: {e}", "operations": ops},
+            )
 
         data = {
             "thoughts": plan.get("thoughts"),
@@ -227,7 +253,8 @@ If you need no DB calls, return operations: [].
         elif isinstance(hooks_cfg, str):
             try:
                 hooks = json.loads(hooks_cfg)
-                if not isinstance(hooks, list): hooks = hooks_meta
+                if not isinstance(hooks, list):
+                    hooks = hooks_meta
             except Exception:
                 hooks = hooks_meta
         else:
@@ -237,9 +264,18 @@ If you need no DB calls, return operations: [].
             try:
                 mod, func = dotted.rsplit(":", 1)
                 fn = getattr(import_module(mod), func)
-                data = fn(agent_slug=self.AGENT_META["slug"], user_text=user_text, data=data) or data
+                data = (
+                    fn(
+                        agent_slug=self.AGENT_META["slug"],
+                        user_text=user_text,
+                        data=data,
+                    )
+                    or data
+                )
             except Exception:
-                log.exception("[%s] post hook failed: %s", self.AGENT_META["slug"], dotted)
+                log.exception(
+                    "[%s] post hook failed: %s", self.AGENT_META["slug"], dotted
+                )
         return data
 
     # ---------- public wrapper ----------

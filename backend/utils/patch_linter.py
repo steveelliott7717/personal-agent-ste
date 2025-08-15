@@ -7,12 +7,15 @@ _DIFF_HEADER = re.compile(r"^diff --git a/(.+?) b/\1$", re.MULTILINE)
 _FILE_HEADER = re.compile(r"^(?:---|\+\+\+) (.+)$", re.MULTILINE)
 FENCE_RE = re.compile(r"```")
 
+
 def _paths_from_patch(patch: str) -> List[str]:
     return _DIFF_HEADER.findall(patch or "")
+
 
 def _has_crlf(patch: str) -> bool:
     # Detect any CRLF (Windows) sequences
     return "\r\n" in patch
+
 
 def _outside_prefix(paths: List[str], prefix: Optional[str]) -> List[str]:
     if not prefix:
@@ -23,6 +26,7 @@ def _outside_prefix(paths: List[str], prefix: Optional[str]) -> List[str]:
         if not (p == pref or p.startswith(pref + "/")):
             bad.append(p)
     return bad
+
 
 def lint_patch(
     *,
@@ -49,9 +53,13 @@ def lint_patch(
     if not text.strip():
         issues.append("Empty patch body.")
     if not text.startswith("diff --git") and not text.startswith("--- "):
-        issues.append("Patch does not start with a unified diff header (expected 'diff --git' or '---/+++').")
+        issues.append(
+            "Patch does not start with a unified diff header (expected 'diff --git' or '---/+++')."
+        )
     if FENCE_RE.search(text):
-        issues.append("Patch contains markdown code fences (```), which will break git apply.")
+        issues.append(
+            "Patch contains markdown code fences (```), which will break git apply."
+        )
     if _has_crlf(text):
         issues.append("Patch contains CRLF newlines; convert to LF before applying.")
     if max_files is not None and len(files) > max_files:
@@ -62,13 +70,15 @@ def lint_patch(
     # Path-prefix fence
     bad = _outside_prefix(files, path_prefix)
     if bad:
-        issues.append(f"Patch modifies files outside path_prefix '{path_prefix}': {', '.join(sorted(set(bad)))}")
+        issues.append(
+            f"Patch modifies files outside path_prefix '{path_prefix}': {', '.join(sorted(set(bad)))}"
+        )
 
     # Custom caller-provided checks
-    for pat in (required or []):
+    for pat in required or []:
         if re.search(pat, text, flags=re.IGNORECASE | re.MULTILINE) is None:
             issues.append(f"Required pattern not found: /{pat}/")
-    for pat in (forbidden or []):
+    for pat in forbidden or []:
         if re.search(pat, text, flags=re.IGNORECASE | re.MULTILINE):
             issues.append(f"Forbidden pattern present: /{pat}/")
 
@@ -76,7 +86,10 @@ def lint_patch(
     summary = "OK" if ok else (issues[0] if issues else "Issues found")
     return {"ok": ok, "issues": issues, "summary": summary, "files": files}
 
-def make_followup_prompt(*, task: str, issues: List[str], path_prefix: Optional[str]) -> str:
+
+def make_followup_prompt(
+    *, task: str, issues: List[str], path_prefix: Optional[str]
+) -> str:
     bullet = "\n".join(f"- {i}" for i in issues) or "- (no issues)"
     return (
         "Role: Disposable Project Orchestrator — SMALL FOLLOW-UP PATCH ONLY.\n"

@@ -35,7 +35,9 @@ def _to_vec(v: Any) -> List[float]:
             except Exception:
                 return []
         # pgvector text forms "(...)" or "{...}"
-        if (s.startswith("(") and s.endswith(")")) or (s.startswith("{") and s.endswith("}")):
+        if (s.startswith("(") and s.endswith(")")) or (
+            s.startswith("{") and s.endswith("}")
+        ):
             s2 = s[1:-1]  # strip parens/braces
             try:
                 parts = [p.strip() for p in s2.split(",")]
@@ -67,7 +69,14 @@ def search(namespace: str, query: str, k: int = 10) -> List[Dict[str, Any]]:
     Used as a generic fallback elsewhere.
     """
     qemb = embed_text(query)
-    rows = supabase.table("agent_embeddings").select("*").eq("namespace", namespace).execute().data or []
+    rows = (
+        supabase.table("agent_embeddings")
+        .select("*")
+        .eq("namespace", namespace)
+        .execute()
+        .data
+        or []
+    )
     for r in rows:
         emb = _to_vec(r.get("embedding"))
         r["score"] = _cosine(qemb, emb) if emb else 0.0
@@ -84,7 +93,13 @@ def search_router(query: str, k: int = 10) -> List[Dict[str, Any]]:
     qemb = embed_text(query)
 
     # 1) Capabilities (client-side cosine)
-    caps = supabase.table("agent_capabilities").select("agent_slug, description, embedding").execute().data or []
+    caps = (
+        supabase.table("agent_capabilities")
+        .select("agent_slug, description, embedding")
+        .execute()
+        .data
+        or []
+    )
     cap_rows: Dict[str, Dict[str, Any]] = {}
     for c in caps:
         emb = _to_vec(c.get("embedding"))
@@ -119,11 +134,27 @@ def search_router(query: str, k: int = 10) -> List[Dict[str, Any]]:
             if not ref:
                 continue
             row = cap_rows.setdefault(
-                ref, {"type": "capability", "agent_slug": ref, "text": "", "score_cap": 0.0, "score_utt": 0.0}
+                ref,
+                {
+                    "type": "capability",
+                    "agent_slug": ref,
+                    "text": "",
+                    "score_cap": 0.0,
+                    "score_utt": 0.0,
+                },
             )
-            row["score_utt"] = max(row.get("score_utt", 0.0), float(u.get("score") or 0.0))
+            row["score_utt"] = max(
+                row.get("score_utt", 0.0), float(u.get("score") or 0.0)
+            )
     except Exception:
-        rows = supabase.table("agent_embeddings").select("*").eq("namespace", "routing").execute().data or []
+        rows = (
+            supabase.table("agent_embeddings")
+            .select("*")
+            .eq("namespace", "routing")
+            .execute()
+            .data
+            or []
+        )
         for r in rows:
             emb = _to_vec(r.get("embedding"))
             s = _cosine(qemb, emb) if emb else 0.0
@@ -131,14 +162,23 @@ def search_router(query: str, k: int = 10) -> List[Dict[str, Any]]:
             if not ref:
                 continue
             row = cap_rows.setdefault(
-                ref, {"type": "capability", "agent_slug": ref, "text": "", "score_cap": 0.0, "score_utt": 0.0}
+                ref,
+                {
+                    "type": "capability",
+                    "agent_slug": ref,
+                    "text": "",
+                    "score_cap": 0.0,
+                    "score_utt": 0.0,
+                },
             )
             row["score_utt"] = max(row["score_utt"], s)
 
     # 3) Blend and rank
     blended: List[Dict[str, Any]] = []
     for row in cap_rows.values():
-        row["score"] = 0.6 * float(row.get("score_cap", 0.0)) + 0.4 * float(row.get("score_utt", 0.0))
+        row["score"] = 0.6 * float(row.get("score_cap", 0.0)) + 0.4 * float(
+            row.get("score_utt", 0.0)
+        )
         blended.append(row)
 
     blended.sort(key=lambda r: r.get("score", 0.0), reverse=True)

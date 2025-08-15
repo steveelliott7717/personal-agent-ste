@@ -65,4 +65,3 @@ jobs:
           RMS_ROOT: ${{ github.workspace }}
         run: |
           python backend/tools/index_repo_ci.py
-

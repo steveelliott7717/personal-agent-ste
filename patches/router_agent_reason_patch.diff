@@ -6,7 +6,7 @@ index 89d3c22..16ada0c 100644
  *.log
  *.out
  *.err
-+"patches/" 
++"patches/"
 diff --git a/backend/agents/router_agent.py b/backend/agents/router_agent.py
 index 0d43a96..8e68219 100644
 --- a/backend/agents/router_agent.py
@@ -43,11 +43,11 @@ index 0d43a96..8e68219 100644
 +    except Exception:
 +        logger.exception("[router] failed to log agent_decision")
 +
- 
- 
+
+
  ROUTER_VERSION = "2025-08-09-supabase-registry-v1"
 @@ -127,18 +155,40 @@ def _parse_json(raw: str) -> Optional[Dict[str, Any]]:
- 
+
  def _llm_route(user_text: str, user_id: str) -> Optional[Dict[str, Any]]:
      try:
 -        raw = reason_with_memory(agent_name="router", query=_build_prompt(user_text, user_id), namespace="routing", k=4)
@@ -85,13 +85,13 @@ index 0d43a96..8e68219 100644
          logger.exception("[router] reasoner failed")
 +        _log_decision("router", user_id, user_text, False, reason="reasoner_failed", error=str(e))
          return None
- 
+
 +
  # ----- public entry -----
  def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
      reg = _load_registry()
 @@ -150,32 +200,77 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
- 
+
          # Direct answer
          if decision and decision.get("agent") == "none":
 +            _log_decision("router", user_id, query, True, extra={"reason": decision.get("reason"), "confidence": decision.get("confidence")})
@@ -103,7 +103,7 @@ index 0d43a96..8e68219 100644
 +                                                "reason": decision.get("reason"),
 +                                                "confidence": decision.get("confidence")})
 +
- 
+
          # Clarify (or low confidence)
          if not decision or decision.get("agent") == "clarify" or decision.get("confidence", 0) < 0.55:
              opts = decision.get("options") if decision and decision.get("options") else allowed
@@ -115,7 +115,7 @@ index 0d43a96..8e68219 100644
 +                                        data={"question": q, "options": opts,
 +                                                "suggested_rewrite": decision.get("rewrite") if decision else None})
 +
- 
+
          # Normal route
          agent = str(decision.get("agent") or "").strip().lower()
          if agent in reg:
@@ -157,9 +157,9 @@ index 0d43a96..8e68219 100644
 +            return agent, result
 +
 +
-+    
-+    
- 
++
++
+
          # If the agent isn’t in registry, clarify (no fallback)
 +        _log_decision("router", user_id, query, False, extra={"reason": "agent_not_in_registry"})
          return "router", make_response(agent="router", intent="clarify",
@@ -168,7 +168,7 @@ index 0d43a96..8e68219 100644
 +                                    data={"question": "I don’t recognize that agent. Choose one:",
 +                                            "options": allowed})
 +
- 
+
      except Exception:
          logger.exception("[router] fatal error")
 +        _log_decision("router", user_id, query, False, extra={"reason": "fatal_error"})
@@ -189,9 +189,9 @@ index 4219a34..4a72c04 100644
 +from dotenv import load_dotenv
 +load_dotenv()
 +
- 
+
  app = FastAPI(title="Personal Agent API")
- 
+
 diff --git a/backend/plugins/bus/publish.py b/backend/plugins/bus/publish.py
 index 1300d54..b7cc840 100644
 --- a/backend/plugins/bus/publish.py
@@ -202,7 +202,7 @@ index 1300d54..b7cc840 100644
  from importlib import import_module
 -from backend.service.supabase_service import supabase
 +from backend.services.supabase_service import supabase
- 
+
  # --- tiny event emitter (idempotent by key) ---
  def emit(topic: str, payload: dict, source_agent: str, idem_key: Optional[str] = None):
 diff --git a/backend/semantics/retriever.py b/backend/semantics/retriever.py
@@ -274,7 +274,7 @@ index 9bb2867..6533c1a 100644
 +        return 0.0
 +    return dot / (math.sqrt(na) * math.sqrt(nb))
 +
- 
+
  def search(namespace: str, query: str, k: int = 10) -> List[Dict[str, Any]]:
 +    """
 +    Simple local top-k cosine search over agent_embeddings for a given namespace.
@@ -390,10 +390,10 @@ index bce4798..e066cf1 100644
 +# backend/semantics/store.py
 +from __future__ import annotations
 +from typing import Any, Dict, Optional
- 
+
 +from backend.semantics.embeddings import embed_text
  from backend.services.supabase_service import supabase
- 
+
 -def upsert(namespace: str, doc_id: str, text: str, metadata: Dict[str, Any] | None = None):
 +
 +def upsert(

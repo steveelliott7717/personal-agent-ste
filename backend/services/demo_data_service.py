@@ -3,6 +3,7 @@ from typing import List, Dict
 from postgrest import APIError
 from backend.services.supabase_service import supabase
 
+
 def _table_count(table: str) -> int:
     """
     Returns total rows in a table (fast HEAD request with exact count).
@@ -18,6 +19,7 @@ def _table_count(table: str) -> int:
             return 0
         raise
 
+
 def _ensure_seed(table: str, rows: List[Dict]):
     """
     Seed rows only if the table is empty.
@@ -27,6 +29,7 @@ def _ensure_seed(table: str, rows: List[Dict]):
         print(f"Seeded demo rows into {table} ({len(rows)} rows)")
     else:
         print(f"Skipped seeding {table}: already has data")
+
 
 def seed_demo_data_once():
     """

@@ -48,4 +48,3 @@ ALTER TABLE public.agent_embeddings
 -- Keep the unique index (namespace, doc_id)
 CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_embeddings_ns_doc
   ON public.agent_embeddings(namespace, doc_id);
-

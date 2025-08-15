@@ -3,9 +3,15 @@ from typing import Any, Dict, List, Optional
 from importlib import import_module
 from backend.services.supabase_service import supabase
 
+
 # --- tiny event emitter (idempotent by key) ---
 def emit(topic: str, payload: dict, source_agent: str, idem_key: Optional[str] = None):
-    row = {"topic": topic, "payload": payload, "source_agent": source_agent, "idempotency_key": idem_key}
+    row = {
+        "topic": topic,
+        "payload": payload,
+        "source_agent": source_agent,
+        "idempotency_key": idem_key,
+    }
     try:
         supabase.table("events").insert(row).execute()
     except Exception as e:
@@ -13,14 +19,21 @@ def emit(topic: str, payload: dict, source_agent: str, idem_key: Optional[str] =
             return  # idempotent
         raise
 
+
 # --- helpers ---
 def _get_settings(slug: str) -> dict:
     try:
-        res = supabase.table("agent_settings").select("key,value").eq("agent_slug", slug).execute()
+        res = (
+            supabase.table("agent_settings")
+            .select("key,value")
+            .eq("agent_slug", slug)
+            .execute()
+        )
         pairs = res.data or []
         return {p["key"]: p["value"] for p in pairs if p.get("key") is not None}
     except Exception:
         return {}
+
 
 def _get(d: dict, path: str, default=None):
     """Dot-path fetch: 'set.status' -> d['set']['status'] if present."""
@@ -30,6 +43,7 @@ def _get(d: dict, path: str, default=None):
             return default
         cur = cur[part]
     return cur
+
 
 def _render(template: Any, row: dict, op: dict, ctx: dict):
     """
@@ -50,6 +64,7 @@ def _render(template: Any, row: dict, op: dict, ctx: dict):
     if isinstance(template, list):
         return [_render(v, row, op, ctx) for v in template]
     return template
+
 
 # --- main generic post hook ---
 def post_publish(agent_slug: str, user_text: str, data: dict) -> dict:
@@ -81,25 +96,31 @@ def post_publish(agent_slug: str, user_text: str, data: dict) -> dict:
         op = op or {}
         res = results[i] if i < len(results) else None
         # normalize rows list
-        rows = res if isinstance(res, list) else ([res] if isinstance(res, dict) else [])
+        rows = (
+            res if isinstance(res, list) else ([res] if isinstance(res, dict) else [])
+        )
         for rule in rules:
             cond = rule.get("when") or {}
-            if cond.get("op") and str(cond["op"]).lower() != str(op.get("op","")).lower():
+            if (
+                cond.get("op")
+                and str(cond["op"]).lower() != str(op.get("op", "")).lower()
+            ):
                 continue
             if cond.get("table") and cond["table"] != op.get("table"):
                 continue
             ok = True
             for k, v in (cond.get("equals") or {}).items():
                 if _get(op, k) != v:
-                    ok = False; break
+                    ok = False
+                    break
             if not ok:
                 continue
 
             emit_spec = rule.get("emit") or {}
             topic = emit_spec.get("topic")
-            if not topic: 
+            if not topic:
                 continue
-            for row in (rows or [{}]):
+            for row in rows or [{}]:
                 payload_tpl = emit_spec.get("payload") or {}
                 idem_tpl = emit_spec.get("idempotency_key")
                 payload = _render(payload_tpl, row or {}, op, ctx)

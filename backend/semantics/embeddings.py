@@ -11,19 +11,24 @@ from typing import List
 _provider = os.getenv("EMBED_PROVIDER", "openai").strip().lower()
 _openai_model = os.getenv("EMBED_MODEL", "text-embedding-3-small").strip()
 
+
 def _embed_openai(text: str) -> List[float]:
     from openai import OpenAI
+
     client = OpenAI()
     resp = client.embeddings.create(model=_openai_model, input=[text])
     return resp.data[0].embedding  # list[float], 1536 for text-embedding-3-small
 
+
 def _embed_cohere(text: str) -> List[float]:
     # Only if you really need it; cohere often returns 1024 dims.
     import cohere
+
     api_key = os.environ["COHERE_API_KEY"]
     co = cohere.ClientV2(api_key)
     out = co.embed(texts=[text], model="embed-english-v3.0")
     return list(out.embeddings[0].float)  # adapt to your cohere SDK version
+
 
 def embed_text(text: str) -> List[float]:
     # First pass: selected provider
@@ -40,6 +45,8 @@ def embed_text(text: str) -> List[float]:
             # Re-embed with OpenAI 1536 if mismatch (don’t try to pad/truncate)
             vec = _embed_openai(text)
             if len(vec) != need:
-                raise ValueError(f"Embedding dims mismatch: want {need}, got {len(vec)}")
+                raise ValueError(
+                    f"Embedding dims mismatch: want {need}, got {len(vec)}"
+                )
 
     return vec

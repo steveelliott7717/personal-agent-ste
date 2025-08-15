@@ -1,0 +1,6 @@
+# Force LF (no CRLF) for common text sources
+*.py   text eol=lf
+*.txt  text eol=lf
+*.md   text eol=lf
+backend/** text eol=lf
+prompts/** text eol=lf

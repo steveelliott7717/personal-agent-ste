@@ -9,16 +9,19 @@ from backend.services.supabase_service import supabase
 import re
 
 _CODEBLOCK_RE = re.compile(r"(?s)```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE)
-_CBLOCK_RE    = re.compile(r"/\*.*?\*/", re.DOTALL)
-_ELLIPSIS_RE  = re.compile(r"(?m)^\s*\.\.\.\s*$")
+_CBLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_ELLIPSIS_RE = re.compile(r"(?m)^\s*\.\.\.\s*$")
 # Optional envelope (won't be used if you stick to raw diffs)
-_ENVELOPE_RE  = re.compile(r"(?ms)^\s*BEGIN_PATCH\s*\n(?P<body>.*?)(?:\n)?\s*END_PATCH\s*$")
+_ENVELOPE_RE = re.compile(
+    r"(?ms)^\s*BEGIN_PATCH\s*\n(?P<body>.*?)(?:\n)?\s*END_PATCH\s*$"
+)
 _DIFF_START_RE = re.compile(r"(?m)^\s*diff --git\s+a/")
+
 
 def _sanitize_patch_text(text: str) -> str:
     if not text:
         return ""
-    s = text.replace("\r\n","\n").replace("\r","\n")
+    s = text.replace("\r\n", "\n").replace("\r", "\n")
 
     # 1) Strip optional BEGIN/END envelope
     m = _ENVELOPE_RE.search(s)
@@ -37,8 +40,10 @@ def _sanitize_patch_text(text: str) -> str:
     # 4) Trim & allow leading whitespace/newlines
     return s.lstrip()
 
+
 def _looks_like_unified_diff(s: str) -> bool:
     return bool(_DIFF_START_RE.search(s))
+
 
 def _extract_patch_from_text(text: str) -> str | None:
     cleaned = _sanitize_patch_text(text)
@@ -55,7 +60,7 @@ def _choose_dims(embedding: List[float]) -> int:
     """
     if not isinstance(embedding, list) or not embedding:
         raise ValueError("embedding must be a non-empty list[float]")
-    forced = (os.getenv("RMS_FORCE_DIMS", "").strip() or "")
+    forced = os.getenv("RMS_FORCE_DIMS", "").strip() or ""
     if forced.isdigit():
         n = int(forced)
         if n in (1024, 1536):
@@ -91,7 +96,7 @@ def repo_search_raw(params: Dict[str, Any], *, dims: int) -> List[Dict[str, Any]
     rpc_args = {
         "repo_in": repo,
         "branch_in": branch,
-        "prefix_in": prefix,       # may be None/null -> SQL handles it
+        "prefix_in": prefix,  # may be None/null -> SQL handles it
         "query_embedding": vec,
         "match_count": int(k),
     }

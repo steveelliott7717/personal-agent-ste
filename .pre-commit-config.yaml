@@ -1,0 +1,14 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer           # ensures exactly one trailing LF
+      - id: mixed-line-ending           # converts CRLF/CR -> LF
+        args: [--fix=lf]
+      - id: trailing-whitespace         # strips stray spaces that break strict validators
+
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        args: [--quiet]

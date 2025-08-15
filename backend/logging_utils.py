@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 import logging
 import os
@@ -14,6 +13,7 @@ from starlette.responses import Response
 # Per-request correlation ID
 correlation_id_ctx: ContextVar[str] = ContextVar("correlation_id", default="-")
 
+
 class CorrelationIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         # provide %(correlation_id)s to all formatters
@@ -23,12 +23,15 @@ class CorrelationIdFilter(logging.Filter):
             record.correlation_id = "-"
         return True
 
+
 _CONFIGURED = False
+
 
 # Add near the top (helpers)
 def _env_truthy(name: str, default: str = "true") -> bool:
     val = os.getenv(name, default)
-    return str(val).strip().lower() in {"true","1","t","yes","y","on"}
+    return str(val).strip().lower() in {"true", "1", "t", "yes", "y", "on"}
+
 
 def _env_float(name: str, default: float) -> float:
     try:
@@ -41,6 +44,7 @@ def _truthy_env(name: str, default: str = "true") -> bool:
     val = os.getenv(name, default)
     return str(val or default).strip().lower() in {"true", "1", "t", "yes", "y", "on"}
 
+
 def setup_logging(level: Optional[int] = None) -> None:
     """
     Idempotent logging setup that ensures %(correlation_id)s is available in all log lines.
@@ -51,7 +55,7 @@ def setup_logging(level: Optional[int] = None) -> None:
 
     filt = CorrelationIdFilter()
     root = logging.getLogger()
-    root.propagate = False 
+    root.propagate = False
 
     # Always attach filter to root so any existing/new handlers see correlation_id
     try:
@@ -61,9 +65,11 @@ def setup_logging(level: Optional[int] = None) -> None:
 
     if not root.handlers:
         handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
-        ))
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
+            )
+        )
         handler.addFilter(filt)
         root.addHandler(handler)
         root.setLevel(level or logging.INFO)
@@ -73,9 +79,11 @@ def setup_logging(level: Optional[int] = None) -> None:
             fmt = getattr(h.formatter, "_fmt", "") if h.formatter else ""
             if "%(correlation_id)" not in fmt:
                 try:
-                    h.setFormatter(logging.Formatter(
-                        "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
-                    ))
+                    h.setFormatter(
+                        logging.Formatter(
+                            "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
+                        )
+                    )
                 except Exception:
                     pass
             try:
@@ -84,20 +92,24 @@ def setup_logging(level: Optional[int] = None) -> None:
                 pass
         # Optional: switch to JSON logs
     if _env_truthy("LOG_JSON", "false"):
+
         class _JsonFormatter(logging.Formatter):
             def format(self, record: logging.LogRecord) -> str:
                 import json, time
+
                 payload = {
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)),
+                    "ts": time.strftime(
+                        "%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)
+                    ),
                     "level": record.levelname,
                     "logger": record.name,
                     "msg": record.getMessage(),
                     "correlation_id": getattr(record, "correlation_id", "-"),
                 }
                 return json.dumps(payload, ensure_ascii=True)
+
         for h in logging.getLogger().handlers:
             h.setFormatter(_JsonFormatter())
-
 
     # Common FastAPI/Uvicorn loggers
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
@@ -108,12 +120,14 @@ def setup_logging(level: Optional[int] = None) -> None:
 
     _CONFIGURED = True
 
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
     - Generates UUID correlation ID per request (also in request.state.correlation_id)
     - Logs start/end/errors (gated by LOG_REQUESTS, default true)
     - Adds X-Correlation-ID response header
     """
+
     def __init__(self, app):
         super().__init__(app)
         self._logger = logging.getLogger("request")
@@ -143,18 +157,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
             if self._log_requests:
-                self._logger.info("<< %s %s %d %dms", method, path, response.status_code, dur_ms)
+                self._logger.info(
+                    "<< %s %s %d %dms", method, path, response.status_code, dur_ms
+                )
             return response
         except Exception as e:
             dur_ms = int((time.perf_counter() - start) * 1000)
             # Always log exceptions
-            self._logger.exception("!! %s %s error after %dms: %s", method, path, dur_ms, e)
+            self._logger.exception(
+                "!! %s %s error after %dms: %s", method, path, dur_ms, e
+            )
             raise
         finally:
             try:
                 correlation_id_ctx.reset(token)
             except Exception:
                 pass
+
 
 # At the very bottom of logging_utils.py, after all class and function definitions
 
@@ -163,5 +182,7 @@ try:
     setup_logging()
 except Exception as e:
     import logging
-    logging.getLogger("logging_utils").warning("setup_logging() failed at import: %s", e)
 
+    logging.getLogger("logging_utils").warning(
+        "setup_logging() failed at import: %s", e
+    )

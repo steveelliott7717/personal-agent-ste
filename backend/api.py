@@ -26,22 +26,31 @@ INDEX_FILE = DIST_DIR / "index.html"
 
 # Serve built asset files (Vite emits to dist/assets/*). With base='/app/', URLs are /app/assets/...
 if (DIST_DIR / "assets").exists():
-    app.mount(f"{BASE}/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets")
+    app.mount(
+        f"{BASE}/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="assets"
+    )
+
 
 def _index_response() -> HTMLResponse:
     if INDEX_FILE.exists():
         return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
-    raise HTTPException(status_code=404, detail="Frontend build not found. Run `npm run build` in /frontend.")
+    raise HTTPException(
+        status_code=404,
+        detail="Frontend build not found. Run `npm run build` in /frontend.",
+    )
+
 
 @app.get(BASE, include_in_schema=False, response_class=HTMLResponse)
 def serve_index_root():
     # GET /app -> index.html
     return _index_response()
 
+
 @app.get(f"{BASE}/", include_in_schema=False, response_class=HTMLResponse)
 def serve_index_slash():
     # GET /app/ -> index.html
     return _index_response()
+
 
 @app.get(f"{BASE}" + "/{path:path}", include_in_schema=False)
 def spa_fallback(path: str):
@@ -55,6 +64,7 @@ def spa_fallback(path: str):
     # Otherwise, return index.html for client-side routes
     return _index_response()
 
+
 # CORS for local dev (frontend vite port)
 app.add_middleware(
     CORSMiddleware,
@@ -64,15 +74,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class RouteIn(BaseModel):
     text: str
     client_meta: dict | None = None
     user_id: str | None = "web-guest"
 
+
 @app.post(f"{BASE}/api/route")
 def route(incoming: RouteIn):
     try:
-        agent, result = route_request(query=incoming.text, user_id=incoming.user_id or "web-guest")
+        agent, result = route_request(
+            query=incoming.text, user_id=incoming.user_id or "web-guest"
+        )
 
         # If the router chose the repo agent, respond as text/plain rather than JSON.
         if agent == "repo":

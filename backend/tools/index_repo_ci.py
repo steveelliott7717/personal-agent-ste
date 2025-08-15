@@ -21,9 +21,7 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small").strip()
 EMBED_DIMS = 3072 if "3-large" in EMBED_MODEL else 1536
 
 OPENAI_API_KEY = (
-    os.getenv("OPENAI_API_KEY")
-    or os.getenv("OPENAI_APIKEY")
-    or os.getenv("OPENAI_KEY")
+    os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_APIKEY") or os.getenv("OPENAI_KEY")
 )
 if not OPENAI_API_KEY:
     print("Missing OPENAI_API_KEY", file=sys.stderr)
@@ -32,7 +30,10 @@ if not OPENAI_API_KEY:
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE") or os.getenv("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE (or SUPABASE_KEY).", file=sys.stderr)
+    print(
+        "Missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE (or SUPABASE_KEY).",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 # --------- HTTP helpers ----------
@@ -40,7 +41,12 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 
-def _rest(url: str, method: str = "GET", body: Optional[dict] = None, supabase_key: Optional[str] = None) -> dict:
+def _rest(
+    url: str,
+    method: str = "GET",
+    body: Optional[dict] = None,
+    supabase_key: Optional[str] = None,
+) -> dict:
     data = None
     if body is not None:
         data = json.dumps(body).encode("utf-8")
@@ -86,12 +92,16 @@ def pack_batches(
     piece_max_tokens: int,
     request_max_tokens: int,
     request_max_chars: int,
-    batch_size: int
+    batch_size: int,
 ) -> List[List[str]]:
     safe: List[str] = []
     per_piece_char_cap = max(100, piece_max_tokens * 4)  # ~4 chars/token
     for s in texts:
-        s = "" if s is None else (json.dumps(s) if isinstance(s, (dict, list)) else str(s))
+        s = (
+            ""
+            if s is None
+            else (json.dumps(s) if isinstance(s, (dict, list)) else str(s))
+        )
         if len(s) > per_piece_char_cap:
             s = s[:per_piece_char_cap]
         safe.append(s)
@@ -106,7 +116,9 @@ def pack_batches(
         while i < N and len(cur) < batch_size:
             s = safe[i]
             t = rough_token_estimate(s)
-            if (cur_tokens + t) <= request_max_tokens and (cur_chars + len(s)) <= request_max_chars:
+            if (cur_tokens + t) <= request_max_tokens and (
+                cur_chars + len(s)
+            ) <= request_max_chars:
                 cur.append(s)
                 cur_tokens += t
                 cur_chars += len(s)
@@ -178,10 +190,15 @@ def supabase_upsert_rows(rows: list[dict], verbose: bool = False):
                 if verbose:
                     print(f"[db] falling back to plain insert: {fallback}")
                 try:
-                    _rest(fallback, method="POST", body=payload, supabase_key=SUPABASE_KEY)
+                    _rest(
+                        fallback, method="POST", body=payload, supabase_key=SUPABASE_KEY
+                    )
                 except RuntimeError as e2:
                     # If duplicates appear here, also swallow
-                    if "http 409" in str(e2).lower() and "duplicate key value" in str(e2).lower():
+                    if (
+                        "http 409" in str(e2).lower()
+                        and "duplicate key value" in str(e2).lower()
+                    ):
                         if verbose:
                             print("[db] duplicate rows (fallback) — continuing")
                         return
@@ -190,36 +207,42 @@ def supabase_upsert_rows(rows: list[dict], verbose: bool = False):
                 raise
 
     # repo_chunks rows (minimal schema)
-    chunk_rows = [{
-        "repo": r["repo"],
-        "branch": r["branch"],
-        "path": r["path"],
-        "start_line": r["start_line"],
-        "end_line": r["end_line"],
-        "content": r["content"],
-        "file_sha": r.get("file_sha"),
-        "chunk_sha": r.get("chunk_sha"),
-        "commit_sha": r.get("commit_sha"),
-        "head_ref": r.get("commit_sha") or "HEAD",
-        "chunk_index": r.get("chunk_index"),
-    } for r in rows]
+    chunk_rows = [
+        {
+            "repo": r["repo"],
+            "branch": r["branch"],
+            "path": r["path"],
+            "start_line": r["start_line"],
+            "end_line": r["end_line"],
+            "content": r["content"],
+            "file_sha": r.get("file_sha"),
+            "chunk_sha": r.get("chunk_sha"),
+            "commit_sha": r.get("commit_sha"),
+            "head_ref": r.get("commit_sha") or "HEAD",
+            "chunk_index": r.get("chunk_index"),
+        }
+        for r in rows
+    ]
 
     # repo_memory rows (your schema includes repo_name + dims)
-    mem_rows_raw = [{
-        "repo_name": r["repo"],
-        "repo": r["repo"],
-        "branch": r["branch"],
-        "head_ref": r.get("commit_sha") or "HEAD",
-        "path": r["path"],
-        "file_sha": r.get("file_sha"),
-        "chunk_sha": r.get("chunk_sha"),
-        "start_line": r["start_line"],
-        "end_line": r["end_line"],
-        "content": r["content"],
-        "embedding": r["embedding"],
-        "dims": r["dims"],
-        "commit_sha": r.get("commit_sha"),
-    } for r in rows]
+    mem_rows_raw = [
+        {
+            "repo_name": r["repo"],
+            "repo": r["repo"],
+            "branch": r["branch"],
+            "head_ref": r.get("commit_sha") or "HEAD",
+            "path": r["path"],
+            "file_sha": r.get("file_sha"),
+            "chunk_sha": r.get("chunk_sha"),
+            "start_line": r["start_line"],
+            "end_line": r["end_line"],
+            "content": r["content"],
+            "embedding": r["embedding"],
+            "dims": r["dims"],
+            "commit_sha": r.get("commit_sha"),
+        }
+        for r in rows
+    ]
 
     def _clean(d: dict) -> dict:
         return {k: v for k, v in d.items() if v is not None}
@@ -233,12 +256,27 @@ def supabase_upsert_rows(rows: list[dict], verbose: bool = False):
 # --------- FS + chunking ----------
 SKIP_DIRS = {".git", ".venv", "node_modules", "dist", "build", ".next", ".turbo"}
 DEFAULT_EXTS = {
-    ".py", ".ts", ".tsx", ".js", ".jsx", ".vue", ".sql", ".json", ".md",
-    ".yml", ".yaml", ".toml", ".ini", ".env", ".txt"
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".vue",
+    ".sql",
+    ".json",
+    ".md",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".ini",
+    ".env",
+    ".txt",
 }
 
 
-def file_iter(root: Path, include_ext: set[str], paths: Optional[List[str]]) -> Iterable[Path]:
+def file_iter(
+    root: Path, include_ext: set[str], paths: Optional[List[str]]
+) -> Iterable[Path]:
     base = root.resolve()
     allow_prefixes = []
     if paths:
@@ -252,7 +290,9 @@ def file_iter(root: Path, include_ext: set[str], paths: Optional[List[str]]) -> 
         if p.is_file():
             if include_ext and p.suffix.lower() not in include_ext:
                 continue
-            if allow_prefixes and not any(str(p).startswith(str(ap)) for ap in allow_prefixes):
+            if allow_prefixes and not any(
+                str(p).startswith(str(ap)) for ap in allow_prefixes
+            ):
                 continue
             yield p
 
@@ -264,7 +304,9 @@ def read_lines(path: Path) -> List[str]:
         return []
 
 
-def chunk_lines(lines: List[str], max_lines: int, overlap: int) -> Iterable[Tuple[int, int, str]]:
+def chunk_lines(
+    lines: List[str], max_lines: int, overlap: int
+) -> Iterable[Tuple[int, int, str]]:
     n = len(lines)
     if n == 0:
         return
@@ -297,11 +339,17 @@ def load_existing_file_shas(repo: str, branch: str) -> Dict[Tuple[str, str, str]
 
 # --------- Main ----------
 def main():
-    ap = argparse.ArgumentParser(description="Index repo into Supabase with embeddings (with incremental mode).")
+    ap = argparse.ArgumentParser(
+        description="Index repo into Supabase with embeddings (with incremental mode)."
+    )
     ap.add_argument("--repo-name", required=True)
     ap.add_argument("--branch", required=True)
     ap.add_argument("--root", required=True)
-    ap.add_argument("--paths", default="", help='Quoted space-separated list, e.g. "backend frontend/src file.js"')
+    ap.add_argument(
+        "--paths",
+        default="",
+        help='Quoted space-separated list, e.g. "backend frontend/src file.js"',
+    )
     ap.add_argument("--include-ext", default=",".join(sorted(DEFAULT_EXTS)))
     ap.add_argument("--max-lines", type=int, default=80)
     ap.add_argument("--overlap", type=int, default=10)
@@ -309,7 +357,11 @@ def main():
     ap.add_argument("--batch-size", type=int, default=6)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--verbose", action="store_true")
-    ap.add_argument("--incremental", action="store_true", help="Skip files whose file_sha matches existing repo_chunks")
+    ap.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Skip files whose file_sha matches existing repo_chunks",
+    )
     # internal-ish caps for request packing (safe for 8k ctx)
     ap.add_argument("--request-max-chars", type=int, default=10000)
     ap.add_argument("--request-max-tokens", type=int, default=6500)
@@ -336,7 +388,9 @@ def main():
                 print(f"[incremental] failed to load existing file SHAs: {e}")
             existing_map = {}
 
-    chunks: List[Tuple[str, int, int, str, str, str]] = []  # (path, start, end, text, file_sha, chunk_sha)
+    chunks: List[Tuple[str, int, int, str, str, str]] = (
+        []
+    )  # (path, start, end, text, file_sha, chunk_sha)
     changed_files = 0
 
     for p in files:
@@ -351,16 +405,18 @@ def main():
             continue
 
         changed_files += 1
-        for (start, end, content) in chunk_lines(lines, args.max_lines, args.overlap):
+        for start, end, content in chunk_lines(lines, args.max_lines, args.overlap):
             # hard cap per-chunk content length too (extra guard)
             if len(content) > args.request_max_chars:
-                content = content[:args.request_max_chars]
+                content = content[: args.request_max_chars]
             chunk_id = f"{repo}:{branch}:{rel}:{start}-{end}"
             chunk_sha = _sha1_bytes(chunk_id.encode("utf-8"))
             chunks.append((rel, start, end, content, file_sha, chunk_sha))
 
     skipped = total_files - changed_files
-    print(f"Incremental mode: {skipped} files skipped (unchanged). {changed_files} files to (re)embed.")
+    print(
+        f"Incremental mode: {skipped} files skipped (unchanged). {changed_files} files to (re)embed."
+    )
 
     if not chunks:
         print("Nothing to embed. (No changed files or no eligible files)")
@@ -379,12 +435,16 @@ def main():
     total_pieces = sum(len(b) for b in batches)
     if args.verbose:
         print(f"Prepared {total_pieces} pieces across {total_batches} batches.")
-        print(f"Model={EMBED_MODEL} dims={EMBED_DIMS} — request_max_tokens={args.request_max_tokens}, "
-              f"piece_max_tokens={args.piece_max_tokens}, request_max_chars={args.request_max_chars}, "
-              f"batch_size={args.batch_size}")
+        print(
+            f"Model={EMBED_MODEL} dims={EMBED_DIMS} — request_max_tokens={args.request_max_tokens}, "
+            f"piece_max_tokens={args.piece_max_tokens}, request_max_chars={args.request_max_chars}, "
+            f"batch_size={args.batch_size}"
+        )
 
     if args.dry_run:
-        print(f"[DRY RUN] would embed {len(chunks)} chunks across {changed_files} files for {repo}@{branch}")
+        print(
+            f"[DRY RUN] would embed {len(chunks)} chunks across {changed_files} files for {repo}@{branch}"
+        )
         return
 
     # Embed & upsert
@@ -401,7 +461,11 @@ def main():
         est_tokens = sum(rough_token_estimate(s) for s in batch_inputs)
         est_chars = sum(len(s) for s in batch_inputs)
         if args.verbose:
-            print(f"[embed {bi}/{total_batches}] pieces={batch_len} est_tokens≈{est_tokens} est_chars={est_chars} …", end="", flush=True)
+            print(
+                f"[embed {bi}/{total_batches}] pieces={batch_len} est_tokens≈{est_tokens} est_chars={est_chars} …",
+                end="",
+                flush=True,
+            )
 
         bt0 = time.time()
         try:
@@ -418,26 +482,30 @@ def main():
         if len(embeddings) != batch_len:
             if args.verbose:
                 print("\r", end="")
-            print(f"[embed {bi}/{total_batches}] ERROR: returned {len(embeddings)} embeddings for {batch_len} inputs")
+            print(
+                f"[embed {bi}/{total_batches}] ERROR: returned {len(embeddings)} embeddings for {batch_len} inputs"
+            )
             batch_start_idx = batch_end_idx
             continue
 
         rows: List[dict] = []
         for k in range(batch_len):
             rel, start, end, content, file_sha, chunk_sha = meta_slice[k]
-            rows.append({
-                "repo": repo,
-                "branch": branch,
-                "path": rel,
-                "start_line": start,
-                "end_line": end,
-                "content": content,
-                "file_sha": file_sha,
-                "chunk_sha": chunk_sha,
-                "commit_sha": os.getenv("GIT_COMMIT", "HEAD"),
-                "embedding": embeddings[k],
-                "dims": EMBED_DIMS,
-            })
+            rows.append(
+                {
+                    "repo": repo,
+                    "branch": branch,
+                    "path": rel,
+                    "start_line": start,
+                    "end_line": end,
+                    "content": content,
+                    "file_sha": file_sha,
+                    "chunk_sha": chunk_sha,
+                    "commit_sha": os.getenv("GIT_COMMIT", "HEAD"),
+                    "embedding": embeddings[k],
+                    "dims": EMBED_DIMS,
+                }
+            )
 
         try:
             sup_t0 = time.time()
@@ -456,12 +524,16 @@ def main():
         if args.verbose:
             print("\r", end="")
             rate = batch_len / max(0.001, dt)
-            print(f"[embed {bi}/{total_batches}] ok {batch_len} pcs in {dt:.2f}s (rate {rate:.2f} pcs/s), supabase {dtsup:.2f}s")
+            print(
+                f"[embed {bi}/{total_batches}] ok {batch_len} pcs in {dt:.2f}s (rate {rate:.2f} pcs/s), supabase {dtsup:.2f}s"
+            )
 
         batch_start_idx = batch_end_idx
 
     t1 = time.time()
-    print(f"Indexed {len(out_rows)} chunks across {len(set([r['path'] for r in out_rows]))} files @ {repo}@{branch}")
+    print(
+        f"Indexed {len(out_rows)} chunks across {len(set([r['path'] for r in out_rows]))} files @ {repo}@{branch}"
+    )
     print(f"Total time {t1 - t0:.2f}s")
 
 
