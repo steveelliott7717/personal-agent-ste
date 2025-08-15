@@ -1,9 +1,10 @@
 {
-    "task": "Add request logging middleware with correlation IDs in FastAPI. Use a middleware class that generates a UUID per request, stores it in a ContextVar, logs start and end of requests with the correlation ID, and configures logging to include it. Apply middleware to the app in main.py. Ensure CORS middleware is also applied.",
-    "repo": "personal-agent-ste",
-    "branch": "main",
-    "path_prefix": "backend/",
-    "session": "reqlog6",
-    "thread_n": 1,
-    "k": 12
+    "task": {
+        "repo": "personal-agent-ste",
+        "branch": "main",
+        "path_prefix": "backend/",
+        "k": 6,
+        "session": "s1",
+        "task": "PINNED MUST-HAVES (NON-NEGOTIABLE):\\n1) Touch ONLY these files unless stated: backend/main.py, backend/logging_utils.py.\\n2) Create backend/logging_utils.py with: ContextVar-based correlation ID; CorrelationIdFilter; setup_logging(); RequestLoggingMiddleware that sets request.state.correlation_id, logs start/end/errors; sets X-Correlation-ID; logging gated by env LOG_REQUESTS (default true for values in {true,1,t,yes}).\\n3) Modify backend/main.py (EXISTING FILE, MODIFIED-FILE DIFF): import RequestLoggingMiddleware and setup_logging from backend.logging_utils; call setup_logging() immediately after app = FastAPI(...); add app.add_middleware(RequestLoggingMiddleware) once (no duplicates).\\n4) Do NOT redefine or reassign app; do NOT alter load_dotenv(...); do NOT change CORS config.\\n5) FILE-EXISTENCE RULES: If path exists, use '--- a/<path>' then '+++ b/<path>'; only use '--- /dev/null' for new files. No hunk without a preceding 'diff --git' header. NEW-file hunks: all body lines '+'. Modified-file hunks: body lines only ' ', '+', '-', or '\\\\'. Correct header order, one section per file, no duplicate '+++'.\\n6) OUTPUT: One unified diff starting with 'diff --git'. LF newlines, UTF-8 (no BOM), exactly one trailing newline. Must pass: git apply --check --whitespace=nowarn.\\nACCEPTANCE: Server boots; /health OK; responses include X-Correlation-ID; when LOG_REQUESTS=true, logs include correlation ID for each request.\\nDELIVERABLE: A single unified diff touching only backend/main.py and backend/logging_utils.py."
+    }
 }

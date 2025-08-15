@@ -10,6 +10,8 @@ import shutil
 import logging
 from pathlib import Path
 from typing import Any, Dict, Tuple
+import re, subprocess, tempfile, os
+from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import (
@@ -446,6 +448,65 @@ def _looks_like_unified_diff(text: str) -> bool:
         return True
     return text.startswith("--- ") and ("\n+++ " in text)
 
+_NON_ASCII = re.compile(r'[^\x09\x0A\x0D\x20-\x7E]')
+_DIFF_HEADER = re.compile(r'^diff --git a/(?P<a>.+?) b/(?P<b>.+?)$', re.M)
+_FILE_SPLIT = re.compile(r'(?=^diff --git a/.+ b/.+$)', re.M)
+
+def _validate_unified_diff(diff_text: str) -> None:
+    """
+    Raise HTTPException(400) if the diff is malformed or violates policy.
+    """
+    from fastapi import HTTPException
+
+    if not diff_text.strip().startswith("diff --git"):
+        raise HTTPException(status_code=400, detail="Not a unified diff (missing 'diff --git').")
+
+    sections = [s for s in _FILE_SPLIT.split(diff_text) if s.strip()]
+    seen = set()
+    for sec in sections:
+        m = _DIFF_HEADER.search(sec)
+        if not m:
+            raise HTTPException(status_code=400, detail="Patch fragment without header.")
+        path = m.group("b")
+        if path in seen:
+            raise HTTPException(status_code=400, detail=f"Duplicate file section for {path}.")
+        seen.add(path)
+
+        # Reject marking existing main.py as new
+        if path == "backend/main.py" and "--- /dev/null" in sec:
+            raise HTTPException(status_code=400, detail="backend/main.py must be a modified file, not new.")
+
+        # Reject bad content in added lines
+        for line in sec.splitlines():
+            if not line.startswith('+'):
+                continue
+            if _NON_ASCII.search(line):
+                raise HTTPException(status_code=400, detail="Non-ASCII characters in added lines.")
+            if "X-Request-ID" in line:
+                raise HTTPException(status_code=400, detail="Use X-Correlation-ID, not X-Request-ID.")
+            if re.search(r'\bapp\s*=\s*FastAPI\s*\(', line):
+                raise HTTPException(status_code=400, detail="Do not re-create the FastAPI app object.")
+
+    # Final gate: git apply --check against the current repo
+    tmp = None
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="utf-8", newline="\n")
+        tmp.write(diff_text if diff_text.endswith("\n") else diff_text + "\n")
+        tmp.flush()
+        tmp.close()
+        proc = subprocess.run(
+            ["git", "apply", "--check", "--whitespace=nowarn", tmp.name],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(Path(".").resolve())
+        )
+        if proc.returncode != 0:
+            msg = (proc.stderr or proc.stdout).strip().splitlines()[0] if (proc.stderr or proc.stdout) else "git apply --check failed"
+            raise HTTPException(status_code=400, detail=msg)
+    finally:
+        if tmp:
+            try: os.unlink(tmp.name)
+            except Exception: pass
+
+
 # -------------------- Repo endpoints --------------------
 
 @app.post("/app/api/repo/query")
@@ -543,20 +604,9 @@ async def repo_plan(request: Request) -> Response:
     sanitized = _maybe_run_powershell_fix(sanitized)
 
     if wants_patch:
-        # Fail-fast with preview when invalid
-        if not _looks_like_unified_diff(sanitized):
-            preview = (raw_patch or "")[:200].replace("\n", "\\n")
-            logger.warning("RMS patch rejected; preview(first200)=%r", preview)
-            return PlainTextResponse(
-                "No patch generated or invalid diff.",
-                status_code=400,
-                media_type="text/plain",
-            )
-        headers = {
-            "x-rms-sanitized": "true" if is_sanitized else "false",
-            "x-rms-sanitizer-stats": json.dumps(stats or {}),
-        }
-        return PlainTextResponse(sanitized, media_type="text/x-patch; charset=utf-8", headers=headers)
+        _validate_unified_diff(sanitized)
+        return PlainTextResponse(sanitized, media_type="text/x-patch")
+
 
     # Otherwise, return a JSON plan (legacy behavior)
     return JSONResponse(out)
