@@ -344,13 +344,14 @@ def generate_patch_from_prompt(
 def propose_changes(
     task: str,
     *,
-    repo: str,
-    branch: str,
+    repo: str = "personal-agent-ste",
+    branch: str = "main",
     commit: str = "HEAD",
     k: int = 12,
     path_prefix: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
+
     session: Optional[str] = kwargs.get("session")
     thread_n: Optional[int] = kwargs.get("thread_n")
 
