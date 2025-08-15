@@ -143,6 +143,22 @@ def root_redirect():
     return RedirectResponse(url="/app/")
 
 # ---------- Files-mode validation helpers ----------
+
+def _rebuild_files_with_lf(artifact: str) -> str:
+    """
+    Parse BEGIN_FILE/END_FILE blocks, normalize to LF, and ensure each file body
+    ends with exactly one trailing LF before END_FILE. Re-emits strict blocks.
+    """
+    blocks = _parse_files_artifact(artifact)
+    parts: list[str] = []
+    for path, body in blocks:
+        body = body.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
+        parts.append(f"BEGIN_FILE {path}\n{body}END_FILE\n")
+    # Ensure the whole artifact ends with exactly one LF
+    out = "".join(parts)
+    return out.rstrip("\n") + "\n"
+
+
 from fastapi.responses import PlainTextResponse  # add if not already imported
 
 _ALLOWED_FILES = {"backend/logging_utils.py", "backend/main.py"}
@@ -235,14 +251,16 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         )
         if not art.get("ok"):
             # Return raw content for inspection but mark 422
-            return PlainTextResponse(str(art.get("content","")), status_code=422, media_type="text/plain; charset=utf-8")
-        content = art.get("content","")
-        # Lightweight validation: ASCII/LF + BEGIN/END markers + trailing LF per file
+            return PlainTextResponse(str(art.get("content", "")), status_code=422, media_type="text/plain; charset=utf-8")
+
+        content = art.get("content", "")
         try:
-            _ = _parse_files_artifact(content)
+            content = _rebuild_files_with_lf(content)
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
+
         return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
 
     if fmt == "patch":
         art = generate_artifact_from_task(
@@ -267,9 +285,11 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         task, repo=repo, branch=branch, commit="HEAD", k=k, path_prefix=prefix, session=session, thread_n=thread_n
     )
     return out@app.post("/app/api/repo/files")
+@app.post("/app/api/repo/files")
 def repo_files(payload: Dict[str, Any]):
     """
-    Strict files-mode endpoint: returns only BEGIN_FILE/END_FILE blocks (ASCII+LF).
+    Strict files-mode endpoint: returns only BEGIN_FILE/END_FILE blocks (ASCII+LF),
+    with each file body ending in exactly one trailing LF.
     """
     task = (payload or {}).get("task")
     if not task:
@@ -282,10 +302,11 @@ def repo_files(payload: Dict[str, Any]):
     art = generate_artifact_from_task(
         task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="files"
     )
-    content = art.get("content","")
-    # Validate files artifact
+    content = art.get("content", "")
+
+    # Validate, normalize, and rebuild with enforced trailing LF per file
     try:
-        _ = _parse_files_artifact(content)
+        content = _rebuild_files_with_lf(content)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
 
