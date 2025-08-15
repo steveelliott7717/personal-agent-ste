@@ -331,19 +331,25 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         return PlainTextResponse(patch, media_type="text/x-patch; charset=utf-8")
 
     # Default JSON preview (no strict guarantees)
+        # Default JSON preview (no strict guarantees)
+        # Default JSON preview (no strict guarantees)
     out = propose_changes(
         task, repo=repo, branch=branch, commit="HEAD", k=k, path_prefix=prefix, session=session, thread_n=thread_n
     )
-    return out@app.post("/app/api/repo/files")
+    return out
 
+
+@app.post("/app/api/repo/files")
 def repo_files(payload: Dict[str, Any]):
     """
     Strict files-mode endpoint: returns only BEGIN_FILE/END_FILE blocks (ASCII+LF),
-    with each file body ending in exactly one trailing LF.
+    with each file body ending in exactly one trailing LF and the artifact ending
+    in exactly one LF overall.
     """
     task = (payload or {}).get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
+
     repo    = payload.get("repo", "personal-agent-ste")
     branch  = payload.get("branch", "main")
     prefix  = payload.get("path_prefix", "backend/")
@@ -354,12 +360,14 @@ def repo_files(payload: Dict[str, Any]):
     )
 
     content = art.get("content", "")
+
+    # 1) Normalize and enforce one trailing LF per file body (works for empty bodies too)
     try:
-        # Normalize and enforce exactly one trailing LF per file body
         content = _enforce_trailing_lf_per_file(content)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
-    
+
+    # 2) Normalize WHOLE artifact to LF and ensure exactly one final LF
     content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
 
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
