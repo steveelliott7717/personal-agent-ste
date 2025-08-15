@@ -11,8 +11,10 @@ from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, File
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 # add near your other imports
-from backend.agents.repo_agent import generate_artifact_from_task
 from fastapi.responses import PlainTextResponse
+from backend.agents.repo_agent import generate_artifact_from_task
+import re
+
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -27,6 +29,65 @@ app = FastAPI(title="Personal Agent API")
 setup_logging()
 app.add_middleware(RequestLoggingMiddleware)
 
+_BEGIN_RE = re.compile(r"^BEGIN_FILE\s+(.+)$")
+_END_RE = re.compile(r"^END_FILE\s*$")
+
+def _is_ascii_lf(s: str) -> bool:
+    try:
+        s.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return "\r" not in s
+
+def _parse_files_artifact(text: str) -> list[tuple[str, str]]:
+    """
+    Parse BEGIN_FILE/END_FILE blocks.
+    Returns list of (path, content).
+    Raises ValueError with a short message when invalid.
+    """
+    lines = text.split("\n")
+    i, n = 0, len(lines)
+    blocks: list[tuple[str, str]] = []
+
+    # Skip leading empties
+    while i < n and lines[i].strip() == "":
+        i += 1
+
+    if i >= n or not lines[i].startswith("BEGIN_FILE "):
+        raise ValueError("first non-empty line must be BEGIN_FILE <path>")
+
+    while i < n:
+        m = _BEGIN_RE.match(lines[i])
+        if not m:
+            raise ValueError(f"expected BEGIN_FILE at line {i+1}")
+        path = m.group(1).strip()
+        i += 1
+        buf: list[str] = []
+        found_end = False
+        while i < n:
+            if _END_RE.match(lines[i]):
+                found_end = True
+                i += 1
+                break
+            buf.append(lines[i])
+            i += 1
+        if not found_end:
+            raise ValueError(f"missing END_FILE for {path}")
+        # Ensure file ends with exactly one LF
+        content = "\n".join(buf)
+        if not content.endswith("\n"):
+            content = content + "\n"
+        if not _is_ascii_lf(content):
+            raise ValueError(f"non-ASCII or CRLF detected in {path}")
+        blocks.append((path, content))
+
+        # Skip intervening empties
+        while i < n and lines[i].strip() == "":
+            i += 1
+        if i < n and not lines[i].startswith("BEGIN_FILE "):
+            raise ValueError(f"unexpected text after END_FILE at line {i+1}")
+
+    return blocks
 
 
 # -------------------- Health --------------------
@@ -79,6 +140,7 @@ def _parse_files_blocks(text: str) -> dict[str, str]:
         i += 1
     if not files:
         raise ValueError("No BEGIN_FILE/END_FILE blocks found")
+    
     return files
 
 def _validate_files_mode(files: dict[str, str]) -> tuple[bool, str]:
@@ -157,6 +219,86 @@ def repo_plan(payload: Dict[str, Any], request: Request):
     return out
 
 
+@app.post("/app/api/repo/files")
+def repo_files(payload: Dict[str, Any]):
+    """
+    Generate updated files via files-mode (BEGIN_FILE/END_FILE).
+    Returns text/plain so you can save directly.
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    task = payload.get("task")
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task'")
+
+    # Support both flat and nested tasks
+    if isinstance(task, dict):
+        path_prefix = task.get("path_prefix")
+        repo = task.get("repo", payload.get("repo", "personal-agent-ste"))
+        branch = task.get("branch", payload.get("branch", "main"))
+        k = int(task.get("k", payload.get("k", 6)))
+        session = task.get("session", payload.get("session"))
+        thread_n = task.get("thread_n", payload.get("thread_n"))
+        task_text = task.get("task") or ""
+    else:
+        # Flat shape
+        path_prefix = payload.get("path_prefix")
+        repo = payload.get("repo", "personal-agent-ste")
+        branch = payload.get("branch", "main")
+        k = int(payload.get("k", 6))
+        session = payload.get("session")
+        thread_n = payload.get("thread_n")
+        task_text = str(task)
+
+    if not isinstance(task_text, str) or not task_text.strip():
+        raise HTTPException(status_code=400, detail="Task text missing/invalid")
+
+    # Ask RMS (files mode)
+    try:
+        out = generate_artifact_from_task(
+            task_text,
+            repo=repo,
+            branch=branch,
+            k=k,
+            path_prefix=path_prefix,
+            session=session,
+            thread_n=thread_n,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Upstream generation error: {e}")
+
+    out = (out or "").strip()
+    if not out:
+        raise HTTPException(status_code=400, detail="Empty response from generator")
+
+    # Strict validation
+    try:
+        blocks = _parse_files_artifact(out)
+    except ValueError as ve:
+        # Keep plain text so you can read the error easily
+        return PlainTextResponse(
+            content=f"files-mode validation failed: {ve}",
+            status_code=400,
+            media_type="text/plain",
+        )
+
+    # Enforce path_prefix scope (if provided)
+    if path_prefix:
+        for p, _ in blocks:
+            if not p.startswith(path_prefix):
+                return PlainTextResponse(
+                    content=f"files-mode validation failed: path outside prefix: {p}",
+                    status_code=400,
+                    media_type="text/plain",
+                )
+
+    # If all good, return exactly what RMS produced (so your client can write files)
+    headers = {
+        "x-files-blocks": str(len(blocks)),
+        "content-type": "text/plain; charset=utf-8",
+    }
+    return PlainTextResponse(content=out + ("\n" if not out.endswith("\n") else ""), headers=headers)
 
 
 # -------------------- Static frontend (SPA at /app) --------------------

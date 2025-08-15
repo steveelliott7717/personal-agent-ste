@@ -17,42 +17,34 @@ except Exception:
 # =========================
 # System prompts
 # =========================
+# ---------- RMS system prompts (minimal & deterministic) ----------
 
-DEFAULT_RMS_SYSTEM_PROMPT_PATCH = (
-    "You are RMS GPT. Output ONLY a single unified diff (git-apply ready).\n"
-    "The FIRST non-empty line MUST be: diff --git a/... b/...\n\n"
-    "Hard rules:\n"
-    "- No prose, JSON, markdown fences (```), C-style comments (/* ... */), ellipses (...), or non-ASCII glyphs.\n"
-    "- Edit ONLY under path_prefix.\n"
-    "- For NEW files: use '--- /dev/null' then '+++ b/<path>' and a single new-file hunk where every body line starts with '+'.\n"
-    "- For MODIFIED files: hunk body lines must start with ' ', '+', '-', or '\\' only.\n"
-    "- One section per file; correct header order; no duplicate '+++'.\n"
-    "- Use LF newlines; UTF-8 no BOM; end with exactly one trailing newline.\n"
-    "- Must pass: git apply --check --whitespace=nowarn.\n\n"
-    "Self-check before answering:\n"
-    "1) Output begins with 'diff --git'.\n"
-    "2) All file sections and hunk headers are structurally valid.\n"
-    "3) All paths are within path_prefix.\n"
-    "4) No prose/fences/markers/comments/non-ASCII.\n"
-    "If any check fails, regenerate; as last resort, emit a minimal no-op diff under path_prefix that passes 'git apply --check'."
-).strip()
-
-DEFAULT_RMS_SYSTEM_PROMPT_FILES = (
-    "You are RMS GPT. Return updated files, not a diff.\n\n"
-    "OUTPUT FORMAT (STRICT):\n"
-    "- For each file to write, emit exactly:\n"
+FILES_MODE_SYSTEM_PROMPT = (
+    "You return updated files, not a diff.\n\n"
+    "FORMAT (STRICT):\n"
+    "- For each file:\n"
     "  BEGIN_FILE <path>\n"
-    "  <full file content>\n"
+    "  <ASCII+LF, full content, ends with exactly one LF>\n"
     "  END_FILE\n"
-    "- ASCII only. LF line endings. Exactly one trailing LF per file.\n"
-    "- No text outside these blocks. No prose, JSON, or markdown fences.\n\n"
+    "- Nothing outside blocks. No prose, JSON, or markdown fences.\n\n"
     "SCOPE:\n"
-    "- Edit ONLY under path_prefix. Each BEGIN_FILE path must start with path_prefix.\n\n"
-    "SELF-CHECK BEFORE ANSWERING:\n"
-    "1) First non-empty line of the entire reply is 'BEGIN_FILE '.\n"
-    "2) One or more BEGIN_FILE/END_FILE blocks, nothing else.\n"
-    "3) All paths under path_prefix; content is ASCII/LF; one trailing LF per file.\n"
+    "- Only under path_prefix.\n\n"
+    "FORBIDDEN:\n"
+    "- Extra helpers, duplicate imports, duplicate 'app = FastAPI(...)', new routes, CORS changes, unicode, CRLF.\n\n"
+    "SELF-CHECK before answering:\n"
+    "1) Output starts with 'BEGIN_FILE '\n"
+    "2) One or more blocks, paths under path_prefix\n"
+    "3) ASCII-only, LF-only, one trailing LF per file\n"
 )
+
+PATCH_MODE_SYSTEM_PROMPT = (
+    "You output ONLY a single unified diff (git-apply ready). The FIRST non-empty line MUST be: diff --git a/... b/...\n"
+    "No prose, JSON, markdown fences, or block comments. ASCII only. LF newlines. Exactly one trailing newline.\n"
+    "Edit ONLY under path_prefix. NEW files: '--- /dev/null' then '+++ b/<path>'; all hunk lines '+' for new files.\n"
+    "Modified files: hunk body lines must start with ' ', '+', '-', or '\\'.\n"
+    "One section per file, correct header order, no duplicate '+++'. Must pass: git apply --check --whitespace=nowarn.\n"
+)
+
 
 
 
@@ -111,9 +103,10 @@ def _collect_context_files(path_prefix: str) -> Iterable[Path]:
 def _build_files_context(path_prefix: str | None) -> str:
     """
     Returns compact, high-signal context from existing files:
-    - Top-of-file header
+    - Top-of-file header (first ~60 lines)
     - Excerpt around 'app = FastAPI(' anchor
-    - Excerpt around a stable import anchor
+    - Excerpt around stable import anchor
+    Also emits explicit DO/DON'T pins for main.py insertion tasks.
     """
     if not path_prefix:
         return ""
@@ -132,6 +125,13 @@ def _build_files_context(path_prefix: str | None) -> str:
             f"-- HEAD (first 60 lines) --\n{head}\n\n"
             f"-- ANCHOR (app = FastAPI) --\n{a1 or '(not found)'}\n\n"
             f"-- ANCHOR (AgentResponse import) --\n{a2 or '(not found)'}\n"
+            f"-- PINS --\n"
+            f"DO NOT redefine 'app'. DO NOT move load_dotenv(...) or CORS. "
+            f"If asked to add logging: add exactly one import "
+            f"'from backend.logging_utils import setup_logging, RequestLoggingMiddleware' "
+            f"and insert exactly two lines immediately after the anchor:\n"
+            f"setup_logging()\n"
+            f"app.add_middleware(RequestLoggingMiddleware)\n"
         )
     return "\n".join(parts).strip()
 
@@ -140,8 +140,8 @@ _ASCII_RE = re.compile(r"^[\x00-\x7F]*$")
 
 def _build_system_prompt(mode: str = "files") -> str:
     if mode == "patch":
-        return DEFAULT_RMS_SYSTEM_PROMPT_PATCH
-    return DEFAULT_RMS_SYSTEM_PROMPT_FILES
+        return PATCH_MODE_SYSTEM_PROMPT
+    return FILES_MODE_SYSTEM_PROMPT
 
 def _coalesce_response_text(resp: Any) -> str:
     """
@@ -246,11 +246,19 @@ def generate_artifact_from_task(
 
     system_msg = _build_system_prompt(mode)
     # Keep the user prompt concise and explicit.
+    # Keep the user prompt concise and explicit.
+    base_task = task if isinstance(task, str) else json.dumps(task, ensure_ascii=True)
     user_msg = (
-        "TASK:\n{}\n\n"
-        "REPO: {}\nBRANCH: {}\nPATH_PREFIX: {}\n"
-        "Return output in {} mode only."
-    ).format(task, repo, branch, path_prefix or "", mode.upper())
+        "TASK:\n{task}\n\n"
+        "REPO: {repo}\nBRANCH: {branch}\nPATH_PREFIX: {pp}\n"
+        "Return output in {mode} mode only.\n"
+        "\n"
+        "REMINDERS:\n"
+        "- ASCII only, LF only, one trailing LF per file.\n"
+        "- Only under PATH_PREFIX.\n"
+        "- If editing backend/main.py to add request logging hooks, obey STRICT INSERT RULES in the system prompt.\n"
+    ).format(task=base_task, repo=repo, branch=branch, pp=(path_prefix or ""), mode=mode.upper())
+
 
     # --- Inject live file context (tiny, deterministic anchors) ---
     files_ctx = _build_files_context(path_prefix or "backend/")
