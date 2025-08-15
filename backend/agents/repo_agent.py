@@ -5,6 +5,7 @@ import os
 import re
 import time
 import logging
+import json
 
 from openai import OpenAI
 
@@ -58,6 +59,42 @@ def _context_digest(session: _Optional[str]) -> str:
     return "\n".join(lines)
 # --- end: RMS session memory helpers ---
 
+# --- simple in-process token memory for sessions -----------------------------
+import re as _re
+_SESSION_TOKENS: dict[str, str] = {}
+
+# Pattern to store a token from user text, e.g. "TOKEN:: ABC-123" or "token=ABC-123"
+_TOKEN_STORE_RE = _re.compile(r"(?:\bTOKEN::\s*|\btoken\s*=\s*)(?P<tok>[A-Za-z0-9._\-:+/]+)")
+
+# Pattern to recall, e.g. "recall token" (anywhere in the message)
+_TOKEN_RECALL_RE = _re.compile(r"\brecall\s+token\b", _re.IGNORECASE)
+
+def _store_session_token(session: Optional[str], text: str) -> Optional[str]:
+    """
+    If the text contains a token marker, remember it under the session and return it.
+    Examples that match:
+      - 'TOKEN:: ABC-123'
+      - 'token=ABC-123'
+    """
+    if not session or not text:
+        return None
+    m = _TOKEN_STORE_RE.search(text)
+    if not m:
+        return None
+    tok = m.group("tok").strip()
+    if tok:
+        _SESSION_TOKENS[session] = tok
+        return tok
+    return None
+
+def _recall_session_token(session: Optional[str]) -> Optional[str]:
+    """Return the stored token for this session, if any."""
+    if not session:
+        return None
+    return _SESSION_TOKENS.get(session)
+# ---------------------------------------------------------------------------
+
+
 # ---------- Config ----------
 REPO_SLUG = os.getenv("RMS_REPO", "personal-agent-ste")
 REPO_BRANCH = os.getenv("RMS_BRANCH", "main")
@@ -87,6 +124,25 @@ If any check fails, regenerate a valid diff; as last resort, emit a minimal no-o
 """).strip()
 
 _openai = OpenAI()
+
+# --- OpenAI call guards & diagnostics ---------------------------------------
+def _disable_responses_api_at_runtime(client: OpenAI) -> None:
+    """
+    If any legacy path tries to call Responses API, make it fail loudly and clearly.
+    """
+    try:
+        if hasattr(client, "responses"):
+            class _NoResponses:
+                @staticmethod
+                def create(*args, **kwargs):
+                    raise RuntimeError("OpenAI Responses API disabled here. Use chat.completions with messages=[...].")
+            client.responses = _NoResponses()  # type: ignore[attr-defined]
+            logger.warning("repo-agent: runtime-disabled OpenAI Responses API to prevent $.input errors")
+    except Exception:
+        # best-effort — never crash init
+        pass
+
+_disable_responses_api_at_runtime(_openai)
 
 def _build_system_prompt() -> Optional[str]:
     """
@@ -121,8 +177,21 @@ def _last_n_messages(session: str, n: int = 10) -> list[dict]:
         return []
 
 # ---------- Utilities ----------
-def _embed(text: str) -> List[float]:
-    resp = _openai.embeddings.create(model=EMBED_MODEL, input=text)
+def _embed(x: Any) -> List[float]:
+    """
+    Embeddings API expects a string (or list of strings). To avoid 400 '$.input is invalid',
+    stringify anything that's not already a plain string.
+    """
+    try:
+        if isinstance(x, (str, bytes)):
+            s = x.decode("utf-8") if isinstance(x, bytes) else x
+        else:
+            s = json.dumps(x, ensure_ascii=False)
+    except Exception:
+        s = str(x)
+
+    logger.info("repo-agent: calling embeddings model=%s input_len=%s", EMBED_MODEL, len(s))
+    resp = _openai.embeddings.create(model=EMBED_MODEL, input=s)
     return resp.data[0].embedding  # list[float]
 
 def _format_citation(idx: int, path: str, start: int, end: int, commit_sha: Optional[str]) -> str:
@@ -188,7 +257,7 @@ def generate_patch_from_prompt(
         f"{prompt}"
     )
 
-    logger.info("repo-agent: calling chat.completions model=%s", model)
+    logger.info("repo-agent: calling chat.completions model=%s session=%s", model, session)
     try:
         resp = _openai.chat.completions.create(
             model=model,
@@ -205,7 +274,7 @@ def generate_patch_from_prompt(
             _remember(session, "error", f"{type(e).__name__}: {e}")
         except Exception:
             pass
-        logger.exception("repo-agent: chat.completions failed")
+        logger.exception("repo-agent: chat.completions failed session=%s", session)
         raise
 
     patch = _extract_patch_from_text(text)
@@ -285,6 +354,9 @@ def propose_changes(
     }
 
 # ---------- Repo Q&A / Endpoint wrapper ----------
+# NOTE: This file references _store_session_token / _recall_session_token / _TOKEN_RECALL_RE
+# which are assumed to be defined elsewhere in this module or imported. We leave them unchanged.
+
 def answer_about_repo(
     question: str,
     *,
@@ -315,6 +387,7 @@ def answer_about_repo(
         }
 
     # Session memory: explicit store
+    
     token = _store_session_token(session, q)
     if token:
         return {
