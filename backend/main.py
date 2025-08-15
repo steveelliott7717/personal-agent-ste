@@ -16,8 +16,14 @@ load_dotenv()
 
 # Package-qualified imports
 from backend.agents.repo_agent import propose_changes, generate_artifact_from_task
+# Add these imports after the existing dotenv and package imports
+from backend.logging_utils import setup_logging, RequestLoggingMiddleware
 
 app = FastAPI(title="Personal Agent API")
+
+setup_logging()
+app.add_middleware(RequestLoggingMiddleware)
+
 
 
 # -------------------- Health --------------------
@@ -30,68 +36,89 @@ def health():
 def root_redirect():
     return RedirectResponse(url="/app/")
 
+# ---------- Files-mode validation helpers ----------
+from fastapi.responses import PlainTextResponse  # add if not already imported
+
+_ALLOWED_FILES = {"backend/logging_utils.py", "backend/main.py"}
+_MAIN_SENTINELS = [
+    "from backend.agents.router_agent import route_request",
+    "class NaturalLanguageMiddleware(BaseHTTPMiddleware)",
+    "app.add_middleware(NaturalLanguageMiddleware)",
+]
+
+def _ascii_lf_only(s: str) -> bool:
+    try:
+        s.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return ("\r" not in s) and s.endswith("\n")
+
+def _parse_files_blocks(text: str) -> dict[str, str]:
+    files: dict[str, str] = {}
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = t.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("BEGIN_FILE "):
+            rel = line[len("BEGIN_FILE "):].strip()
+            i += 1
+            buf = []
+            while i < len(lines) and lines[i].strip() != "END_FILE":
+                buf.append(lines[i])
+                i += 1
+            if i >= len(lines):
+                raise ValueError(f"Missing END_FILE for {rel}")
+            body = "\n".join(buf)
+            if not body.endswith("\n"):
+                body += "\n"
+            files[rel] = body
+        i += 1
+    if not files:
+        raise ValueError("No BEGIN_FILE/END_FILE blocks found")
+    return files
+
+def _validate_files_mode(files: dict[str, str]) -> tuple[bool, str]:
+    # 1) only allowed paths
+    bad = [p for p in files.keys() if p not in _ALLOWED_FILES]
+    if bad:
+        return False, f"Contains paths outside allowed set: {bad}"
+
+    # 2) ascii + lf + trailing lf
+    for p, body in files.items():
+        if not _ascii_lf_only(body):
+            return False, f"{p} not ASCII/LF or missing trailing LF."
+
+    # 3) keep anchors in main.py
+    if "backend/main.py" in files:
+        new_main = files["backend/main.py"]
+        for s in _MAIN_SENTINELS:
+            if s not in new_main:
+                return False, f"backend/main.py missing sentinel: {s}"
+
+    return True, "ok"
+
+
 
 # -------------------- Repo endpoints --------------------
+from fastapi import Request  # ensure this import exists
+
 @app.post("/app/api/repo/plan")
-def repo_plan(payload: Dict[str, Any], request: Request):
-    """
-    Accepts JSON payload with:
-      - task (str)
-      - repo, branch (optional with defaults)
-      - path_prefix (e.g., "backend/")
-      - k (int), session, thread_n (optional)
+async def repo_plan(payload: Dict[str, Any], request: Request):
+    task = payload.get("task")
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task'")
 
-    Supports artifacts via query string:
-      - ?format=files  -> returns BEGIN_FILE blocks (text/plain)
-      - ?format=patch  -> returns unified diff (text/x-patch)
-      - default -> JSON plan preview
-    """
-    task = (payload or {}).get("task")
-    if not isinstance(task, str) or not task.strip():
-        raise HTTPException(status_code=400, detail="Missing or invalid 'task'")
+    repo   = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix")
+    k      = int(payload.get("k", 12))
+    session = payload.get("session")
+    thread_n = payload.get("thread_n")
 
-    repo = (payload or {}).get("repo") or "personal-agent-ste"
-    branch = (payload or {}).get("branch") or "main"
-    prefix = (payload or {}).get("path_prefix")
-    k = int((payload or {}).get("k") or 12)
-    session = (payload or {}).get("session")
-    thread_n = (payload or {}).get("thread_n")
+    fmt = request.query_params.get("format", "").lower()
 
-    fmt = request.query_params.get("format", "").lower().strip()
-    if fmt in ("files", "patch"):
-        try:
-            art = generate_artifact_from_task(
-                task,
-                repo=repo,
-                branch=branch,
-                path_prefix=prefix,
-                session=session,
-                mode=fmt,
-            )
-        except Exception as e:
-            # Return raw error text for easier debugging
-            return PlainTextResponse(
-                f"Artifact generation error: {type(e).__name__}: {e}",
-                status_code=400,
-                media_type="text/plain",
-            )
-
-        if art["mode"] == "files":
-            # Render as plain blocks the client can write out directly
-            blocks: List[str] = []
-            for rel, content in art["files"]:
-                # Ensure one trailing LF in content
-                if not content.endswith("\n"):
-                    content = content + "\n"
-                blocks.append(f"BEGIN_FILE {rel}\n{content}END_FILE\n")
-            body = "".join(blocks)
-            return PlainTextResponse(body, media_type="text/plain")
-
-        # mode == "patch"
-        return PlainTextResponse(art["patch"], media_type="text/x-patch")
-
-    # Fallback: JSON plan mode
-    return propose_changes(
+    out = propose_changes(
         task,
         repo=repo,
         branch=branch,
@@ -101,6 +128,22 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         session=session,
         thread_n=thread_n,
     )
+
+    if fmt == "files":
+        # Depending on your repo_agent, pick the field that contains the raw BEGIN_FILE blocks.
+        files_text = out.get("draft") or out.get("prompt") or ""
+        try:
+            files = _parse_files_blocks(files_text)
+            ok, msg = _validate_files_mode(files)
+            if not ok:
+                raise ValueError(msg)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"files-mode validation failed: {e}")
+
+        return PlainTextResponse(files_text, media_type="text/plain; charset=utf-8")
+
+    return out
+
 
 
 # -------------------- Static frontend (SPA at /app) --------------------

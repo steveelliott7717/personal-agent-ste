@@ -1,10 +1,8 @@
 HTTP/1.1 200 OK
-date: Fri, 15 Aug 2025 03:53:14 GMT
+date: Fri, 15 Aug 2025 16:22:05 GMT
 server: Fly/90dd1273b (2025-08-14)
-x-rms-sanitized: true
-x-rms-sanitizer-stats: {"sections": 2, "newfile_hunks": 1, "prefixed_lines": 0, "rewritten_headers": 1, "synth_hunks": 0}
-content-length: 5266
-content-type: text/x-patch; charset=utf-8
+content-length: 1671
+content-type: text/plain; charset=utf-8
 via: 1.1 fly.io, 1.1 fly.io
-fly-request-id: 01K2NXRG5G234TWQERZDWTAMNM-ord
+fly-request-id: 01K2Q8KPMB3VBBEDZ9661Y7WN3-ord
 

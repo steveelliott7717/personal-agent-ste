@@ -58,6 +58,17 @@ DEFAULT_RMS_SYSTEM_PROMPT_FILES = (
     "2) All file paths are under path_prefix.\n"
     "3) All file content is ASCII-only and uses LF line endings with exactly one trailing LF.\n"
     "4) No extra commentary or markup."
+   """FILES MODE — HARD RULES
+- Output only BEGIN_FILE/END_FILE blocks, ASCII-only, LF-only, one trailing LF.
+- No placeholders like "...", no C-style comments, no markdown fences.
+- Do not re-declare existing singletons (e.g., `app = FastAPI(...)`) unless explicitly told.
+- Use task-provided ANCHORS to integrate edits; if an anchor is missing, do NOT guess—emit a comment at top of the file stating which anchor was missing.
+SELF-CHECK (must pass):
+1) No "..." anywhere.
+2) No new `app = FastAPI(` in backend/main.py.
+3) All referenced names (e.g., `logger`) are defined/imported.
+4) Only allowed files are emitted; each ends with exactly one LF."""
+
 ).strip()
 
 

@@ -1,8 +1,0 @@
-HTTP/1.1 400 Bad Request
-date: Fri, 15 Aug 2025 04:41:44 GMT
-server: Fly/90dd1273b (2025-08-14)
-content-length: 49
-content-type: application/json
-via: 1.1 fly.io, 1.1 fly.io
-fly-request-id: 01K2P0H8VW8JPD6ZKZG73P6QQ9-ord
-
