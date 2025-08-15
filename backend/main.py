@@ -268,7 +268,7 @@ def repo_files(payload: Dict[str, Any]):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Upstream generation error: {e}")
 
-    out = (out or "").strip()
+    out = (out or "")
     if not out:
         raise HTTPException(status_code=400, detail="Empty response from generator")
 
