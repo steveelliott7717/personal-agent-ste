@@ -275,7 +275,6 @@ def generate_artifact_from_task(
     try:
         resp = _openai.chat.completions.create(
             model=model,
-            temperature=0.0,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": instructions},
