@@ -1,8 +1,0 @@
-{
-    "task": "Implement minimal request logging with correlation IDs under backend/. Requirements: (1) add backend/logging_utils.py with ContextVar, CorrelationIdFilter, and configure_logging(); (2) add backend/middleware/request_logging.py BaseHTTPMiddleware that sets a UUID per request, stores it in request.state.correlation_id, logs method/path/status/duration_ms when LOG_REQUESTS=true, and clears token; (3) modify backend/main.py to call configure_logging() once and register RequestLoggingMiddleware. Constraints: scope strictly backend/, LF endings, no heavy deps, no response shape changes. Diff must be a valid unified diff: correct file header order (for NEW files: --- /dev/null then +++ b/<path>), every hunk body line begins with ' ', '+' or '-', new-file hunks are '+' only, hunk counts match, trailing newline.",
-    "repo": "personal-agent-ste",
-    "branch": "main",
-    "path_prefix": "backend/",
-    "k": 8,
-    "session": "s1"
-}

@@ -3,7 +3,7 @@
     "repo": "personal-agent-ste",
     "branch": "main",
     "path_prefix": "backend/",
-    "session": "reqlog1",
+    "session": "reqlog3",
     "thread_n": 1,
     "k": 12
 }

@@ -99,7 +99,7 @@ def _recall_session_token(session: Optional[str]) -> Optional[str]:
 REPO_SLUG = os.getenv("RMS_REPO", "personal-agent-ste")
 REPO_BRANCH = os.getenv("RMS_BRANCH", "main")
 EMBED_MODEL = os.getenv("RMS_EMBED_MODEL", "text-embedding-3-small")
-CHAT_MODEL = os.getenv("RMS_PATCH_MODEL", os.getenv("RMS_CHAT_MODEL", "gpt-4o-mini"))  # single source of truth
+CHAT_MODEL = os.getenv("RMS_PATCH_MODEL", os.getenv("RMS_CHAT_MODEL", "gpt-5"))  # single source of truth
 
 # Baseline system prompt
 DEFAULT_RMS_SYSTEM_PROMPT = ("""
