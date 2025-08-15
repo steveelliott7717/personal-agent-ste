@@ -10,6 +10,55 @@ from openai import OpenAI
 from backend.rms import repo_search, repo_search_raw
 from backend.services.supabase_service import supabase
 from backend.services.conversation import append_message, get_session_n
+# --- begin: RMS session memory helpers ---
+from collections import deque
+from dataclasses import dataclass
+from typing import Deque, Dict, Optional
+import os
+import time
+
+@dataclass
+class _MemEntry:
+    kind: str         # "task" | "patch" | "error"
+    text: str         # small snippet (truncated)
+    ts: float         # epoch seconds
+
+# session -> ring buffer of recent items
+_RMS_MEM: Dict[str, Deque[_MemEntry]] = {}
+_RMS_MEM_N: int = int(os.getenv("RMS_MEM_N", "6"))  # keep it small
+
+def _remember(session: Optional[str], kind: str, text: str, limit: int = _RMS_MEM_N) -> None:
+    if not session:
+        return
+    q = _RMS_MEM.get(session)
+    if q is None:
+        q = deque(maxlen=max(3, limit))
+        _RMS_MEM[session] = q
+    # trim long blobs so we don't balloon memory
+    snippet = text.strip()
+    if len(snippet) > 1200:
+        snippet = snippet[:600] + "\n...\n" + snippet[-600:]
+    q.append(_MemEntry(kind=kind, text=snippet, ts=time.time()))
+
+def _context_digest(session: Optional[str]) -> str:
+    if not session:
+        return ""
+    q = _RMS_MEM.get(session)
+    if not q:
+        return ""
+    # Compose a compact, deterministic digest (oldest -> newest)
+    lines = ["# Previous context (most recent last)"]
+    for it in list(q):
+        hdr = f"- [{it.kind} @ {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(it.ts))}Z]"
+        if it.kind == "patch":
+            # show head & tail to hint the model while keeping it small
+            body = it.text
+        else:
+            body = it.text
+        lines.append(hdr)
+        lines.append(body)
+    return "\n".join(lines)
+# --- end: RMS session memory helpers ---
 
 
 
@@ -21,55 +70,28 @@ EMBED_MODEL = os.getenv("RMS_EMBED_MODEL", "text-embedding-3-small")
 CHAT_MODEL = os.getenv("RMS_CHAT_MODEL", "gpt-5")  # keep placeholder; you can change later
 
 # Baseline system prompt (can be disabled or extended via env; see _build_system_prompt)
+# In backend/agents/repo_agent.py
 DEFAULT_RMS_SYSTEM_PROMPT = ("""
-You are RMS GPT, a repo modification + Q&A assistant.
+You are RMS GPT. Output ONLY a single unified diff (git-apply ready).
+The FIRST non-empty line MUST be: diff --git a/... b/...
 
-HARD OUTPUT CONTRACT (NON-NEGOTIABLE)
-- Return ONLY a unified diff (git-apply ready) beginning with: diff --git
-- No prose/explanations/JSON/markdown fences (```)/logs/ellipses.
-- UTF-8 (no BOM), LF newlines; patch must apply with: git apply --whitespace=fix
+Hard rules:
+- No prose, JSON, markdown fences (```), C-style comments (/* ... */), or ellipses (...).
+- Edit ONLY under path_prefix.
+- For NEW files: use '--- /dev/null' then '+++ b/<path>'; all hunk body lines must start with '+' (except optional '\ No newline').
+- For MODIFIED files: hunk body lines must start with ' ', '+', '-', or '\' only.
+- One section per file; correct header order; no duplicate '+++'.
+- LF newlines; UTF-8 no BOM; end with exactly one trailing newline.
+- Must pass: git apply --check --whitespace=nowarn.
 
-SCOPE & CONSTRAINTS
-- Edit only under the provided path_prefix. No files outside it.
-- Minimal, reversible changes; no heavy dependencies/services.
-- No API response shape changes unless explicitly requested.
-
-UNIFIED DIFF STRUCTURE RULES
-- Per file, headers MUST be in this order:
-  1) diff --git a/<path> b/<path>
-  2) (optional) index …
-  3) For NEW file:    --- /dev/null
-     For MODIFIED:     --- a/<path>
-  4)                   +++ b/<path>
-  5) One or more hunks: @@ -<a>[,<alen]> +<b>[,<blen]> @@
-- Never emit a hunk before its file headers. Never duplicate the +++ line.
-- Emit at most ONE file section per path (merge hunks).
-
-NEW FILE HUNKS
-- Every body line MUST start with '+' (no bare lines).
-- Typical header: @@ -0,0 +1,<N> @@ (or correct +start/+len). Counts must match.
-
-MODIFIED FILE HUNKS
-- Every body line MUST start with ' ' (context), '+' or '-' (no bare lines).
-- Hunk header counts MUST match the body.
-
-LINE ENDINGS
-- Use LF only; ensure the patch ends with a trailing newline.
-
-FALLBACK / NO-OP RULE
-- If no functional change is required, output a minimal no-op diff within path_prefix using native comment style:
-  # RMS GPT no-op touch: <UTC ISO8601>  (Python)
-
-SELF-CHECK BEFORE OUTPUT (MUST PASS ALL)
-1) Starts with "diff --git".
-2) Per-file: exactly one section for each path; correct header order; NEW files use '--- /dev/null' then '+++ b/...'; no duplicate +++.
-3) NEW-file hunks: all body lines '+'.
-4) MOD-file hunks: body lines only ' ', '+', '-' (no bare lines).
-5) Hunk header ranges match body counts.
-6) No code fences (```), no C-style block comments (/* … */), no ellipses.
-7) All paths under path_prefix.
-- If any check fails, regenerate; if still failing, emit a minimal no-op diff instead.
+Self-check before answering:
+1) Output begins with 'diff --git'.
+2) All file sections and hunk headers are structurally valid.
+3) All paths are within path_prefix.
+4) No prose/fences/markers/comments.
+If any check fails, regenerate a valid diff; as last resort, emit a minimal no-op diff under path_prefix that still passes 'git apply --check'.
 """)
+
 
 
 
@@ -298,6 +320,8 @@ def generate_patch_from_prompt(
 
 # ---------- “Propose changes” (kept minimal for completeness) ----------
 
+# ---------- “Propose changes” (kept minimal for completeness) ----------
+
 def propose_changes(
     task: str,
     *,
@@ -309,9 +333,13 @@ def propose_changes(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
-    Generates a draft diff (very light-weight stub).
-    Keeps the function signature so backend.main import works.
+    Generates a draft diff (very light-weight stub) + a prompt for RMS GPT.
+    Now includes small, session-scoped memory to make follow-ups incremental.
     """
+    session: Optional[str] = kwargs.get("session")  # propagated from caller
+    thread_n: Optional[int] = kwargs.get("thread_n")
+
+    # 1) Build search context (unchanged)
     vec = _embed(task)
     hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
 
@@ -320,22 +348,45 @@ def propose_changes(
         cite = _format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
         ctx_parts.append(f"{cite}\n```\n{h['content']}\n```")
 
+    # 2) System prompt (unchanged)
     baseline = _build_system_prompt()
     header = f"SYSTEM\n{baseline}\n\n" if baseline else ""
 
-    draft = "No automatic changes proposed in this stub."
-    prompt = header + "TASK\n" + task + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")
+    # 3) Session digest: prepend compact memory so the model does a FOLLOW-UP, not a full redo
+    prev = _context_digest(session)
+    if prev:
+        task_for_model = (
+            "Apply a minimal FOLLOW-UP fix based on prior context below. "
+            "Output ONLY a single unified diff (git-apply ready). "
+            "Do not restate previous changes; adjust just what is necessary.\n\n"
+            f"{prev}\n\n"
+            "----- NEW REQUEST -----\n"
+            f"{task}"
+        )
+    else:
+        task_for_model = task
 
-    # Back-compat JSON (additive hints for callers)
+    # 4) Compose model prompt (with digest when present)
+    draft = "No automatic changes proposed in this stub."
+    prompt = header + "TASK\n" + task_for_model + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")
+
+    # 5) Remember current task/prompt (compact)
+    _remember(session, "task", task)
+    _remember(session, "prompt", prompt)
+
+    # Back-compat JSON (callers like /plan may still turn this into a real patch)
     return {
         "hits": hits,
         "draft": draft,
-        "prompt": prompt,
-        "meta": {"system_prompt": baseline} if baseline else {"system_prompt": None},
+        "prompt": prompt,  # downstream code can pass this to generate_patch_from_prompt(...)
+        "meta": {
+            "system_prompt": baseline,
+            "session": session,
+            "thread_n": thread_n,
+        },
         "summary": "Repo plan generated (JSON mode). Use patch mode to fetch a diff.",
         "patch_present": False,
     }
-
 
 # ---------- Repo Q&A / Endpoint handler ----------
 

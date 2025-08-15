@@ -7,6 +7,7 @@ import re
 import tempfile
 import subprocess
 import shutil
+import logging
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -39,6 +40,7 @@ from backend.services import conversation as conv  # type: ignore
 load_dotenv()
 
 app = FastAPI(title="Personal Agent API")
+logger = logging.getLogger("rms.main")
 
 # -------------------- Debug / Health --------------------
 
@@ -63,10 +65,11 @@ def root_redirect():
 
 # -------------------- Patch Sanitization (pure Python) --------------------
 
-# Strip wrappers/noise
+# Wrappers / noise
 _CODEBLOCK_RE     = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 _CBLOCK_RE        = re.compile(r"/\*.*?\*/", re.DOTALL)
 _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
+_ENVELOPE_RE      = re.compile(r"(?ms)^\s*BEGIN_PATCH\s*\n(?P<body>.*?)(?:\n)?\s*END_PATCH\s*$")
 
 # Headers / hunk regexes
 _DIFF_GIT_RE       = re.compile(r"^diff --git a/(.+?) b/(.+?)$")
@@ -74,14 +77,19 @@ _HUNK_HDR_RE_ANY   = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)?(?:
 _HUNK_HDR_RE_FULL  = re.compile(r"^@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)(?:,([0-9]+))?\s+@@$")
 
 _HDR_NEWFILE   = re.compile(r"^\s*---\s*/dev/null\s*$")
-_HDR_OLD_A     = re.compile(r"^\s*---\s+a/(.+)\s*$")
-_HDR_NEW_B     = re.compile(r"^\s*\+\+\+\s+b/(.+)\s*$")
+_HDR_OLD_A     = re.compile(r"^\s*---\s*a/(.+)\s*$")
+_HDR_NEW_B     = re.compile(r"^\s*\+\+\+\s*b/(.+)\s*$")
 
 def _unwrap_and_clean(text: str) -> str:
-    """Remove code fences, C-style comments, and standalone ellipsis lines; normalize to LF."""
+    """Remove BEGIN/END envelopes, code fences, C-style comments, and standalone ellipsis; normalize to LF."""
     if not text:
         return ""
     s = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Strip optional BEGIN/END envelope
+    m_env = _ENVELOPE_RE.search(s)
+    if m_env:
+        s = m_env.group("body")
 
     # Remove all fenced code blocks, keeping their bodies
     fence = re.compile(r"```(?:diff|patch)?\s*([\s\S]*?)```", re.IGNORECASE)
@@ -91,13 +99,14 @@ def _unwrap_and_clean(text: str) -> str:
         if s == before:
             break
 
-    # Strip stray ```
+    # Strip stray ``` lines
     s = re.sub(r"(?m)^\s*```\s*$", "", s)
     # Strip C-style comment blocks and ellipsis-only lines
     s = _CBLOCK_RE.sub("", s)
     s = _ELLIPSIS_LINE_RE.sub("", s)
 
-    return s.strip()
+    # IMPORTANT: allow leading whitespace before diff header
+    return s.lstrip()
 
 def _ensure_file_headers(text: str) -> str:
     """
@@ -387,14 +396,8 @@ def _sanitize_patch_text(text: str) -> tuple[str, dict]:
     return s, stats
 
 def _fix_patch_structure(patch_text: str) -> tuple[str, dict]:
-    """
-    Secondary structural pass: ensure per-file header order, dedup +++,
-    prefix bare lines, recompute counts. (Kept lightweight since the
-    main normalizers already do heavy lifting.)
-    """
+    """Secondary structural pass (hook for future tweaks)."""
     s = (patch_text or "").replace("\r\n", "\n").replace("\r", "\n")
-    # This sample keeps it simple and relies on the normalizers above.
-    # You can add extra checks here if you find more edge cases.
     return s, {}
 
 def _maybe_run_powershell_fix(patch_text: str) -> str:
@@ -420,29 +423,26 @@ def _maybe_run_powershell_fix(patch_text: str) -> str:
             outp = Path(td) / "out.patch"
             inp.write_text(patch_text.replace("\r\n", "\n").replace("\r", "\n"), encoding="utf-8")
             cmd = [
-                ps,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(script),
-                "-InPath",
-                str(inp),
-                "-OutPath",
-                str(outp),
+                ps, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(script),
+                "-InPath", str(inp),
+                "-OutPath", str(outp),
+                "-RepoRoot", str(repo_root),
             ]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             if r.returncode == 0 and outp.exists():
                 fixed = outp.read_text(encoding="utf-8")
                 return fixed if fixed else patch_text
-    except Exception:
-        pass
+            else:
+                logger.warning("fix-patch.ps1 returned %s: %s", r.returncode, r.stderr.strip())
+    except Exception as e:
+        logger.warning("fix-patch.ps1 error: %s", e)
     return patch_text
 
 def _looks_like_unified_diff(text: str) -> bool:
     if not text:
         return False
-    if text.startswith("diff --git"):
+    if text.lstrip().startswith("diff --git"):
         return True
     return text.startswith("--- ") and ("\n+++ " in text)
 
@@ -492,7 +492,7 @@ async def repo_plan(request: Request) -> Response:
     session = payload.get("session")
     thread_n = payload.get("thread_n")
 
-    # Optional checks/lint inputs from caller
+    # Optional checks/lint inputs from caller (pass-through to future linter if needed)
     checks = payload.get("checks") or {}
     required = checks.get("required") or []
     forbidden = checks.get("forbidden") or []
@@ -514,15 +514,20 @@ async def repo_plan(request: Request) -> Response:
     accept = (request.headers.get("accept") or "").lower()
     wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
 
-    # Patch text (from model or from out['patch'])
-    raw_patch = (out.get("patch") if isinstance(out, dict) else None) or ""
-    if not raw_patch:
-        # fallback: try to generate from a prompt the agent returned
-        raw_patch = generate_patch_from_prompt(out.get("prompt", "")) or ""
+    # Extract raw model text / patch
+    raw_patch = ""
+    if isinstance(out, dict):
+        raw_patch = out.get("patch") or ""
+        if not raw_patch:
+            # fallback: attempt from agent-provided prompt
+            maybe_prompt = out.get("prompt") or ""
+            if maybe_prompt:
+                raw_patch = generate_patch_from_prompt(maybe_prompt) or ""
+    # if out is not a dict, skip fallback to avoid attribute errors
 
     # Sanitize / normalize
     sanitized, stats = _sanitize_patch_text(raw_patch)
-    is_sanitized = (sanitized != (raw_patch or "").strip())
+    is_sanitized = (sanitized != (raw_patch or "").replace("\r\n", "\n").replace("\r", "\n").lstrip())
 
     # Secondary structural pass (currently a no-op hook; keep for future)
     sanitized, struct_stats = _fix_patch_structure(sanitized)
@@ -535,7 +540,10 @@ async def repo_plan(request: Request) -> Response:
     sanitized = _maybe_run_powershell_fix(sanitized)
 
     if wants_patch:
+        # Fail-fast with preview when invalid
         if not _looks_like_unified_diff(sanitized):
+            preview = (raw_patch or "")[:200].replace("\n", "\\n")
+            logger.warning("RMS patch rejected; preview(first200)=%r", preview)
             return PlainTextResponse(
                 "No patch generated or invalid diff.",
                 status_code=400,
