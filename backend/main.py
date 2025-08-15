@@ -217,88 +217,68 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         thread_n=thread_n,
     )
     return out
-
+from fastapi.responses import PlainTextResponse
+import logging
+logger = logging.getLogger("app.files")
 
 @app.post("/app/api/repo/files")
 def repo_files(payload: Dict[str, Any]):
     """
-    Generate updated files via files-mode (BEGIN_FILE/END_FILE).
-    Returns text/plain so you can save directly.
+    Returns BEGIN_FILE/END_FILE blocks for 'files' mode.
+    Expected JSON:
+      {
+        "task": "<instructions>",
+        "repo": "personal-agent-ste",
+        "branch": "main",
+        "path_prefix": "backend/",
+        "session": "optional"
+      }
     """
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    task = payload.get("task")
-    if not task:
-        raise HTTPException(status_code=400, detail="Missing 'task'")
-
-    # Support both flat and nested tasks
-    if isinstance(task, dict):
-        path_prefix = task.get("path_prefix")
-        repo = task.get("repo", payload.get("repo", "personal-agent-ste"))
-        branch = task.get("branch", payload.get("branch", "main"))
-        k = int(task.get("k", payload.get("k", 6)))
-        session = task.get("session", payload.get("session"))
-        thread_n = task.get("thread_n", payload.get("thread_n"))
-        task_text = task.get("task") or ""
-    else:
-        # Flat shape
-        path_prefix = payload.get("path_prefix")
+    try:
+        task_text = (payload or {}).get("task")
+        if not task_text:
+            raise HTTPException(status_code=400, detail="Missing 'task'")
         repo = payload.get("repo", "personal-agent-ste")
         branch = payload.get("branch", "main")
-        k = int(payload.get("k", 6))
+        prefix = payload.get("path_prefix", "backend/")
         session = payload.get("session")
-        thread_n = payload.get("thread_n")
-        task_text = str(task)
 
-    if not isinstance(task_text, str) or not task_text.strip():
-        raise HTTPException(status_code=400, detail="Task text missing/invalid")
-
-    # Ask RMS (files mode)
-    try:
         out = generate_artifact_from_task(
             task_text,
             repo=repo,
             branch=branch,
-            path_prefix=path_prefix,
+            path_prefix=prefix,
             session=session,
-            mode="files",
+            mode="files",           # IMPORTANT: force files mode
         )
 
+        if not isinstance(out, dict):
+            raise HTTPException(status_code=500, detail="Upstream returned non-dict")
+
+        if not out.get("ok"):
+            warn = out.get("warning") or "files-mode validation failed"
+            raise HTTPException(status_code=400, detail=f"{warn}")
+
+        content = out.get("content") or ""
+        if not content.strip():
+            raise HTTPException(status_code=400, detail="Empty files content")
+
+        # Return raw text blocks
+        return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Upstream generation error: {e}")
-
-    out = (out or "")
-    if not out:
-        raise HTTPException(status_code=400, detail="Empty response from generator")
-
-    # Strict validation
-    try:
-        blocks = _parse_files_artifact(out)
-    except ValueError as ve:
-        # Keep plain text so you can read the error easily
-        return PlainTextResponse(
-            content=f"files-mode validation failed: {ve}",
-            status_code=400,
-            media_type="text/plain",
+        logger.exception("files-mode generation failed")
+        return JSONResponse(
+            {
+                "agent": "system",
+                "intent": "error",
+                "message": f"Upstream generation error: {type(e).__name__}: {e}",
+            },
+            status_code=500,
         )
 
-    # Enforce path_prefix scope (if provided)
-    if path_prefix:
-        for p, _ in blocks:
-            if not p.startswith(path_prefix):
-                return PlainTextResponse(
-                    content=f"files-mode validation failed: path outside prefix: {p}",
-                    status_code=400,
-                    media_type="text/plain",
-                )
-
-    # If all good, return exactly what RMS produced (so your client can write files)
-    headers = {
-        "x-files-blocks": str(len(blocks)),
-        "content-type": "text/plain; charset=utf-8",
-    }
-    return PlainTextResponse(content=out + ("\n" if not out.endswith("\n") else ""), headers=headers)
 
 
 # -------------------- Static frontend (SPA at /app) --------------------

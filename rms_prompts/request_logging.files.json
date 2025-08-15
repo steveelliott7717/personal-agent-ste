@@ -2,6 +2,6 @@
     "repo": "personal-agent-ste",
     "branch": "main",
     "path_prefix": "backend/",
-    "session": "reqlog-pin-main",
+    "session": "reqlog-pin-main-1",
     "task": "SYSTEM\\nYou are RMS GPT. Return updated files, not a diff.\\n\\nOUTPUT FORMAT (STRICT)\\n- Emit exactly one block:\\n  BEGIN_FILE backend/main.py\\n  <full file content>\\n  END_FILE\\n- ASCII only. LF line endings. Exactly one trailing LF.\\n- No text outside the block. No prose, JSON, or markdown fences.\\n\\nSCOPE\\n- Modify ONLY backend/main.py. Do not return or change any other file.\\n\\nEDIT (SURGICAL)\\n1) Add this import exactly once (do not duplicate if already present):\\n   from backend.logging_utils import setup_logging, RequestLoggingMiddleware\\n2) Locate the exact line: app = FastAPI(title=\\\"Personal Agent API\\\")\\n   Immediately AFTER that line, insert on their own lines:\\n   setup_logging()\\n   app.add_middleware(RequestLoggingMiddleware)\\n3) Do not modify any other imports, CORS, dotenv, or unrelated code.\\n\\nFALLBACK\\n- If the anchor line is not found verbatim, output a single BEGIN_FILE/END_FILE block for backend/main.py that is IDENTICAL to the existing file EXCEPT for appending a single ASCII comment at EOF: \\\"# RMS no-op\\\".\\n\\nSELF-CHECK BEFORE ANSWERING\\n- First non-empty line is 'BEGIN_FILE backend/main.py'.\\n- Exactly one BEGIN_FILE/END_FILE block.\\n- File content is ASCII with LF newlines and ends with a single LF.\\n- The two new lines are placed immediately after the anchor line, and the import is present exactly once."
 }

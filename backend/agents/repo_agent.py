@@ -228,73 +228,96 @@ def generate_artifact_from_task(
     branch: str,
     path_prefix: Optional[str] = None,
     session: Optional[str] = None,
-    mode: str = "files",               # "files" or "patch"
+    mode: str = "files",               # "files" or "patch" (we’ll use "files")
     model_env: str = "RMS_PATCH_MODEL",
     default_model: str = "gpt-5",
-    k: Optional[int] = None,
-    **kwargs: Any,                     # <-- add this so thread_n or others don't break
+    **kwargs: Any,                     # tolerate extras like thread_n, k, etc.
 ) -> Dict[str, Any]:
-    
-
     """
-    Call the LLM to produce either:
-      - files: BEGIN_FILE blocks (most robust), or
-      - patch: unified diff.
+    Returns {'ok': True, 'content': <BEGIN_FILE...END_FILE text>} on success.
 
-    Returns a dict with:
-      { "mode": "files", "files": [(path, content), ...] }  OR
-      { "mode": "patch", "patch": "<diff text>" }
+    IMPORTANT: This function is NOT the JSON planning stub. It emits the raw
+    files-mode artifact by calling chat.completions with a strict system prompt.
     """
-    if not _openai:
-        raise RuntimeError("OpenAI client not configured.")
+    if not isinstance(task, str) or not task.strip():
+        raise ValueError("task must be a non-empty string")
 
-    system_msg = _build_system_prompt(mode)
-    # Keep the user prompt concise and explicit.
-    # Keep the user prompt concise and explicit.
-    base_task = task if isinstance(task, str) else json.dumps(task, ensure_ascii=True)
-    user_msg = (
-        "TASK:\n{task}\n\n"
-        "REPO: {repo}\nBRANCH: {branch}\nPATH_PREFIX: {pp}\n"
-        "Return output in {mode} mode only.\n"
-        "\n"
-        "REMINDERS:\n"
-        "- ASCII only, LF only, one trailing LF per file.\n"
-        "- Only under PATH_PREFIX.\n"
-        "- If editing backend/main.py to add request logging hooks, obey STRICT INSERT RULES in the system prompt.\n"
-    ).format(task=base_task, repo=repo, branch=branch, pp=(path_prefix or ""), mode=mode.upper())
+    model = os.getenv(model_env, default_model)
 
-
-    # --- Inject live file context (tiny, deterministic anchors) ---
-    files_ctx = _build_files_context(path_prefix or "backend/")
-    if files_ctx:
-        user_msg = (
-            user_msg
-            + "\n\nCONTEXT: EXISTING FILES (READ-ONLY)\n"
-            + files_ctx
-            + "\n\nNOTE: Respect anchors above; do not redeclare `app` or move load_dotenv/CORS."
-        )
-
-    # Chat Completions (Responses API removed to avoid schema mismatches)
-    resp = _openai.chat.completions.create(
-        model=os.getenv(model_env, default_model),
-        messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ],
+    # Strict, minimal system prompt for FILES mode
+    system_msg = (
+        "You return updated files, not a diff.\n\n"
+        "FORMAT (STRICT):\n"
+        "- For each file:\n"
+        "  BEGIN_FILE <path>\n"
+        "  <ASCII+LF, full content, ends with exactly one LF>\n"
+        "  END_FILE\n"
+        "- Nothing outside blocks. No prose, JSON, or markdown fences.\n\n"
+        "SCOPE:\n"
+        "- Only under path_prefix.\n\n"
+        "FORBIDDEN:\n"
+        "- Extra helpers, duplicate imports, duplicate 'app = FastAPI(...)', new routes, CORS changes, unicode, CRLF.\n\n"
+        "SELF-CHECK before answering:\n"
+        "1) Output starts with 'BEGIN_FILE '\n"
+        "2) One or more blocks, paths under path_prefix\n"
+        "3) ASCII-only, LF-only, one trailing LF per file\n"
     )
-    text = _coalesce_response_text(resp) or ""
-    text = _ascii_lf(text)
 
-    if mode == "files":
-        files = _extract_fileset(text, path_prefix)
-        _remember(session, "files", json.dumps([p for p, _ in files]))
-        return {"mode": "files", "files": files}
+    # Build a tiny context string (optional); keep it short to avoid token bloat
+    path_prefix = path_prefix or ""
+    instructions = (
+        f"PATH_PREFIX={path_prefix}\n"
+        f"MODE={mode}\n\n"
+        f"TASK\n{task}\n"
+    )
 
-    # mode == "patch"
-    if not text.lstrip().startswith("diff --git"):
-        raise ValueError("Invalid patch output (missing 'diff --git').")
-    _remember(session, "patch", "(patch)")
-    return {"mode": "patch", "patch": text}
+    # Call Chat Completions API (never use Responses API here)
+    try:
+        resp = _openai.chat.completions.create(
+            model=model,
+            temperature=0.0,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": instructions},
+            ],
+        )
+        text = (resp.choices[0].message.content if resp and resp.choices else "") or ""
+    except Exception as e:
+        # Surface exact upstream error to caller/route
+        raise RuntimeError(f"chat.completions failed: {type(e).__name__}: {e}")
+
+    # Basic validation: must contain at least one BEGIN_FILE/END_FILE
+    if "BEGIN_FILE " not in text or "END_FILE" not in text:
+        # Return a structured error for the route to show a 400
+        return {
+            "ok": False,
+            "warning": "No BEGIN_FILE/END_FILE blocks found",
+            "content": text,
+        }
+
+    # Optional: quick ASCII/LF check and path_prefix check (lightweight)
+    try:
+        text.encode("ascii")
+    except UnicodeEncodeError:
+        return {"ok": False, "warning": "Non-ASCII characters in output", "content": text}
+
+    if "\r" in text:
+        return {"ok": False, "warning": "CRLF detected; must be LF only", "content": text}
+
+    # If a path_prefix is provided, enforce it in the blocks
+    if path_prefix:
+        bad = False
+        for line in text.split("\n"):
+            if line.startswith("BEGIN_FILE "):
+                p = line[len("BEGIN_FILE "):].strip()
+                if not p.startswith(path_prefix):
+                    bad = True
+                    break
+        if bad:
+            return {"ok": False, "warning": f"Paths must start with '{path_prefix}'", "content": text}
+
+    return {"ok": True, "content": text}
+
 
 def propose_changes(
     task: str,
