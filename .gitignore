@@ -111,3 +111,4 @@ logs/
 "patches/"
 "prompt_director.py"
 prompt_director.py
+tools/ship.bat
