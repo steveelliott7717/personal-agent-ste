@@ -4,30 +4,33 @@ from typing import Any, Dict, List, Optional, Tuple
 import os
 import re
 import time
+import logging
 
 from openai import OpenAI
 
 from backend.rms import repo_search, repo_search_raw
 from backend.services.supabase_service import supabase
 from backend.services.conversation import append_message, get_session_n
+
+# Logger for this module
+logger = logging.getLogger(__name__)
+
 # --- begin: RMS session memory helpers ---
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Optional
-import os
-import time
+from typing import Deque, Dict as _Dict, Optional as _Optional
 
 @dataclass
 class _MemEntry:
-    kind: str         # "task" | "patch" | "error"
+    kind: str         # "task" | "prompt" | "patch" | "error"
     text: str         # small snippet (truncated)
     ts: float         # epoch seconds
 
-# session -> ring buffer of recent items
-_RMS_MEM: Dict[str, Deque[_MemEntry]] = {}
+# session -> ring buffer of recent items (ephemeral, in-process)
+_RMS_MEM: _Dict[str, Deque[_MemEntry]] = {}
 _RMS_MEM_N: int = int(os.getenv("RMS_MEM_N", "6"))  # keep it small
 
-def _remember(session: Optional[str], kind: str, text: str, limit: int = _RMS_MEM_N) -> None:
+def _remember(session: _Optional[str], kind: str, text: str, limit: int = _RMS_MEM_N) -> None:
     if not session:
         return
     q = _RMS_MEM.get(session)
@@ -35,12 +38,12 @@ def _remember(session: Optional[str], kind: str, text: str, limit: int = _RMS_ME
         q = deque(maxlen=max(3, limit))
         _RMS_MEM[session] = q
     # trim long blobs so we don't balloon memory
-    snippet = text.strip()
+    snippet = (text or "").strip()
     if len(snippet) > 1200:
         snippet = snippet[:600] + "\n...\n" + snippet[-600:]
     q.append(_MemEntry(kind=kind, text=snippet, ts=time.time()))
 
-def _context_digest(session: Optional[str]) -> str:
+def _context_digest(session: _Optional[str]) -> str:
     if not session:
         return ""
     q = _RMS_MEM.get(session)
@@ -50,27 +53,18 @@ def _context_digest(session: Optional[str]) -> str:
     lines = ["# Previous context (most recent last)"]
     for it in list(q):
         hdr = f"- [{it.kind} @ {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(it.ts))}Z]"
-        if it.kind == "patch":
-            # show head & tail to hint the model while keeping it small
-            body = it.text
-        else:
-            body = it.text
         lines.append(hdr)
-        lines.append(body)
+        lines.append(it.text)
     return "\n".join(lines)
 # --- end: RMS session memory helpers ---
 
-
-
 # ---------- Config ----------
-
 REPO_SLUG = os.getenv("RMS_REPO", "personal-agent-ste")
 REPO_BRANCH = os.getenv("RMS_BRANCH", "main")
 EMBED_MODEL = os.getenv("RMS_EMBED_MODEL", "text-embedding-3-small")
-CHAT_MODEL = os.getenv("RMS_CHAT_MODEL", "gpt-5")  # keep placeholder; you can change later
+CHAT_MODEL = os.getenv("RMS_PATCH_MODEL", os.getenv("RMS_CHAT_MODEL", "gpt-4o-mini"))  # single source of truth
 
-# Baseline system prompt (can be disabled or extended via env; see _build_system_prompt)
-# In backend/agents/repo_agent.py
+# Baseline system prompt
 DEFAULT_RMS_SYSTEM_PROMPT = ("""
 You are RMS GPT. Output ONLY a single unified diff (git-apply ready).
 The FIRST non-empty line MUST be: diff --git a/... b/...
@@ -90,15 +84,9 @@ Self-check before answering:
 3) All paths are within path_prefix.
 4) No prose/fences/markers/comments.
 If any check fails, regenerate a valid diff; as last resort, emit a minimal no-op diff under path_prefix that still passes 'git apply --check'.
-""")
-
-
-
-
-
+""").strip()
 
 _openai = OpenAI()
-
 
 def _build_system_prompt() -> Optional[str]:
     """
@@ -109,18 +97,14 @@ def _build_system_prompt() -> Optional[str]:
     """
     if str(os.getenv("RMS_BASE_PROMPT_DISABLE", "")).lower() == "true":
         return None
-    base = DEFAULT_RMS_SYSTEM_PROMPT.strip()
+    base = DEFAULT_RMS_SYSTEM_PROMPT
     extra = (os.getenv("RMS_BASE_PROMPT") or "").strip()
     if extra:
         return f"{base}\n\n{extra}"
     return base
 
-
 def _last_n_messages(session: str, n: int = 10) -> list[dict]:
-    """
-    Fallback: read the most recent n conversation rows for a session.
-    Returns list of dicts sorted ascending by id: [{role, content, created_at}, ...]
-    """
+    """Fallback: read the most recent n conversation rows for a session from Supabase."""
     try:
         res = (
             supabase.table("conversations")
@@ -137,73 +121,15 @@ def _last_n_messages(session: str, n: int = 10) -> list[dict]:
         return []
 
 # ---------- Utilities ----------
-
 def _embed(text: str) -> List[float]:
     resp = _openai.embeddings.create(model=EMBED_MODEL, input=text)
     return resp.data[0].embedding  # list[float]
-
 
 def _format_citation(idx: int, path: str, start: int, end: int, commit_sha: Optional[str]) -> str:
     sha = (commit_sha or "HEAD")[:7]
     return f"[{idx}] {path}:{start}–{end}@{sha}"
 
-
-# ---------- Minimal “session memory” helpers ----------
-
-_TOKEN_STORE_RE = re.compile(r"(?:^|\b)TOKEN::\s*([A-Za-z0-9._\-]+)", re.IGNORECASE)
-_TOKEN_NATURAL_STORE_RE = re.compile(
-    r"(?:remember\s+this\s+token\s*:?\s*)([A-Za-z0-9._\-]+)", re.IGNORECASE
-)
-_TOKEN_RECALL_RE = re.compile(r"what\s+token\s+do\s+you\s+remember", re.IGNORECASE)
-
-
-def _store_session_token(session: Optional[str], text: str) -> Optional[str]:
-    """
-    Extract a token from user text and persist it into conversations.
-    Returns the token if one was stored.
-    """
-    m = _TOKEN_STORE_RE.search(text) or _TOKEN_NATURAL_STORE_RE.search(text)
-    if not m:
-        return None
-    token = m.group(1).strip()
-
-    # Conversations constraint usually allows roles: 'user','assistant','system'
-    # Use 'assistant' to record server-side memory writes.
-    if session:
-        try:
-            append_message(session=session, role="assistant", content=f"MEMORY token={token}")
-        except Exception:
-            # best-effort; don't crash the request flow
-            pass
-    return token
-
-
-def _recall_session_token(session: Optional[str]) -> Optional[str]:
-    if not session:
-        return None
-    try:
-        rows = _last_n_messages(session=session, n=50)  # newest last or newest first depending on service
-    except Exception:
-        rows = []
-
-    # Normalize to iterate newest → oldest
-    rows = list(rows) if isinstance(rows, list) else []
-    if rows and isinstance(rows[0], dict) and "created_at" in rows[0]:
-        # sort ascending on created_at, then reverse so we scan newest-first
-        rows = sorted(rows, key=lambda r: r.get("created_at") or "")[::-1]
-    else:
-        rows = rows[::-1]
-
-    for r in rows:
-        content = (r.get("content") or "") if isinstance(r, dict) else str(r)
-        mm = re.search(r"MEMORY\s+token=([A-Za-z0-9._\-]+)", content)
-        if mm:
-            return mm.group(1)
-    return None
-
-
 # ---------- Patch sanitation/validation helpers ----------
-
 _CODEBLOCK_RE = re.compile(r"```(?:diff|patch)?\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL)
 _CBLOCK_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _ELLIPSIS_LINE_RE = re.compile(r"^\s*\.\.\.\s*$", re.MULTILINE)
@@ -227,56 +153,29 @@ def _looks_like_unified_diff(text: str) -> bool:
         return True
     return False
 
-
-# ---------- Patch-generation helpers ----------
-
 def _extract_patch_from_text(text: str) -> Optional[str]:
     cleaned = _sanitize_patch_text(text)
     if not _looks_like_unified_diff(cleaned):
         return None
     return cleaned
 
-
-def _coalesce_response_text(resp: Any) -> str:
-    if not resp:
-        return ""
-    try:
-        if hasattr(resp, "output_text"):
-            return resp.output_text or ""
-    except Exception:
-        pass
-    try:
-        if getattr(resp, "choices", None):
-            return resp.choices[0].message.content or ""
-    except Exception:
-        pass
-    try:
-        parts = []
-        for item in getattr(resp, "output", []) or []:
-            if getattr(item, "type", "") == "message":
-                for c in getattr(item, "content", []) or []:
-                    if getattr(c, "type", "") == "output_text":
-                        parts.append(getattr(c, "text", ""))
-        return "\n".join(parts).strip()
-    except Exception:
-        return ""
-
-
+# ---------- Patch-generation helpers ----------
 def generate_patch_from_prompt(
     prompt: str,
     *,
-    session: Optional[str] = None,          # ← add this
+    session: Optional[str] = None,
     model_env: str = "RMS_PATCH_MODEL",
-    default_model: str = "gpt-4o-mini",
+    default_model: str = CHAT_MODEL,
     temperature: float = 0.0,
 ) -> Optional[str]:
     """
     Ask the LLM to emit a unified diff ONLY (no fences, no prose).
-    Returns None if not configured or output doesn't look like a diff.
+    Uses Chat Completions exclusively (no Responses fallback).
     """
     if not prompt:
         return None
-    model = os.getenv(model_env, default_model)
+
+    model = os.getenv(model_env, default_model) or "gpt-4o-mini"
 
     system_msg = _build_system_prompt() or (
         "You output software patches as unified diffs ONLY. "
@@ -289,35 +188,29 @@ def generate_patch_from_prompt(
         f"{prompt}"
     )
 
-    text = ""
+    logger.info("repo-agent: calling chat.completions model=%s", model)
     try:
         resp = _openai.chat.completions.create(
             model=model,
             temperature=temperature,
-            messages=[{"role": "system", "content": system_msg},
-                      {"role": "user", "content": user_msg}],
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
         )
         text = (resp.choices[0].message.content if resp and resp.choices else "") or ""
-    except Exception:
+    except Exception as e:
+        # Remember the error (for follow-up context) and bubble it up
         try:
-            resp = _openai.responses.create(
-                model=model,
-                temperature=temperature,
-                input=[{"role": "system", "content": system_msg},
-                       {"role": "user", "content": user_msg}],
-            )
-            text = _coalesce_response_text(resp)
-        except Exception as e:
-            # Remember the error and re-raise
-            try:
-                _remember(session, "error", f"{type(e).__name__}: {e}")
-            except Exception:
-                pass
-            raise
+            _remember(session, "error", f"{type(e).__name__}: {e}")
+        except Exception:
+            pass
+        logger.exception("repo-agent: chat.completions failed")
+        raise
 
     patch = _extract_patch_from_text(text)
 
-    # 🧠 Remember the generated patch (raw or cleaned) for follow-ups
+    # Remember the generated patch (raw or cleaned) for follow-ups
     try:
         _remember(session, "patch", patch or text or "")
     except Exception:
@@ -325,12 +218,7 @@ def generate_patch_from_prompt(
 
     return patch
 
-
-
-# ---------- “Propose changes” (kept minimal for completeness) ----------
-
-# ---------- “Propose changes” (kept minimal for completeness) ----------
-
+# ---------- “Propose changes” ----------
 def propose_changes(
     task: str,
     *,
@@ -345,10 +233,10 @@ def propose_changes(
     Generates a draft diff (very light-weight stub) + a prompt for RMS GPT.
     Now includes small, session-scoped memory to make follow-ups incremental.
     """
-    session: Optional[str] = kwargs.get("session")  # propagated from caller
+    session: Optional[str] = kwargs.get("session")
     thread_n: Optional[int] = kwargs.get("thread_n")
 
-    # 1) Build search context (unchanged)
+    # 1) Build search context
     vec = _embed(task)
     hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
 
@@ -357,11 +245,11 @@ def propose_changes(
         cite = _format_citation(i, h["path"], h["start_line"], h["end_line"], h.get("commit_sha"))
         ctx_parts.append(f"{cite}\n```\n{h['content']}\n```")
 
-    # 2) System prompt (unchanged)
+    # 2) System prompt
     baseline = _build_system_prompt()
     header = f"SYSTEM\n{baseline}\n\n" if baseline else ""
 
-    # 3) Session digest: prepend compact memory so the model does a FOLLOW-UP, not a full redo
+    # 3) Session digest → follow-up bias
     prev = _context_digest(session)
     if prev:
         task_for_model = (
@@ -375,19 +263,18 @@ def propose_changes(
     else:
         task_for_model = task
 
-    # 4) Compose model prompt (with digest when present)
+    # 4) Compose model prompt
     draft = "No automatic changes proposed in this stub."
     prompt = header + "TASK\n" + task_for_model + "\n\nCONTEXT\n" + ("\n\n".join(ctx_parts) if ctx_parts else "(no context)")
 
-    # 5) Remember current task/prompt (compact)
+    # 5) Remember current task/prompt
     _remember(session, "task", task)
     _remember(session, "prompt", prompt)
 
-    # Back-compat JSON (callers like /plan may still turn this into a real patch)
     return {
         "hits": hits,
         "draft": draft,
-        "prompt": prompt,  # downstream code can pass this to generate_patch_from_prompt(...)
+        "prompt": prompt,
         "meta": {
             "system_prompt": baseline,
             "session": session,
@@ -397,8 +284,7 @@ def propose_changes(
         "patch_present": False,
     }
 
-# ---------- Repo Q&A / Endpoint handler ----------
-
+# ---------- Repo Q&A / Endpoint wrapper ----------
 def answer_about_repo(
     question: str,
     *,
@@ -415,10 +301,9 @@ def answer_about_repo(
     Primary entry the HTTP route uses. It also handles ping + session memory.
     Returns a dict with (at least): agent, intent, answer, session, thread_n.
     """
-
     q = (question or "").strip()
 
-    # --- Health check: no RMS calls
+    # Health check: no RMS calls
     if q.lower() == "ping":
         return {
             "agent": "repo",
@@ -429,7 +314,7 @@ def answer_about_repo(
             "meta": {"system_prompt": _build_system_prompt()},
         }
 
-    # --- Session memory: explicit store
+    # Session memory: explicit store
     token = _store_session_token(session, q)
     if token:
         return {
@@ -441,7 +326,7 @@ def answer_about_repo(
             "meta": {"system_prompt": _build_system_prompt()},
         }
 
-    # --- Session memory: recall
+    # Session memory: recall
     if _TOKEN_RECALL_RE.search(q):
         recalled = _recall_session_token(session)
         if recalled:
@@ -463,7 +348,7 @@ def answer_about_repo(
                 "meta": {"system_prompt": _build_system_prompt()},
             }
 
-    # --- Normal RMS-backed Q&A ---
+    # Normal RMS-backed Q&A
     try:
         vec = _embed(q)
     except Exception as e:
@@ -476,7 +361,6 @@ def answer_about_repo(
             "meta": {"system_prompt": _build_system_prompt()},
         }
 
-    # choose dims + rpc via helper; collect top-k hits
     try:
         hits = repo_search(vec, repo=repo, branch=branch, k=k, prefix=path_prefix) or []
     except Exception as e:
@@ -493,7 +377,6 @@ def answer_about_repo(
             "meta": {"system_prompt": _build_system_prompt()},
         }
 
-    # Build a concise, cite-aware answer by concatenating contexts (simple baseline)
     if hits:
         cites = []
         for i, h in enumerate(hits[:3], start=1):
@@ -512,15 +395,10 @@ def answer_about_repo(
         "meta": {"system_prompt": _build_system_prompt()},
     }
 
-
-# ---------- Convenience wrapper the route may call ----------
-
 def handle(task: str, *, session: Optional[str] = None, thread_n: Optional[int] = None,
            repo: Optional[str] = None, branch: Optional[str] = None,
            k: int = 8, path_prefix: Optional[str] = None) -> Dict[str, Any]:
-    """
-    If your router/route uses a generic `handle`, keep this thin wrapper.
-    """
+    """Thin wrapper used by the route."""
     return answer_about_repo(
         task,
         repo=(repo or REPO_SLUG),
