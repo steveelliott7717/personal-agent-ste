@@ -1,0 +1,117 @@
+diff --git a/backend/logging_utils.py b/backend/logging_utils.py
+--- /dev/null
++++ b/backend/logging_utils.py
+@@ -0,0 +1,54 @@
++from __future__ import annotations
++import logging
++from contextvars import ContextVar, Token
++
++# Context variable for per-request correlation ID
++request_id_ctx_var: ContextVar[str] = ContextVar("request_id", default="-")
++
++class CorrelationIdFilter(logging.Filter):
++    def filter(self, record: logging.LogRecord) -> bool:
++        try:
++            record.correlation_id = request_id_ctx_var.get()
++        except Exception:
++            record.correlation_id = "-"
++        return True
++
++_configured = False
++
++def configure_logging() -> None:
++    """
++    Configure an 'app' logger that includes the correlation ID in its format.
++    Idempotent: safe to call multiple times.
++    """
++    global _configured
++    if _configured:
++        return
++
++    fmt = "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
++    handler = logging.StreamHandler()
++    handler.setFormatter(logging.Formatter(fmt))
++    handler.addFilter(CorrelationIdFilter())
++
++    app_logger = logging.getLogger("app")
++    app_logger.setLevel(logging.INFO)
++    # Ensure predictable formatting of app logs
++    app_logger.handlers = [handler]
++    # Stop at 'app' so we don't duplicate on root/uvicorn handlers
++    app_logger.propagate = False
++
++    _configured = True
++
++def set_correlation_id(cid: str) -> Token:
++    return request_id_ctx_var.set(cid)
++
++def reset_correlation_id(token: Token) -> None:
++    try:
++        request_id_ctx_var.reset(token)
++    except Exception:
++        pass
++
++def get_correlation_id() -> str:
++    try:
++        return request_id_ctx_var.get()
++    except Exception:
++        return "-"
+diff --git a/backend/middleware/request_logging.py b/backend/middleware/request_logging.py
+--- /dev/null
++++ b/backend/middleware/request_logging.py
+@@ -0,0 +1,36 @@
++from __future__ import annotations
++import time, uuid, logging
++from starlette.middleware.base import BaseHTTPMiddleware
++from starlette.requests import Request
++from starlette.responses import Response
++
++from backend.logging_utils import configure_logging, set_correlation_id, reset_correlation_id
++
++# Ensure logging is configured to include correlation IDs
++configure_logging()
++
++class RequestLoggingMiddleware(BaseHTTPMiddleware):
++    async def dispatch(self, request: Request, call_next):
++        cid = uuid.uuid4().hex
++        token = set_correlation_id(cid)
++        logger = logging.getLogger("app.request")
++        start = time.time()
++        logger.info(f"--> {request.method} {request.url.path}")
++        try:
++            response = await call_next(request)
++        except Exception:
++            duration_ms = int((time.time() - start) * 1000)
++            # Log error with correlation id
++            logger.exception(f"!! {request.method} {request.url.path} error after {duration_ms}ms")
++            reset_correlation_id(token)
++            raise
++
++        duration_ms = int((time.time() - start) * 1000)
++        try:
++            response.headers["X-Request-ID"] = cid
++        except Exception:
++            # best-effort; continue if response is not mutable
++            pass
++        logger.info(f"<-- {request.method} {request.url.path} {getattr(response, 'status_code', 'NA')} {duration_ms}ms")
++        reset_correlation_id(token)
++        return response
+diff --git a/backend/main.py b/backend/main.py
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -15,6 +15,7 @@
+ from fastapi.staticfiles import StaticFiles
+ from pathlib import Path
+ from starlette.middleware.base import BaseHTTPMiddleware
++from backend.middleware.request_logging import RequestLoggingMiddleware
+ 
+ from dotenv import load_dotenv
+ load_dotenv()
+@@ -151,6 +152,7 @@
+             )
+ 
+ app.add_middleware(NaturalLanguageMiddleware)
++app.add_middleware(RequestLoggingMiddleware)
+ 
+ # -------------------- Helpers --------------------
+ def _extract_query(query: str | None, body: Dict[str, Any] | None) -> Tuple[str | None, Dict[str, Any] | None]:

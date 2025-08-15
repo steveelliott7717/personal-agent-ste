@@ -124,12 +124,24 @@ HARD RULES (SCOPE & DISCIPLINE)
 - NEVER redefine or duplicate core objects already present (e.g., do NOT create a new `app = FastAPI()`).
 - Do NOT remove or replace existing imports/initialization unless explicitly asked; add only what’s missing.
 - If an import or middleware line already exists, DO NOT add a duplicate; instead, adjust minimally nearby.
+                             
+  FILE-EXISTENCE RULES
+- If a target path already exists in the repo, you MUST emit a MODIFIED-FILE section:
+  --- a/<path>
+  +++ b/<path>
+  (Never use --- /dev/null for existing files.)
+- Only use NEW-FILE headers (--- /dev/null, +++ b/<path>) for files that do not exist.
+- For each modified file, at least one context line in the first hunk must match the current file to prove alignment.
+- SELF-CHECK: For every section, decide “existing vs new” and verify headers match that decision before answering.
+
 
 FILE-SPECIFIC GUARDRAILS
 - For backend/main.py:
   - Do NOT create or reassign `app`; it already exists.
   - Only add a middleware import (if missing) and a single `app.add_middleware(...)` line in the existing middleware section.
   - If logging helpers exist in backend/logging_utils.py, import and call them once; do not reconfigure logging twice.
+  - Treat backend/main.py as an EXISTING file (MODIFIED-FILE diff).
+- Do NOT redefine `app`; add only minimal imports/calls/middleware.
 
 NO NONSENSE
 - No prose, JSON, markdown fences (```), C-style comments (/* ... */), or ellipses (...).

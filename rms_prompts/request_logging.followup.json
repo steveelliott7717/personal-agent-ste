@@ -1,0 +1,10 @@
+{
+    "task": {
+        "repo": "personal-agent-ste",
+        "branch": "main",
+        "path_prefix": "backend/",
+        "k": 6,
+        "session": "reqlog5",
+        "task": "Follow-up fix for request logging & correlation IDs. Keep changes minimal. Do NOT redefine app. Edit ONLY: backend/middleware/request_logging.py (and optionally backend/main.py per below). Requirements: (1) In RequestLoggingMiddleware.dispatch, set request.state.correlation_id = cid. (2) Gate all request logs on env var LOG_REQUESTS (default true), e.g., if os.getenv('LOG_REQUESTS','true').lower() in ('true','1','t','yes'). (3) Set the response header key to 'X-Correlation-ID' (not 'X-Request-ID'). (4) Prefer calling configure_logging() once from backend/main.py near app init; if you keep the call inside middleware, ensure it's not duplicated in main. Constraints: minimal edits, only under backend/, no API response shape changes. Unified diff must start with 'diff --git', use '---' then '+++' per file, and have valid hunks. Verification: git apply --check succeeds; server boots; hitting /health and any endpoint logs method/path/status/duration with correlation_id and includes X-Correlation-ID header when LOG_REQUESTS is true."
+    }
+}
