@@ -221,6 +221,26 @@ def _validate_files_mode(files: dict[str, str]) -> tuple[bool, str]:
 
     return True, "ok"
 
+import re  # (keep if you already import re)
+
+def _enforce_trailing_lf_per_file(artifact: str) -> str:
+    """
+    For each BEGIN_FILE/END_FILE block, convert CRLF->LF and ensure the file body
+    ends with exactly one LF before END_FILE. Returns rebuilt artifact.
+    """
+    t = artifact.replace("\r\n", "\n").replace("\r", "\n")
+
+    def _fix_block(m: re.Match) -> str:
+        path = m.group(1)
+        body = m.group(2).rstrip("\n") + "\n"
+        return f"BEGIN_FILE {path}\n{body}END_FILE\n"
+
+    # (?ms): dot matches newlines, ^/$ are multiline
+    fixed = re.sub(r"(?ms)^BEGIN_FILE\s+(.+?)\n(.*?)(?=^END_FILE$)^END_FILE$",
+                   lambda m: _fix_block(m),
+                   t)
+    # Ensure the whole artifact ends with exactly one LF
+    return fixed.rstrip("\n") + "\n"
 
 
 # -------------------- Repo endpoints --------------------
@@ -250,17 +270,13 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="files"
         )
         if not art.get("ok"):
-            # Return raw content for inspection but mark 422
-            return PlainTextResponse(str(art.get("content", "")), status_code=422, media_type="text/plain; charset=utf-8")
+            return PlainTextResponse(str(art.get("content", "")),
+                                    status_code=422,
+                                    media_type="text/plain; charset=utf-8")
 
         content = art.get("content", "")
-        try:
-            content = _rebuild_files_with_lf(content)
-        except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
-
+        content = _enforce_trailing_lf_per_file(content)
         return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
-
 
     if fmt == "patch":
         art = generate_artifact_from_task(
@@ -302,11 +318,11 @@ def repo_files(payload: Dict[str, Any]):
     art = generate_artifact_from_task(
         task, repo=repo, branch=branch, path_prefix=prefix, session=session, mode="files"
     )
-    content = art.get("content", "")
 
-    # Validate, normalize, and rebuild with enforced trailing LF per file
+    content = art.get("content", "")
     try:
-        content = _rebuild_files_with_lf(content)
+        # Normalize and enforce exactly one trailing LF per file body
+        content = _enforce_trailing_lf_per_file(content)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid files artifact: {e}")
 
