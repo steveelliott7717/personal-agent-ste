@@ -31,10 +31,6 @@ def _truthy(s: Optional[str], default: bool = True) -> bool:
 
 
 def setup_logging(level: Optional[int] = None) -> None:
-    """
-    Idempotently configure logging so formatters can include %(correlation_id)s.
-    Does not duplicate handlers; safe to call multiple times.
-    """
     global _CONFIGURED
     if _CONFIGURED:
         return
@@ -42,27 +38,25 @@ def setup_logging(level: Optional[int] = None) -> None:
     filt = CorrelationIdFilter()
     root = logging.getLogger()
 
+    # Always attach filter to root
+    root.addFilter(filt)
+
     if not root.handlers:
         handler = logging.StreamHandler()
         fmt = "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
         handler.setFormatter(logging.Formatter(fmt))
-        handler.addFilter(filt)
         root.addHandler(handler)
         root.setLevel(level or logging.INFO)
     else:
         for h in root.handlers:
-            # Ensure any existing handler can print correlation_id
-            current_fmt = getattr(h.formatter, "_fmt", "") if h.formatter else ""
-            if "%(correlation_id)" not in current_fmt:
-                h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"))
+            if "%(correlation_id)" not in getattr(h.formatter, "_fmt", ""):
+                h.setFormatter(logging.Formatter(
+                    "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
+                ))
             h.addFilter(filt)
 
-    # common frameworks
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
-        try:
-            logging.getLogger(name).addFilter(filt)
-        except Exception:
-            pass
+        logging.getLogger(name).addFilter(filt)
 
     _CONFIGURED = True
 
