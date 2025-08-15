@@ -228,11 +228,14 @@ def generate_artifact_from_task(
     branch: str,
     path_prefix: Optional[str] = None,
     session: Optional[str] = None,
-    mode: str = "files",               # "files" (default) or "patch"
+    mode: str = "files",               # "files" or "patch"
     model_env: str = "RMS_PATCH_MODEL",
     default_model: str = "gpt-5",
     k: Optional[int] = None,
+    **kwargs: Any,                     # <-- add this so thread_n or others don't break
 ) -> Dict[str, Any]:
+    
+
     """
     Call the LLM to produce either:
       - files: BEGIN_FILE blocks (most robust), or
