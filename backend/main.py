@@ -82,6 +82,17 @@ _HDR_NEWFILE   = re.compile(r"^\s*---\s*/dev/null\s*$")
 _HDR_OLD_A     = re.compile(r"^\s*---\s*a/(.+)\s*$")
 _HDR_NEW_B     = re.compile(r"^\s*\+\+\+\s*b/(.+)\s*$")
 
+# --- ASCII sanitize helper (defense-in-depth) ---
+def _ascii_sanitize(text: str) -> str:
+    try:
+        from backend.agents.repo_agent import _ascii_sanitize_diff  # reuse implementation
+        return _ascii_sanitize_diff(text)
+    except Exception:
+        # lightweight local fallback
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        return "".join(ch if ord(ch) < 128 else "?" for ch in text)
+
+
 def _unwrap_and_clean(text: str) -> str:
     """Remove BEGIN/END envelopes, code fences, C-style comments, and standalone ellipsis; normalize to LF."""
     if not text:
@@ -573,7 +584,17 @@ async def repo_plan(request: Request) -> Response:
 
     fmt = (request.query_params.get("format") or "").lower()
     accept = (request.headers.get("accept") or "").lower()
-    wants_patch = (fmt == "patch") or ("text/x-patch" in accept) or ("text/x-diff" in accept)
+    wants_patch = (
+        request and request.headers.get("accept", "").lower().startswith("text/x-patch")
+    ) or (str(request.query_params.get("format", "")).lower() == "patch")
+
+    out = propose_changes(...)
+
+    if wants_patch:
+        raw_patch = out.get("patch") or out.get("draft") or ""
+        safe_patch = _ascii_sanitize(raw_patch)
+        return PlainTextResponse(safe_patch, media_type="text/x-patch")
+
 
     # Extract raw model text / patch
     # ...
