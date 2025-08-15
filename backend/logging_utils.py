@@ -1,4 +1,4 @@
-# backend/logging_utils.py
+
 from __future__ import annotations
 import logging
 import os
@@ -6,31 +6,33 @@ import time
 import uuid
 from contextvars import ContextVar
 from typing import Optional
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 # Per-request correlation ID
-_cid_var: ContextVar[str] = ContextVar("correlation_id", default="-")
-_CONFIGURED = False
-
+correlation_id_ctx: ContextVar[str] = ContextVar("correlation_id", default="-")
 
 class CorrelationIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        # provide %(correlation_id)s to all formatters
         try:
-            record.correlation_id = _cid_var.get()
+            record.correlation_id = correlation_id_ctx.get()
         except Exception:
             record.correlation_id = "-"
         return True
 
+_CONFIGURED = False
 
-def _truthy(s: Optional[str], default: bool = True) -> bool:
-    if s is None:
-        return default
-    return s.strip().lower() in {"true", "1", "t", "yes", "y", "on"}
-
+def _truthy_env(name: str, default: str = "true") -> bool:
+    val = os.getenv(name, default)
+    return str(val or default).strip().lower() in {"true", "1", "t", "yes", "y", "on"}
 
 def setup_logging(level: Optional[int] = None) -> None:
+    """
+    Idempotent logging setup that ensures %(correlation_id)s is available in all log lines.
+    """
     global _CONFIGURED
     if _CONFIGURED:
         return
@@ -38,63 +40,91 @@ def setup_logging(level: Optional[int] = None) -> None:
     filt = CorrelationIdFilter()
     root = logging.getLogger()
 
-    # Always attach filter to root
-    root.addFilter(filt)
+    # Always attach filter to root so any existing/new handlers see correlation_id
+    try:
+        root.addFilter(filt)
+    except Exception:
+        pass
 
     if not root.handlers:
         handler = logging.StreamHandler()
-        fmt = "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
-        handler.setFormatter(logging.Formatter(fmt))
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
+        ))
+        handler.addFilter(filt)
         root.addHandler(handler)
         root.setLevel(level or logging.INFO)
     else:
-        for h in root.handlers:
-            if "%(correlation_id)" not in getattr(h.formatter, "_fmt", ""):
-                h.setFormatter(logging.Formatter(
-                    "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
-                ))
-            h.addFilter(filt)
+        for h in list(root.handlers):
+            # Ensure formatter includes correlation_id
+            fmt = getattr(h.formatter, "_fmt", "") if h.formatter else ""
+            if "%(correlation_id)" not in fmt:
+                try:
+                    h.setFormatter(logging.Formatter(
+                        "%(asctime)s %(levelname)s [%(correlation_id)s] %(name)s: %(message)s"
+                    ))
+                except Exception:
+                    pass
+            try:
+                h.addFilter(filt)
+            except Exception:
+                pass
 
+    # Common FastAPI/Uvicorn loggers
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
-        logging.getLogger(name).addFilter(filt)
+        try:
+            logging.getLogger(name).addFilter(filt)
+        except Exception:
+            pass
 
     _CONFIGURED = True
 
-
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """
-    - Generates a UUID per request and stores it in ContextVar
-    - Logs start/end/errors (gated by LOG_REQUESTS; default: enabled)
-    - Adds X-Correlation-ID to responses
+    - Generates UUID correlation ID per request (also in request.state.correlation_id)
+    - Logs start/end/errors (gated by LOG_REQUESTS, default true)
+    - Adds X-Correlation-ID response header
     """
-    async def dispatch(self, request: Request, call_next):
-        cid = request.headers.get("X-Correlation-ID") or uuid.uuid4().hex
-        token = _cid_var.set(cid)
-        request.state.correlation_id = cid
+    def __init__(self, app):
+        super().__init__(app)
+        self._logger = logging.getLogger("request")
+        self._log_requests = _truthy_env("LOG_REQUESTS", "true")
 
-        log_requests = _truthy(os.getenv("LOG_REQUESTS"), default=True)
-        logger = logging.getLogger("request")
+    async def dispatch(self, request: Request, call_next):
+        cid = uuid.uuid4().hex
+        token = correlation_id_ctx.set(cid)
+        try:
+            request.state.correlation_id = cid
+        except Exception:
+            pass
+
+        method = request.method
+        path = request.url.path
+        client = request.client.host if request.client else "-"
         start = time.perf_counter()
 
-        if log_requests:
-            logger.info(">> %s %s", request.method, request.url.path)
+        if self._log_requests:
+            self._logger.info(">> %s %s client=%s", method, path, client)
 
         try:
             response: Response = await call_next(request)
-            duration_ms = int((time.perf_counter() - start) * 1000)
+            dur_ms = int((time.perf_counter() - start) * 1000)
             try:
                 response.headers["X-Correlation-ID"] = cid
             except Exception:
                 pass
-            if log_requests:
-                logger.info("<< %s %s %d %dms", request.method, request.url.path, response.status_code, duration_ms)
+            if self._log_requests:
+                self._logger.info("<< %s %s %d %dms", method, path, response.status_code, dur_ms)
             return response
         except Exception as e:
-            duration_ms = int((time.perf_counter() - start) * 1000)
-            logger.exception("!! %s %s error after %dms: %s", request.method, request.url.path, duration_ms, e)
+            dur_ms = int((time.perf_counter() - start) * 1000)
+            # Always log exceptions
+            self._logger.exception("!! %s %s error after %dms: %s", method, path, dur_ms, e)
             raise
         finally:
             try:
-                _cid_var.reset(token)
+                correlation_id_ctx.reset(token)
             except Exception:
                 pass
+
+
