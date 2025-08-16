@@ -1,0 +1,8 @@
+{
+    "task": "Update the existing health endpoint in backend/main.py to return {\"ok\": true} instead of {\"status\": \"ok\"}.\n\nFILES MODE Contract (STRICT):\n- Emit the ENTIRE contents of backend/main.py exactly as it should exist after the change.\n- Do not omit or summarize any part of the file.\n- Do not include unrelated edits.\n- Output format: one BEGIN_FILE:backend/main.py … END_FILE block containing the full file.\n- ASCII only, LF newlines, exactly one trailing LF.",
+    "repo": "personal-agent-ste",
+    "branch": "main",
+    "path_prefix": "backend/",
+    "k": 12,
+    "session": "s1"
+}

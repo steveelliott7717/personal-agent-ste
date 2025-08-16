@@ -3,12 +3,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from backend.services.schema_service import (
+    list_tables as svc_list_tables,
+    list_columns as svc_list_columns,
+)
 
 # Load .env for SUPABASE etc.
 load_dotenv()
@@ -18,6 +22,25 @@ from backend.agents.router_agent import route_request
 
 BASE = "/app"  # matches your frontend base
 app = FastAPI(title="Personal Agents API")
+
+from backend.routers import schema as schema_router
+
+app.include_router(schema_router.router)
+
+
+@app.get(f"{BASE}/db/tables")
+def http_list_tables(schema: str = Query(default="public")):
+    return {"schema": schema, "tables": svc_list_tables(schema)}
+
+
+@app.get(f"{BASE}/db/columns")
+def http_list_columns(schema: str = Query(default="public"), table: str | None = None):
+    return {
+        "schema": schema,
+        "table": table,
+        "columns": svc_list_columns(schema, table),
+    }
+
 
 # ---------- SPA static serving at /app/ ----------
 # Serve built assets from frontend/dist (Vite build) and index fallback for SPA routes.
