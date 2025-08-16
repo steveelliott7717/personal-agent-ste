@@ -10,10 +10,16 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
-import dotenv
-from dotenv import load_dotenv
 
-load_dotenv()
+# make dotenv optional in CI
+try:
+    from dotenv import load_dotenv  # type: ignore
+except Exception:  # not installed in CI
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv()
+
 
 # --------- Config / Env ----------
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small").strip()
