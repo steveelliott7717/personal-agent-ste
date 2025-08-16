@@ -11,14 +11,18 @@ import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-# make dotenv optional in CI
+# --- Optional dotenv (works locally, harmless in CI) ---
 try:
     from dotenv import load_dotenv  # type: ignore
-except Exception:  # not installed in CI
+except Exception:
     load_dotenv = None
-
 if load_dotenv:
     load_dotenv()
+
+
+def _env(name: str, default: Optional[str] = None) -> Optional[str]:
+    v = os.getenv(name, default)
+    return v if v not in ("", None, "") else default
 
 
 # --------- Config / Env ----------
@@ -348,31 +352,74 @@ def main():
     ap = argparse.ArgumentParser(
         description="Index repo into Supabase with embeddings (with incremental mode)."
     )
-    ap.add_argument("--repo-name", required=True)
-    ap.add_argument("--branch", required=True)
-    ap.add_argument("--root", required=True)
+
+    # CHANGED: env-aware defaults instead of required flags
+    ap.add_argument(
+        "--repo-name", default=_env("RMS_REPO"), help="Repo name (or set RMS_REPO)"
+    )
+    ap.add_argument(
+        "--branch", default=_env("RMS_BRANCH"), help="Branch (or set RMS_BRANCH)"
+    )
+    ap.add_argument(
+        "--root", default=_env("RMS_ROOT"), help="Repo root path (or set RMS_ROOT)"
+    )
+
     ap.add_argument(
         "--paths",
-        default="",
+        default=_env("RMS_PREFIX", ""),
         help='Quoted space-separated list, e.g. "backend frontend/src file.js"',
     )
-    ap.add_argument("--include-ext", default=",".join(sorted(DEFAULT_EXTS)))
-    ap.add_argument("--max-lines", type=int, default=80)
-    ap.add_argument("--overlap", type=int, default=10)
-    ap.add_argument("--piece-max-tokens", type=int, default=5200)
-    ap.add_argument("--batch-size", type=int, default=6)
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--verbose", action="store_true")
+    ap.add_argument(
+        "--include-ext", default=_env("RMS_INCLUDE_EXT", ",".join(sorted(DEFAULT_EXTS)))
+    )
+    ap.add_argument("--max-lines", type=int, default=int(_env("RMS_MAX_LINES", "80")))
+    ap.add_argument("--overlap", type=int, default=int(_env("RMS_OVERLAP", "10")))
+    ap.add_argument(
+        "--piece-max-tokens",
+        type=int,
+        default=int(_env("RMS_PIECE_MAX_TOKENS", "5200")),
+    )
+    ap.add_argument("--batch-size", type=int, default=int(_env("RMS_BATCH_SIZE", "6")))
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=_env("RMS_DRY_RUN", "false").lower() == "true",
+    )
+    ap.add_argument(
+        "--verbose",
+        action="store_true",
+        default=_env("RMS_VERBOSE", "false").lower() == "true",
+    )
     ap.add_argument(
         "--incremental",
         action="store_true",
+        default=_env("RMS_INCREMENTAL", "true").lower() == "true",
         help="Skip files whose file_sha matches existing repo_chunks",
     )
     # internal-ish caps for request packing (safe for 8k ctx)
-    ap.add_argument("--request-max-chars", type=int, default=10000)
-    ap.add_argument("--request-max-tokens", type=int, default=6500)
+    ap.add_argument(
+        "--request-max-chars",
+        type=int,
+        default=int(_env("RMS_REQUEST_MAX_CHARS", "10000")),
+    )
+    ap.add_argument(
+        "--request-max-tokens",
+        type=int,
+        default=int(_env("RMS_REQUEST_MAX_TOKENS", "6500")),
+    )
 
     args = ap.parse_args()
+
+    # Hard guard so CI fails clearly if nothing provided anywhere
+    _missing = []
+    if not args.repo_name:
+        _missing.append("--repo-name or RMS_REPO")
+    if not args.branch:
+        _missing.append("--branch or RMS_BRANCH")
+    if not args.root:
+        _missing.append("--root or RMS_ROOT")
+    if _missing:
+        ap.error("Missing required settings: " + ", ".join(_missing))
 
     repo = args.repo_name
     branch = args.branch
