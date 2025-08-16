@@ -36,6 +36,9 @@ from backend.logging_utils import setup_logging, RequestLoggingMiddleware
 
 app = FastAPI(title="Personal Agent API")
 
+from backend.routers import schema as schema_router
+app.include_router(schema_router.router)
+
 setup_logging()
 
 
