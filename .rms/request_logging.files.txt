@@ -1,1 +1,0 @@
-{"detail":"Upstream generation error: generate_artifact_from_task() got an unexpected keyword argument 'k'"}
