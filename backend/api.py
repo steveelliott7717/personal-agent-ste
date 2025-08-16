@@ -28,12 +28,10 @@ from backend.routers import schema as schema_router
 app.include_router(schema_router.router)
 
 
-@app.get(f"{BASE}/db/tables")
 def http_list_tables(schema: str = Query(default="public")):
     return {"schema": schema, "tables": svc_list_tables(schema)}
 
 
-@app.get(f"{BASE}/db/columns")
 def http_list_columns(schema: str = Query(default="public"), table: str | None = None):
     return {
         "schema": schema,
