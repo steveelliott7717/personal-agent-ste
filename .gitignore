@@ -110,3 +110,4 @@ logs/
 *.err
 prompt_director.py
 tools/ship.bat
+".github/*.zip"
