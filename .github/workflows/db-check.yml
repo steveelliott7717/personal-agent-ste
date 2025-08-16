@@ -1,0 +1,20 @@
+name: db-check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}   # allow manual runs
+
+jobs:
+  db-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # TODO: add your real db check steps here
+      - name: Sanity
+        run: echo "db-check workflow is wired correctly."
