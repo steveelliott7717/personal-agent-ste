@@ -1,0 +1,3621 @@
+# Database Schema (public)
+
+## agent_capabilities
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_decisions
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_embeddings
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_instructions
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_settings
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agents
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## conv_config
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## conversations
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## event_offsets
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## events
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## meal_log
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## meal_plan
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## nutrition_targets
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## recipe_templates
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## repo_chunks
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## repo_files
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## repo_memory
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## router_alias
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## router_memory
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## training_log
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb) (default: `'{}'::jsonb`)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb) (default: `'{}'::jsonb`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **doc_id** (text)
+- **kind** (text) (default: `'utterance'::text`)
+- **ref** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **slug** (text) — not null
+- **title** (text) — not null (default: `''::text`)
+- **description** (text) — not null (default: `''::text`)
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **capabilities** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **status** (text) — not null (default: `'enabled'::text`)
+- **version** (text) — not null (default: `''::text`)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **session** (text) — not null
+- **thread_n** (integer) — not null (default: `20`)
+- **updated_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('conversations_id_seq'::regclass)`)
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null (default: `'1970-01-01 00:00:00+00'::timestamp with time zone`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null (default: `now()`)
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null (default: `1`)
+- **status** (text) — not null (default: `'planned'::text`)
+- **freshness_rank** (integer) (default: `0`)
+- **anchor** (text)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **start_date** (date) — not null (default: `CURRENT_DATE`)
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null (default: `'active'::text`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **name** (text) — not null
+- **tags** (ARRAY) — not null (default: `ARRAY[]::text[]`)
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer) (default: `4`)
+- **freezer_months** (integer) (default: `2`)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_chunks_id_seq'::regclass)`)
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null (default: `nextval('repo_files_id_seq'::regclass)`)
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone) (default: `now()`)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **id** (bigint) — not null (default: `nextval('repo_memory_id_seq'::regclass)`)
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text) (default: `'HEAD'::text`)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone) (default: `now()`)
+- **dims** (integer) — not null (default: `1536`)
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb) (default: `'{}'::jsonb`)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text) (default: `'HEAD'::text`)
+- **repo** (text)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null (default: `now()`)
+- **id** (uuid) — not null (default: `gen_random_uuid()`)
+- **date** (date) — not null (default: `CURRENT_DATE`)
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)

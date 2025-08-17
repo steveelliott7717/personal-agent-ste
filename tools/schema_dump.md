@@ -1,0 +1,3619 @@
+## agent_capabilities
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_decisions
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_embeddings
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_instructions
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agent_settings
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## agents
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## conv_config
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## conversations
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## event_offsets
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## events
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## meal_log
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## meal_plan
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## nutrition_targets
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## recipe_templates
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## repo_chunks
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## repo_files
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## repo_memory
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## router_alias
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## router_memory
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
+
+## training_log
+- **agent_slug** (text) — not null
+- **description** (text) — not null
+- **param_schema** (jsonb)
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **agent_slug** (text) — not null
+- **user_id** (text)
+- **query_text** (text) — not null
+- **was_success** (boolean)
+- **latency_ms** (integer)
+- **extra** (jsonb)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **namespace** (text) — not null
+- **text** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone) — not null
+- **doc_id** (text)
+- **kind** (text)
+- **ref** (text)
+- **metadata** (jsonb)
+- **id** (uuid) — not null
+- **agent_name** (text) — not null
+- **tag** (text) — not null
+- **instructions** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **agent_slug** (text)
+- **key** (text) — not null
+- **value** (jsonb) — not null
+- **id** (uuid) — not null
+- **slug** (text) — not null
+- **title** (text) — not null
+- **description** (text) — not null
+- **module_path** (text) — not null
+- **callable_name** (text) — not null
+- **namespaces** (ARRAY) — not null
+- **capabilities** (ARRAY) — not null
+- **status** (text) — not null
+- **version** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **session** (text) — not null
+- **thread_n** (integer) — not null
+- **updated_at** (timestamp with time zone) — not null
+- **id** (bigint) — not null
+- **session** (text) — not null
+- **role** (text) — not null
+- **content** (text) — not null
+- **created_at** (timestamp with time zone) — not null
+- **consumer** (text) — not null
+- **last_event_time** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **topic** (text) — not null
+- **payload** (jsonb) — not null
+- **source_agent** (text) — not null
+- **correlation_id** (text)
+- **idempotency_key** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **meal_plan_id** (uuid)
+- **ts** (timestamp with time zone) — not null
+- **notes** (text)
+- **kcal** (integer)
+- **protein_g** (numeric)
+- **fat_g** (numeric)
+- **carbs_g** (numeric)
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **recipe_id** (uuid)
+- **servings** (numeric) — not null
+- **status** (text) — not null
+- **freshness_rank** (integer)
+- **anchor** (text)
+- **created_at** (timestamp with time zone)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **start_date** (date) — not null
+- **kcal** (integer) — not null
+- **protein_g** (integer) — not null
+- **fat_g** (integer)
+- **carbs_g** (integer)
+- **status** (text) — not null
+- **id** (uuid) — not null
+- **name** (text) — not null
+- **tags** (ARRAY) — not null
+- **per_serving_kcal** (integer)
+- **per_serving_protein_g** (numeric)
+- **per_serving_fat_g** (numeric)
+- **per_serving_carbs_g** (numeric)
+- **grams_by_ingredient** (jsonb)
+- **steps** (jsonb)
+- **tools** (jsonb)
+- **fridge_days** (integer)
+- **freezer_months** (integer)
+- **created_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **file_id** (bigint)
+- **chunk_index** (integer)
+- **chunk_sha** (text) — not null
+- **content** (text) — not null
+- **embedding** (USER-DEFINED)
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **start_line** (integer)
+- **end_line** (integer)
+- **repo** (text)
+- **branch** (text)
+- **path** (text)
+- **file_sha** (text)
+- **commit_sha** (text)
+- **repo_name** (text)
+- **embedding_1024** (USER-DEFINED)
+- **head_ref** (text)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **embedding_1536** (USER-DEFINED)
+- **id** (bigint) — not null
+- **repo** (text) — not null
+- **branch** (text) — not null
+- **path** (text) — not null
+- **file_sha** (text) — not null
+- **created_at** (timestamp with time zone)
+- **updated_at** (timestamp with time zone)
+- **id** (bigint) — not null
+- **repo_name** (text)
+- **branch** (text) — not null
+- **commit_sha** (text)
+- **path** (text) — not null
+- **file_sha** (text)
+- **chunk_sha** (text) — not null
+- **start_line** (integer) — not null
+- **end_line** (integer) — not null
+- **content** (text)
+- **embedding** (USER-DEFINED) — not null
+- **created_at** (timestamp with time zone) — not null
+- **embedding_1024** (USER-DEFINED)
+- **updated_at** (timestamp with time zone)
+- **dims** (integer) — not null
+- **embed_model** (text)
+- **embed_provider** (text)
+- **metadata** (jsonb)
+- **lang** (text)
+- **mime** (text)
+- **head_ref** (text)
+- **repo** (text)
+- **id** (uuid) — not null
+- **user_id** (text)
+- **phrase** (text)
+- **route** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **user_id** (text)
+- **query_text** (text)
+- **decision** (text)
+- **rewrite** (text)
+- **response** (text)
+- **options** (ARRAY)
+- **reason** (text)
+- **confidence** (double precision)
+- **question** (text)
+- **created_at** (timestamp with time zone) — not null
+- **id** (uuid) — not null
+- **date** (date) — not null
+- **session_type** (text)
+- **volume** (numeric)
+- **rpe** (numeric)
+- **notes** (text)
+- **agent_slug** (text)
+- **total** (bigint)
+- **successes** (bigint)
+- **success_rate_pct** (numeric)
+- **first_seen** (timestamp with time zone)
+- **last_seen** (timestamp with time zone)
