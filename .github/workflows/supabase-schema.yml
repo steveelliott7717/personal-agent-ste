@@ -2,12 +2,11 @@ name: Supabase Schema Snapshot
 
 on:
   schedule:
-    # Run once per day at midnight UTC
-    - cron: "0 0 * * *"
-  workflow_dispatch:  # allow manual trigger
+    - cron: "0 0 * * *"    # daily at 00:00 UTC
+  workflow_dispatch: {}     # allow manual "Run workflow"
 
 permissions:
-  contents: write
+  contents: write           # needed to commit back to the repo
 
 concurrency:
   group: supabase-schema-snapshot
@@ -17,7 +16,7 @@ jobs:
   dump:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Install psql + jq
@@ -25,25 +24,28 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y postgresql-client jq
 
-      - name: Dump per-table schema + index
+      # Run your script (writes into schema/ by itself)
+      - name: Dump Supabase schema to /schema
         env:
-          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
-          SCHEMAS_TO_INCLUDE: public
-          OUT_ROOT: schema
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}   # <-- add this secret in repo settings
+          SCHEMAS_TO_INCLUDE: public                     # comma-separated if you want more
+          OUT_ROOT: schema                               # where to write files in the repo
         run: |
+          chmod +x scripts/dump_schema.sh
           ./scripts/dump_schema.sh
+          test -d schema && ls -la schema || (echo "schema/ missing" && exit 1)
 
       - name: Commit & push if changed
         env:
-          GIT_AUTHOR_NAME: github-actions
-          GIT_AUTHOR_EMAIL: actions@users.noreply.github.com
-          GIT_COMMITTER_NAME: github-actions
-          GIT_COMMITTER_EMAIL: actions@users.noreply.github.com
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
         run: |
           if ! git diff --quiet -- schema/; then
             git add schema/
-            git commit -m "chore(schema): update per-table snapshot and index"
+            git commit -m "chore(schema): daily Supabase schema snapshot"
             git push
           else
-            echo "No changes."
+            echo "No schema changes."
           fi
