@@ -4,50 +4,46 @@ set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
-# 1) Build a pooled URL from the direct DATABASE_URL
-#    db.<ref>.supabase.co:5432  ->  db.<ref>.pooler.supabase.net:6543
+# ── Build a pooled URL from your direct DATABASE_URL ───────────────────────────
+# Direct host:  db.<ref>.supabase.co:5432
+# Pooled host:  pooler.supabase.com:6543  (shared)
 build_pooled_url() {
   local url="$1"
-  # ensure scheme present
-  [[ "$url" != *"://"* ]] && { echo "bad DATABASE_URL"; exit 40; }
+  [[ "$url" == *"://"* ]] || { echo "bad DATABASE_URL"; exit 40; }
 
-  # split at '://'
   local scheme rest
-  scheme="${url%%://*}"; rest="${url#*://}"
+  scheme="${url%%://*}"
+  rest="${url#*://}"
 
-  # userinfo@host:port/db?q
+  # split userinfo@host:port/db?query
   local userinfo hostport dbq host port
-  userinfo="${rest%@*}"; rest="${rest#*@}"             # user:pass (ignored), rest starts at host:port/db?...
-  [[ "$userinfo" == "$rest" ]] && rest="${url#*://}"   # no creds case
-
-  hostport="${rest%%/*}"                               # host:port
-  dbq="${rest#*/}"                                     # db?query
+  if [[ "$rest" == *"@"* ]]; then
+    userinfo="${rest%@*}"
+    rest="${rest#*@}"
+  else
+    userinfo=""
+  fi
+  hostport="${rest%%/*}"
+  dbq="${rest#*/}"
 
   host="${hostport%%:*}"
   port="${hostport#*:}"
   [[ "$port" == "$hostport" ]] && port="5432"
 
-  # rewrite host + port
-  host="${host/.supabase.co/.pooler.supabase.net}"
+  # Force pooled host + port
+  host="pooler.supabase.com"
   port="6543"
 
-  # reassemble; preserve original userinfo if there was one
+  # Reassemble (preserve userinfo if present)
   local prefix
-  if [[ "$url" == *"@"* ]]; then
+  if [[ -n "$userinfo" ]]; then
     prefix="$scheme://$userinfo@$host:$port"
   else
-    # re-extract userinfo from whole URL to be safe
-    local ui
-    ui="$(echo "$url" | sed -E 's,^[^:]+://([^@]+)@.*,\1,')" || true
-    if [[ "$ui" != "$url" ]]; then
-      prefix="$scheme://$ui@$host:$port"
-    else
-      prefix="$scheme://$host:$port"
-    fi
+    prefix="$scheme://$host:$port"
   fi
 
   local pooled="${prefix}/${dbq}"
-  # add sslmode=require if missing
+  # Ensure sslmode=require
   if [[ "$pooled" != *"sslmode="* ]]; then
     pooled+=$([[ "$pooled" == *"?"* ]] && echo "&sslmode=require" || echo "?sslmode=require")
   fi
@@ -55,18 +51,17 @@ build_pooled_url() {
 }
 
 POOLED_URL="$(build_pooled_url "$DATABASE_URL")"
-
 echo "▶ Using pooled URL host: $(echo "$POOLED_URL" | sed -E 's,.*@([^:/]+):.*,\1,')"
 OUT_ROOT=${OUT_ROOT:-schema}
 SCHEMAS_TO_INCLUDE=${SCHEMAS_TO_INCLUDE:-public}
 mkdir -p "$OUT_ROOT/tables"
 
-# 2) Connectivity sanity (10s) — use libpq env vars (no --connect-timeout)
+# ── Connectivity sanity (10s) ──────────────────────────────────────────────────
 echo "▶ Connectivity sanity (PGCONNECT_TIMEOUT=10)…"
 PGCONNECT_TIMEOUT=10 psql "$POOLED_URL" -v ON_ERROR_STOP=1 -tAc "select 1;" \
   || { echo "❌ Cannot connect to Postgres (pooler)"; exit 50; }
 
-# 3) Discover tables
+# ── Discover tables (exclude system schemas) ───────────────────────────────────
 echo "▶ Discovering tables…"
 DISCOVERY_SQL=$'WITH app_schemas AS (\n  SELECT nspname AS schema\n  FROM pg_namespace\n  WHERE nspname NOT IN (\'pg_catalog\',\'information_schema\',\'pg_toast\')\n    AND nspname NOT LIKE \'pg_%\'\n)\nSELECT table_schema || \'.\' || table_name\nFROM information_schema.tables\nWHERE table_type=\'BASE TABLE\'\n  AND table_schema IN (SELECT schema FROM app_schemas)\nORDER BY table_schema, table_name;'
 mapfile -t PAIRS < <(psql "$POOLED_URL" -tAX -c "$DISCOVERY_SQL")
@@ -80,7 +75,7 @@ in_schemas() {
   return 1
 }
 
-# 4) Per-table JSON dumps
+# ── Per-table JSON dumps ───────────────────────────────────────────────────────
 echo "▶ Dumping per-table JSON…"
 dumped=0
 for pair in "${PAIRS[@]}"; do
@@ -96,7 +91,7 @@ for pair in "${PAIRS[@]}"; do
 done
 echo "▶ Dumped $dumped table files"
 
-# 5) Build compact index
+# ── Build compact index (tables → [columns]) ───────────────────────────────────
 shopt -s nullglob
 files=( "$OUT_ROOT/tables"/*.json )
 if ((${#files[@]} == 0)); then
