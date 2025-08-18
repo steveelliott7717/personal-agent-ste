@@ -4,40 +4,51 @@ set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
-# Normalize URL: enforce sslmode=require
+# ── 1) Normalize DB URL: enforce sslmode=require ───────────────────────────────
 DBURL="$DATABASE_URL"
 if [[ "$DBURL" != *"sslmode="* ]]; then
   DBURL+=$([[ "$DBURL" == *"?"* ]] && echo "&sslmode=require" || echo "?sslmode=require")
 fi
 
-# Resolve IPv4 and export PGHOSTADDR so libpq prefers it
-DBHOST="$(printf '%s' "$DBURL" | sed -E 's|.*://[^@]*@([^/:?]+).*|\1|')"
-PGHOSTADDR="$(getent ahostsv4 "$DBHOST" | awk 'NR==1{print $1}' || true)"
-export PGHOSTADDR="${PGHOSTADDR:-$DBHOST}"
+# ── 2) Extract hostname safely (no creds/port/query), resolve IPv4 ─────────────
+# Works with or without credentials, port, or query string.
+DBNO_SCHEME="${DBURL#*://}"          # drop scheme
+AFTER_AT="${DBNO_SCHEME#*@}"         # drop user:pass@ if present
+HOSTPORTQ=$([[ "$AFTER_AT" == "$DBNO_SCHEME" ]] && echo "$DBNO_SCHEME" || echo "$AFTER_AT")
+HOSTPORT="${HOSTPORTQ%%/*}"          # up to first /
+HOSTONLY="${HOSTPORT%%:*}"           # drop :port if present
+HOSTONLY="${HOSTONLY%%\?*}"          # drop ?query if present
 
-OUT_ROOT=${OUT_ROOT:-schema}
-SCHEMAS_TO_INCLUDE=${SCHEMAS_TO_INCLUDE:-public}
+# Prefer IPv4 if available; fall back to hostname
+PGHOSTADDR="$(getent ahostsv4 "$HOSTONLY" | awk 'NR==1{print $1}' || true)"
+export PGHOST="$HOSTONLY"
+export PGHOSTADDR="${PGHOSTADDR:-$HOSTONLY}"
 
+echo "▶ Parsed host: $HOSTONLY  (PGHOSTADDR=$PGHOSTADDR)"
+
+# ── 3) Output locations ────────────────────────────────────────────────────────
+OUT_ROOT=${OUT_ROOT:-schema}                  # repo folder to write into
+SCHEMAS_TO_INCLUDE=${SCHEMAS_TO_INCLUDE:-public}   # e.g. "public,app"
 OUT_DIR="$OUT_ROOT"
 TABLE_DIR="$OUT_DIR/tables"
 mkdir -p "$TABLE_DIR"
 
-echo "▶ Using DB host: $DBHOST (PGHOSTADDR=$PGHOSTADDR)"
 echo "▶ Output dir: $OUT_DIR (tables → $TABLE_DIR)"
-echo "▶ Schemas: $SCHEMAS_TO_INCLUDE"
+echo "▶ Schemas:    $SCHEMAS_TO_INCLUDE"
 
+# ── 4) Connectivity sanity (10s) ───────────────────────────────────────────────
 echo "▶ Connectivity sanity (10s timeout)…"
-PGCONNECT_TIMEOUT=10 psql "$DBURL" -v ON_ERROR_STOP=1 -tAX -c "set statement_timeout='10s'; select 1;"
+PGCONNECT_TIMEOUT=10 psql "$DBURL" -v ON_ERROR_STOP=1 -tAX -c "set statement_timeout='10s'; select 1;" \
+  || { echo "❌ Cannot connect to Postgres with DATABASE_URL"; exit 50; }
 
+# ── 5) Discover tables in app schemas ──────────────────────────────────────────
 echo "▶ Discovering tables…"
 DISCOVERY_SQL=$'WITH app_schemas AS (\n  SELECT nspname AS schema\n  FROM pg_namespace\n  WHERE nspname NOT IN (\'pg_catalog\',\'information_schema\',\'pg_toast\')\n    AND nspname NOT LIKE \'pg_%\'\n)\nSELECT table_schema || \'.\' || table_name\nFROM information_schema.tables\nWHERE table_type=\'BASE TABLE\'\n  AND table_schema IN (SELECT schema FROM app_schemas)\nORDER BY table_schema, table_name;'
 mapfile -t PAIRS < <(psql "$DBURL" -tAX -c "$DISCOVERY_SQL")
 
-echo "▶ Discovered ${#PAIRS[@]} tables total"
-if ((${#PAIRS[@]} == 0)); then
-  echo "⚠️  No tables discovered. Check schemas or DB permissions." >&2
-fi
+echo "▶ Discovered ${#PAIRS[@]} tables in app schemas"
 
+# Helper: filter to allowed schemas
 in_schemas() {
   local allow="$1" item="$2"
   IFS='.' read -r sch _ <<<"$item"
@@ -46,6 +57,7 @@ in_schemas() {
   return 1
 }
 
+# ── 6) Per-table JSON dumps ────────────────────────────────────────────────────
 echo "▶ Dumping per-table JSON…"
 dumped=0
 for pair in "${PAIRS[@]}"; do
@@ -55,7 +67,8 @@ for pair in "${PAIRS[@]}"; do
   out="$TABLE_DIR/${sch}__${tbl}.json"
   echo "  • $sch.$tbl → $out"
   psql "$DBURL" -tAX -v ON_ERROR_STOP=1 -v schema="$sch" -v table="$tbl" \
-    -f scripts/schema_per_table.sql > "$out" || { echo "❌ Dump failed for $sch.$tbl" >&2; exit 61; }
+    -f scripts/schema_per_table.sql > "$out" \
+    || { echo "❌ Dump failed for $sch.$tbl" >&2; rm -f "$out"; exit 61; }
   if [[ -s "$out" ]]; then
     ((dumped++))
   else
@@ -63,19 +76,21 @@ for pair in "${PAIRS[@]}"; do
     rm -f "$out"
   fi
 done
-echo "▶ Dumped $dumped table files."
+echo "▶ Dumped $dumped table files into $TABLE_DIR"
 
-echo "▶ Building index…"
+# ── 7) Build compact index (tables → [columns]) ────────────────────────────────
 shopt -s nullglob
 files=( "$TABLE_DIR"/*.json )
 if ((${#files[@]} == 0)); then
+  echo "▶ No per-table JSON files produced; writing empty index."
   printf '{"generated_at":"%s","tables":{}}\n' "$(date -u +%FT%TZ)" > "$OUT_DIR/index.json"
 else
   jq -s '{
     generated_at: (now | todateiso8601),
     tables: (map({((.schema + "." + .table)): ([.columns[].name])}) | add)
-  }' "${files[@]}" > "$OUT_DIR/index.json" || { echo "❌ jq failed"; exit 70; }
+  }' "${files[@]}" > "$OUT_DIR/index.json"
 fi
 
+# Minified index
 jq -c . "$OUT_DIR/index.json" > "$OUT_DIR/index.min.json"
 echo "✅ Wrote $OUT_DIR/index.json and $OUT_DIR/index.min.json"
