@@ -3,18 +3,28 @@ set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
-OUT_ROOT=${OUT_ROOT:-schema}           # change if you want another folder
+# --- normalize DB URL: add sslmode=require if missing ---
+DBURL="$DATABASE_URL"
+if [[ "$DBURL" != *"sslmode="* ]]; then
+  if [[ "$DBURL" == *"?"* ]]; then
+    DBURL="${DBURL}&sslmode=require"
+  else
+    DBURL="${DBURL}?sslmode=require"
+  fi
+fi
+
+OUT_ROOT=${OUT_ROOT:-schema}                     # change if you want another folder
 SCHEMAS_TO_INCLUDE=${SCHEMAS_TO_INCLUDE:-"public"}   # comma-separated list
 
 OUT_DIR="$OUT_ROOT"
 TABLE_DIR="$OUT_DIR/tables"
 mkdir -p "$TABLE_DIR"
 
-# Keep runs snappy
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -tAX -c "set statement_timeout = '10s';"
+# Keep runs snappy + verify reachability (IPv4 + 10s timeout)
+psql -4 "$DBURL" -v ON_ERROR_STOP=1 -tAX -c "set statement_timeout = '10s'; select 1;"
 
-# Discover tables
-readarray -t PAIRS < <(psql "$DATABASE_URL" -tAX <<'SQL'
+# Discover tables (IPv4)
+readarray -t PAIRS < <(psql -4 "$DBURL" -tAX <<'SQL'
 WITH app_schemas AS (
   SELECT nspname AS schema
   FROM pg_namespace
@@ -38,13 +48,13 @@ in_schemas() {
   return 1
 }
 
-# Per-table JSON
+# Per-table JSON (IPv4)
 for pair in "${PAIRS[@]}"; do
   [[ -z "$pair" ]] && continue
   in_schemas "$SCHEMAS_TO_INCLUDE" "$pair" || continue
   IFS='.' read -r sch tbl <<<"$pair"
   out="$TABLE_DIR/${sch}__${tbl}.json"
-  psql "$DATABASE_URL" -tAX -v ON_ERROR_STOP=1 \
+  psql -4 "$DBURL" -tAX -v ON_ERROR_STOP=1 \
     -v schema="$sch" -v table="$tbl" \
     -f scripts/schema_per_table.sql > "$out"
   test -s "$out" || { echo "Warn: empty $sch.$tbl" >&2; rm -f "$out"; }
