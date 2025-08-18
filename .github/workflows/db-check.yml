@@ -41,7 +41,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, json, urllib.request, sys
-      
+
           BASE = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
           HDRS = {
             "apikey": os.environ["SUPABASE_SERVICE_ROLE"],
@@ -50,7 +50,7 @@ jobs:
             "Content-Type": "application/json",
             "Prefer": "count=exact"
           }
-      
+
           def count(table: str):
             # Ask for 1 row and parse Content-Range total
             req = urllib.request.Request(f"{BASE}/{table}?select=*&limit=1", headers=HDRS)
@@ -60,13 +60,13 @@ jobs:
                 return int(cr.split("/")[-1])
               except Exception:
                 return None
-      
+
           chunks = count("repo_chunks")
           memory = count("repo_memory")
-      
+
           print(f"repo_chunks: {chunks}")
           print(f"repo_memory: {memory}")
-      
+
           if chunks is None or memory is None:
             print("ERROR: Missing tables (repo_chunks or repo_memory).", file=sys.stderr)
             sys.exit(2)
@@ -86,4 +86,3 @@ jobs:
             echo "- Verified REST reachability and counted \`repo_chunks\` / \`repo_memory\`."
             echo "- See step logs above for exact counts."
           } >> "$GITHUB_STEP_SUMMARY"
-
