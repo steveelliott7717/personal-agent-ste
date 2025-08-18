@@ -1,0 +1,48 @@
+name: Supabase Schema Snapshot
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 * * * *"   # hourly
+
+permissions:
+  contents: write
+
+concurrency:
+  group: supabase-schema-snapshot
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install psql + jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client jq
+
+      - name: Dump per-table schema + index
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SCHEMAS_TO_INCLUDE: public
+          OUT_ROOT: schema
+        run: |
+          ./scripts/dump_schema.sh
+
+      - name: Commit & push if changed
+        env:
+          GIT_AUTHOR_NAME: github-actions
+          GIT_AUTHOR_EMAIL: actions@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions
+          GIT_COMMITTER_EMAIL: actions@users.noreply.github.com
+        run: |
+          if ! git diff --quiet -- schema/; then
+            git add schema/
+            git commit -m "chore(schema): update per-table snapshot and index"
+            git push
+          else
+            echo "No changes."
+          fi
