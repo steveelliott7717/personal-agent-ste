@@ -6,12 +6,20 @@ set -euo pipefail
 # --- normalize DB URL: add sslmode=require if missing ---
 DBURL="$DATABASE_URL"
 if [[ "$DBURL" != *"sslmode="* ]]; then
-  if [[ "$DBURL" == *"?"* ]]; then
-    DBURL="${DBURL}&sslmode=require"
-  else
-    DBURL="${DBURL}?sslmode=require"
-  fi
+  DBURL+=$([[ "$DBURL" == *"?"* ]] && echo "&sslmode=require" || echo "?sslmode=require")
 fi
+
+# --- extract hostname from URI ---
+# works for URIs like: postgresql://user:pass@HOST:5432/db?param=...
+DBHOST="$(printf '%s' "$DBURL" | sed -E 's|.*://[^@]*@([^/:?]+).*|\1|')"
+
+# --- resolve first IPv4 address for the host ---
+PGHOSTADDR="$(getent ahostsv4 "$DBHOST" | awk 'NR==1{print $1}')"
+# fallback (shouldn’t happen, but be safe)
+PGHOSTADDR="${PGHOSTADDR:-$DBHOST}"
+
+# Export so libpq uses IPv4 even if DNS has AAAA first
+export PGHOSTADDR
 
 OUT_ROOT=${OUT_ROOT:-schema}                     # change if you want another folder
 SCHEMAS_TO_INCLUDE=${SCHEMAS_TO_INCLUDE:-"public"}   # comma-separated list
@@ -20,11 +28,11 @@ OUT_DIR="$OUT_ROOT"
 TABLE_DIR="$OUT_DIR/tables"
 mkdir -p "$TABLE_DIR"
 
-# Keep runs snappy + verify reachability (IPv4 + 10s timeout)
-psql -4 "$DBURL" -v ON_ERROR_STOP=1 -tAX -c "set statement_timeout = '10s'; select 1;"
+# Quick connectivity + 10s statement timeout
+psql "$DBURL" -v ON_ERROR_STOP=1 -tAX -c "set statement_timeout = '10s'; select 1;"
 
-# Discover tables (IPv4)
-readarray -t PAIRS < <(psql -4 "$DBURL" -tAX <<'SQL'
+# Discover tables
+readarray -t PAIRS < <(psql "$DBURL" -tAX <<'SQL'
 WITH app_schemas AS (
   SELECT nspname AS schema
   FROM pg_namespace
@@ -48,13 +56,13 @@ in_schemas() {
   return 1
 }
 
-# Per-table JSON (IPv4)
+# Per-table JSON
 for pair in "${PAIRS[@]}"; do
   [[ -z "$pair" ]] && continue
   in_schemas "$SCHEMAS_TO_INCLUDE" "$pair" || continue
   IFS='.' read -r sch tbl <<<"$pair"
   out="$TABLE_DIR/${sch}__${tbl}.json"
-  psql -4 "$DBURL" -tAX -v ON_ERROR_STOP=1 \
+  psql "$DBURL" -tAX -v ON_ERROR_STOP=1 \
     -v schema="$sch" -v table="$tbl" \
     -f scripts/schema_per_table.sql > "$out"
   test -s "$out" || { echo "Warn: empty $sch.$tbl" >&2; rm -f "$out"; }
