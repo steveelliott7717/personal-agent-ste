@@ -4,31 +4,35 @@ set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
-# ── 1) Normalize DB URL: enforce sslmode=require ───────────────────────────────
+# 1) Enforce sslmode=require on the URL
 DBURL="$DATABASE_URL"
 if [[ "$DBURL" != *"sslmode="* ]]; then
   DBURL+=$([[ "$DBURL" == *"?"* ]] && echo "&sslmode=require" || echo "?sslmode=require")
 fi
 
-# ── 2) Extract hostname safely (no creds/port/query), resolve IPv4 ─────────────
-# Works with or without credentials, port, or query string.
+# 2) Parse host safely (strip creds, port, query)
 DBNO_SCHEME="${DBURL#*://}"          # drop scheme
 AFTER_AT="${DBNO_SCHEME#*@}"         # drop user:pass@ if present
 HOSTPORTQ=$([[ "$AFTER_AT" == "$DBNO_SCHEME" ]] && echo "$DBNO_SCHEME" || echo "$AFTER_AT")
 HOSTPORT="${HOSTPORTQ%%/*}"          # up to first /
-HOSTONLY="${HOSTPORT%%:*}"           # drop :port if present
-HOSTONLY="${HOSTONLY%%\?*}"          # drop ?query if present
+HOSTONLY="${HOSTPORT%%:*}"           # drop :port
+HOSTONLY="${HOSTONLY%%\?*}"          # drop ?query
 
-# Prefer IPv4 if available; fall back to hostname
-PGHOSTADDR="$(getent ahostsv4 "$HOSTONLY" | awk 'NR==1{print $1}' || true)"
+# 3) Prefer IPv4 if present; ONLY export PGHOSTADDR when it's an IP
+IPV4_ADDR="$(getent ahostsv4 "$HOSTONLY" | awk 'NR==1{print $1}' || true)"
 export PGHOST="$HOSTONLY"
-export PGHOSTADDR="${PGHOSTADDR:-$HOSTONLY}"
+if [[ -n "${IPV4_ADDR:-}" ]]; then
+  export PGHOSTADDR="$IPV4_ADDR"
+  echo "▶ Parsed host: $HOSTONLY  (using IPv4 PGHOSTADDR=$PGHOSTADDR)"
+else
+  # No A record found; let libpq resolve (may use AAAA/IPv6)
+  unset PGHOSTADDR || true
+  echo "▶ Parsed host: $HOSTONLY  (no IPv4 A-record; letting libpq resolve)"
+fi
 
-echo "▶ Parsed host: $HOSTONLY  (PGHOSTADDR=$PGHOSTADDR)"
-
-# ── 3) Output locations ────────────────────────────────────────────────────────
-OUT_ROOT=${OUT_ROOT:-schema}                  # repo folder to write into
-SCHEMAS_TO_INCLUDE=${SCHEMAS_TO_INCLUDE:-public}   # e.g. "public,app"
+# 4) Output locations
+OUT_ROOT=${OUT_ROOT:-schema}
+SCHEMAS_TO_INCLUDE=${SCHEMAS_TO_INCLUDE:-public}
 OUT_DIR="$OUT_ROOT"
 TABLE_DIR="$OUT_DIR/tables"
 mkdir -p "$TABLE_DIR"
@@ -36,12 +40,13 @@ mkdir -p "$TABLE_DIR"
 echo "▶ Output dir: $OUT_DIR (tables → $TABLE_DIR)"
 echo "▶ Schemas:    $SCHEMAS_TO_INCLUDE"
 
-# ── 4) Connectivity sanity (10s) ───────────────────────────────────────────────
+# 5) Connectivity sanity (10s)
 echo "▶ Connectivity sanity (10s timeout)…"
-PGCONNECT_TIMEOUT=10 psql "$DBURL" -v ON_ERROR_STOP=1 -tAX -c "set statement_timeout='10s'; select 1;" \
+PGCONNECT_TIMEOUT=10 psql "$DBURL" -v ON_ERROR_STOP=1 -tAX \
+  -c "set statement_timeout='10s'; select 1;" \
   || { echo "❌ Cannot connect to Postgres with DATABASE_URL"; exit 50; }
 
-# ── 5) Discover tables in app schemas ──────────────────────────────────────────
+# 6) Discover tables in app schemas
 echo "▶ Discovering tables…"
 DISCOVERY_SQL=$'WITH app_schemas AS (\n  SELECT nspname AS schema\n  FROM pg_namespace\n  WHERE nspname NOT IN (\'pg_catalog\',\'information_schema\',\'pg_toast\')\n    AND nspname NOT LIKE \'pg_%\'\n)\nSELECT table_schema || \'.\' || table_name\nFROM information_schema.tables\nWHERE table_type=\'BASE TABLE\'\n  AND table_schema IN (SELECT schema FROM app_schemas)\nORDER BY table_schema, table_name;'
 mapfile -t PAIRS < <(psql "$DBURL" -tAX -c "$DISCOVERY_SQL")
@@ -57,7 +62,7 @@ in_schemas() {
   return 1
 }
 
-# ── 6) Per-table JSON dumps ────────────────────────────────────────────────────
+# 7) Per-table JSON dumps
 echo "▶ Dumping per-table JSON…"
 dumped=0
 for pair in "${PAIRS[@]}"; do
@@ -78,7 +83,7 @@ for pair in "${PAIRS[@]}"; do
 done
 echo "▶ Dumped $dumped table files into $TABLE_DIR"
 
-# ── 7) Build compact index (tables → [columns]) ────────────────────────────────
+# 8) Build compact index (tables → [columns])
 shopt -s nullglob
 files=( "$TABLE_DIR"/*.json )
 if ((${#files[@]} == 0)); then
