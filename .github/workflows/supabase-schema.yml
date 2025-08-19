@@ -56,10 +56,6 @@ jobs:
             - Includes per-table JSON and index files under `schema/`.
           branch: schema-snapshots    # <-- the side branch this workflow owns/updates
           base: main                  # <-- PR will target main
-          labels: |
-            automated
-            schema
-            supabase
           assignees: |
             steveelliott7717
           delete-branch: false        # keep branch so subsequent runs update same PR
