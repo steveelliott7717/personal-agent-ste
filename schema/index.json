@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-08-19T02:35:16Z",
+  "generated_at": "2025-08-19T03:01:48Z",
   "tables": {
     "public.agent_capabilities": [
       "agent_slug",
