@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write            # allow committing to a branch
   pull-requests: write       # allow opening/updating PRs
+  issues: write        # <- required to add labels to PRs
 
 concurrency:
   group: supabase-schema-snapshot
