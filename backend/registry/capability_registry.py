@@ -1,18 +1,34 @@
 from __future__ import annotations
-import re
+
+import base64
+import hashlib
+import hmac
 import json
 import os
+import re
+import ssl
 import time
-import urllib.error
-import urllib.request
-
+import urllib
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict
+from urllib import error, parse, request
 
 from backend.services.supabase_service import supabase
-import hmac, hashlib, base64
+import socket
+import ipaddress
+import random
+from typing import Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Literal, TypedDict
+from typing import Any, Callable, Dict, Optional, Literal, TypedDict, overload
+import socket
+import ipaddress
+from typing import Optional, Tuple
 
-import os
+
+# HTTP defaults (centralize tunables)
+HTTP_DEFAULT_TIMEOUT_S = 15
+HTTP_MAX_BYTES = 2_000_000
+HTTP_DEFAULT_ALLOWED_PORTS = {80, 443, 8443}  # can be overridden by env
 
 
 def _env_csv(name: str) -> set[str]:
@@ -47,6 +63,17 @@ class CapabilityRegistry:
     def has(self, verb: str) -> bool:
         return verb in self._adapters
 
+        # ---- typed overloads for dispatch ----
+
+    @overload
+    def dispatch(
+        self, verb: Literal["http.fetch"], args: HttpFetchArgs, meta: MetaDict
+    ) -> Envelope: ...
+    @overload
+    def dispatch(
+        self, verb: str, args: Dict[str, Any], meta: Dict[str, Any]
+    ) -> Envelope: ...
+
     def dispatch(
         self, verb: str, args: Dict[str, Any], meta: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -55,10 +82,14 @@ class CapabilityRegistry:
             fn = self._adapters[verb]
         except KeyError:
             latency_ms = int((time.perf_counter() - t0) * 1000)
+            corr = (meta or {}).get("correlation_id") or (args or {}).get(
+                "trace", {}
+            ).get("correlation_id")
             return {
                 "ok": False,
                 "result": {"error": f"unknown verb '{verb}'"},
                 "latency_ms": latency_ms,
+                "correlation_id": corr or "",
             }
 
         try:
@@ -68,8 +99,17 @@ class CapabilityRegistry:
         except Exception as e:
             ok = False
             result = {"error": type(e).__name__, "message": str(e)}
+
         latency_ms = int((time.perf_counter() - t0) * 1000)
-        return {"ok": ok, "result": result, "latency_ms": latency_ms}
+        corr = (meta or {}).get("correlation_id") or (args or {}).get("trace", {}).get(
+            "correlation_id"
+        )
+        return {
+            "ok": ok,
+            "result": result,
+            "latency_ms": latency_ms,
+            "correlation_id": corr or "",
+        }
 
     # ---- built-ins ----
     def _register_builtin_adapters(self) -> None:
@@ -97,6 +137,95 @@ class CapabilityRegistry:
         self.register("db.read", _db_read_adapter)
         self.register("db.write", _db_write_adapter)
         self.register("notify.push", _notify_push_adapter)
+        self.register("http.fetch", _http_fetch)
+
+
+class HttpRetryCfg(TypedDict, total=False):
+    max: int
+    backoff_ms: int
+    jitter: bool
+    on: list[int]
+
+
+class HttpTraceCfg(TypedDict, total=False):
+    correlation_id: str
+    idempotency_key: str
+
+
+class HttpAuthBearer(TypedDict, total=False):
+    type: Literal["bearer"]
+    token: str
+
+
+class HttpAuthBasic(TypedDict, total=False):
+    type: Literal["basic"]
+    username: str
+    password: str
+
+
+class HttpAuthHmac(TypedDict, total=False):
+    type: Literal["hmac"]
+    secret_env: str
+    algo: Literal["sha256", "sha1", "md5"]
+    header: str
+
+
+HttpAuth = HttpAuthBearer | HttpAuthBasic | HttpAuthHmac
+
+
+class HttpFetchArgs(TypedDict, total=False):
+    url: str
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    headers: Dict[str, str]
+    params: Dict[str, Any]
+    body: str | bytes | dict | list
+    timeout: int | float
+    allow_redirects: bool
+    max_redirects: int
+    max_bytes: int
+    retry: HttpRetryCfg
+    auth: HttpAuth
+    cache: Dict[str, str]
+    trace: HttpTraceCfg
+    paginate: PaginateCfg
+
+
+# Meta you pass around; keep loose but documented
+class MetaDict(TypedDict, total=False):
+    correlation_id: str
+    idempotency_key: str
+    actor: str
+    # add anything else you commonly pass (ip, user_id, etc.)
+
+
+# Result envelope your registry returns
+class Envelope(TypedDict, total=False):
+    ok: bool
+    result: Dict[str, Any]
+    latency_ms: int
+    correlation_id: str  # we’ll add this in dispatch()
+
+
+class HttpFetchResult(TypedDict, total=False):
+    status: int
+    url: str
+    final_url: str
+    headers: Dict[str, str]
+    bytes_len: int
+    elapsed_ms: int
+    json: Any | None
+    text: str | None
+    truncated: bool
+    not_modified: bool
+
+
+class PaginateCfg(TypedDict, total=False):
+    mode: Literal["cursor"]  # (first version) cursor-based only
+    json_pointer: str  # e.g., "/next" → value can be a full URL or a cursor token
+    cursor_param: str  # default "cursor" if pointer returns a token (not a URL)
+    max_pages: int  # default 10
+    items_pointer: str  # e.g., "/items" (array). If set + concat_json True → combine
+    concat_json: bool  # default False
 
 
 # --- DB adapters ---
@@ -2212,9 +2341,6 @@ def _db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, A
         return {"rows": getattr(res, "data", res)}
 
 
-# --- Notification adapter (Slack webhook) ---
-
-
 def _notify_push_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
     """
     Send a simple message via channel=slack using an incoming webhook.
@@ -2259,3 +2385,443 @@ def _notify_push_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str
 
     # Slack returns "ok" on success for classic webhooks; keep body short
     return {"channel": channel, "status": int(status), "body": body[:500]}
+
+
+def _env_ports(name: str, default: set[int]) -> set[int]:
+    raw = os.getenv(name, "")
+    vals = {p.strip() for p in raw.split(",") if p.strip()}
+    parsed = {int(p) for p in vals if p.isdigit()}
+    return parsed or set(default)
+
+
+def _resolve_addrs(host: str) -> list[str]:
+    addrs: list[str] = []
+    for family in (socket.AF_INET, socket.AF_INET6):
+        try:
+            infos = socket.getaddrinfo(host, None, family, socket.SOCK_STREAM)
+            for _, _, _, _, sockaddr in infos:
+                addrs.append(sockaddr[0])
+        except socket.gaierror:
+            continue
+    return addrs
+
+
+def _is_disallowed_ip_host(host: str) -> bool:
+    """
+    Block private/loopback/link-local/unspecified/multicast and IMDS.
+    Safer default on resolution failure.
+    """
+    try:
+        for ip_str in _resolve_addrs(host):
+            ip = ipaddress.ip_address(ip_str)
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                return True
+            if ip_str == "169.254.169.254":  # cloud instance metadata
+                return True
+        return False
+    except Exception:
+        return True
+
+
+def _host_port_allowed(parsed) -> Tuple[bool, Optional[str]]:
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    allowed_ports = _env_ports("HTTP_FETCH_ALLOWED_PORTS", HTTP_DEFAULT_ALLOWED_PORTS)
+    if port not in allowed_ports:
+        return False, f"Port {port} not allowed for host {host}"
+    return True, None
+
+
+def _json_pointer_get(doc: Any, pointer: str) -> Any:
+    """
+    Minimal RFC6901-ish JSON Pointer: "/a/0/b"
+    Returns None on traversal failure.
+    """
+    if pointer == "" or pointer == "/":
+        return doc
+    if not pointer.startswith("/"):
+        return None
+    cur = doc
+    for raw_token in pointer.split("/")[1:]:
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        try:
+            if isinstance(cur, list):
+                idx = int(token)
+                cur = cur[idx]
+            elif isinstance(cur, dict):
+                cur = cur.get(token)
+            else:
+                return None
+        except Exception:
+            return None
+    return cur
+
+
+def _url_with_param(base_url: str, key: str, value: str) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    q = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    q[key] = value
+    new_q = urllib.parse.urlencode(q, doseq=True)
+    return urllib.parse.urlunparse(parsed._replace(query=new_q))
+
+
+def _looks_like_url(s: str) -> bool:
+    return isinstance(s, str) and (s.startswith("http://") or s.startswith("https://"))
+
+
+def _http_fetch(args: "HttpFetchArgs", meta: "MetaDict") -> Dict[str, Any]:
+    """
+    Minimal, safe HTTP client for agents.
+    Args:
+      url: str               -- required
+      method: str            -- GET|POST|PUT|PATCH|DELETE (default GET)
+      headers: dict          -- optional request headers
+      params: dict           -- optional query params (merged into url)
+      body: str|bytes|dict|list -- optional; dict/list will be JSON-encoded
+      timeout: int|float     -- seconds (default 15)
+      allow_redirects: bool  -- currently follows by default (urllib)
+      max_bytes: int         -- cap read size (default 2_000_000)
+    Env allow/deny:
+      HTTP_FETCH_ALLOW_HOSTS="api1.com,api2.com"
+      HTTP_FETCH_DENY_HOSTS="bad.com,evil.test"
+    Returns:
+      {
+        "status": int,
+        "url": str,
+        "final_url": str,
+        "headers": { ... },
+        "bytes_len": int,
+        "elapsed_ms": int,
+        "json": {...} | None,
+        "text": str | None,
+        "truncated": bool
+      }
+    """
+    t0 = time.time()
+
+    url = args.get("url")
+    if not url or not isinstance(url, str):
+        raise ValueError("http.fetch requires a string 'url'")
+
+    method = str(args.get("method", "GET")).upper()
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+        raise ValueError(f"Unsupported HTTP method: {method}")
+
+    # Merge query params
+    params = args.get("params") or {}
+    if params:
+        # preserve existing query; doseq=True handles lists
+        parsed = urllib.parse.urlparse(url)
+        q = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+        q.update(params)
+        new_q = urllib.parse.urlencode(q, doseq=True)
+        url = urllib.parse.urlunparse(parsed._replace(query=new_q))
+
+    # Scheme & host checks
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http/https URLs are allowed")
+    host = parsed.hostname or ""
+
+    # Enforce allowed ports
+    ok_port, why = _host_port_allowed(parsed)
+    if not ok_port:
+        return {"status": 0, "error": "PortNotAllowed", "message": why}
+
+    # Block private/loopback/link-local/IMDS targets (SSRF hardening)
+    if _is_disallowed_ip_host(host):
+        return {
+            "status": 0,
+            "error": "DeniedIP",
+            "message": f"Disallowed IP for host: {host}",
+        }
+
+    # Simple allow/deny lists via env
+    allow_env = os.getenv("HTTP_FETCH_ALLOW_HOSTS", "").strip()
+    deny_env = os.getenv("HTTP_FETCH_DENY_HOSTS", "").strip()
+    allow_list = {h.strip().lower() for h in allow_env.split(",") if h.strip()}
+    deny_list = {h.strip().lower() for h in deny_env.split(",") if h.strip()}
+
+    if deny_list and host.lower() in deny_list:
+        return {
+            "status": 0,
+            "error": "DeniedHost",
+            "message": f"Host blocked by denylist: {host}",
+        }
+    if allow_list and host.lower() not in allow_list:
+        return {
+            "status": 0,
+            "error": "NotAllowedHost",
+            "message": f"Host not in allowlist: {host}",
+        }
+
+    headers = dict(args.get("headers") or {})
+    # Default UA helps some sites; keep simple
+    headers.setdefault("User-Agent", "personal-agent/1.0 (+registry-http.fetch)")
+    timeout = float(args.get("timeout", HTTP_DEFAULT_TIMEOUT_S))
+    max_bytes = int(args.get("max_bytes", HTTP_MAX_BYTES))
+
+    # Body handling
+    body = args.get("body", None)
+    data: bytes | None = None
+    if body is None:
+        data = None
+    elif isinstance(body, (dict, list)):
+        # JSON encode; set header if not present
+        headers.setdefault("Content-Type", "application/json")
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    elif isinstance(body, str):
+        # Use provided Content-Type or fall back to text/plain
+        headers.setdefault("Content-Type", "text/plain; charset=utf-8")
+        data = body.encode("utf-8")
+    elif isinstance(body, (bytes, bytearray)):
+        data = bytes(body)
+    else:
+        raise ValueError("Unsupported 'body' type; expected dict/list/str/bytes")
+
+    # ---- auth helpers (optional) ----
+    auth = args.get("auth") or {}
+    atype = (auth.get("type") or "").lower()
+
+    # Prefer not to overwrite a caller-supplied Authorization header
+    def _maybe_set_auth_header(value: str) -> None:
+        if "Authorization" not in {k.title(): v for k, v in headers.items()}:
+            headers.setdefault("Authorization", value)
+
+    if atype == "bearer" and auth.get("token"):
+        _maybe_set_auth_header(f"Bearer {auth['token']}")
+
+    elif atype == "basic" and auth.get("username") and auth.get("password"):
+        b64 = base64.b64encode(
+            f"{auth['username']}:{auth['password']}".encode("utf-8")
+        ).decode("ascii")
+        _maybe_set_auth_header(f"Basic {b64}")
+
+    elif atype == "hmac":
+        # Minimal body-HMAC signature. Customize 'algo', 'header' as needed.
+        secret_env = auth.get("secret_env")
+        if secret_env:
+            secret = os.getenv(secret_env, "")
+            if secret:
+                algo = (auth.get("algo") or "sha256").lower()
+                header_name = auth.get("header", "X-Signature")
+                payload = b"" if data is None else data
+                digest = hmac.new(
+                    secret.encode("utf-8"), payload, getattr(hashlib, algo)
+                ).digest()
+                headers.setdefault(
+                    header_name, base64.b64encode(digest).decode("ascii")
+                )
+
+    # ---- correlation & idempotency (optional) ----
+    trace = args.get("trace") or {}
+    corr_id = trace.get("correlation_id")
+    idem_key = trace.get("idempotency_key")
+    if corr_id:
+        headers.setdefault("X-Correlation-Id", str(corr_id))
+    if idem_key:
+        headers.setdefault("Idempotency-Key", str(idem_key))
+
+    # ---- conditional GET / cache validators (optional) ----
+    cache = args.get("cache") or {}
+    etag = cache.get("etag")
+    last_mod = cache.get("last_modified")
+    if etag:
+        headers.setdefault("If-None-Match", str(etag))
+    if last_mod:
+        headers.setdefault("If-Modified-Since", str(last_mod))
+
+    req = urllib.request.Request(url=url, data=data, method=method)
+    for k, v in headers.items():
+        req.add_header(k, v)
+
+    # HTTPS context (default)
+    ctx = ssl.create_default_context()
+
+    # ---- retry & redirect settings ----
+    allow_redirects = bool(
+        args.get("allow_redirects", True)
+    )  # urllib follows by default
+    max_redirects = int(args.get("max_redirects", 5))
+
+    retry_cfg = args.get("retry") or {}
+    retry_max = int(retry_cfg.get("max", 0))
+    retry_on = set(int(s) for s in (retry_cfg.get("on") or [429, 502, 503, 504]))
+    backoff_ms = int(retry_cfg.get("backoff_ms", 200))
+    jitter = bool(retry_cfg.get("jitter", True))
+
+    attempt = 0
+    current_url = url
+
+    while True:
+        attempt += 1
+        try:
+            # Build a fresh Request each attempt (URL may change if you later manage redirects manually)
+            req = urllib.request.Request(url=current_url, data=data, method=method)
+            # Avoid hop-by-hop/forbidden headers; urllib sets Host/Content-Length appropriately
+            for k, v in headers.items():
+                lk = k.lower()
+                if lk in {"host", "content-length", "transfer-encoding", "connection"}:
+                    continue
+                req.add_header(k, v)
+
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                # If urllib followed redirects, verify the final location's host/IP/port
+                final_url = resp.geturl() or current_url
+                if allow_redirects and max_redirects >= 0 and final_url != current_url:
+                    parsed_final = urllib.parse.urlparse(final_url)
+                    final_host = parsed_final.hostname or ""
+                    # Re-run hostname allow/deny
+                    if deny_list and final_host.lower() in deny_list:
+                        return {
+                            "status": 0,
+                            "error": "DeniedHost",
+                            "message": f"Host blocked by denylist: {final_host}",
+                        }
+                    if allow_list and final_host.lower() not in allow_list:
+                        return {
+                            "status": 0,
+                            "error": "NotAllowedHost",
+                            "message": f"Host not in allowlist: {final_host}",
+                        }
+                    # Re-run SSRF/IP and port policy on the final hop
+                    ok_port, why = _host_port_allowed(parsed_final)
+                    if not ok_port:
+                        return {"status": 0, "error": "PortNotAllowed", "message": why}
+                    if _is_disallowed_ip_host(final_host):
+                        return {
+                            "status": 0,
+                            "error": "DeniedIP",
+                            "message": f"Disallowed IP for host: {final_host}",
+                        }
+
+                # Read (with cap) and transparently decompress if needed
+                raw = resp.read(max_bytes + 1)  # +1 to detect truncation
+                truncated = len(raw) > max_bytes
+                if truncated:
+                    raw = raw[:max_bytes]
+
+                enc = (resp.headers.get("Content-Encoding") or "").lower()
+                if enc == "gzip":
+                    try:
+                        import gzip
+
+                        raw = gzip.decompress(raw)
+                    except Exception:
+                        pass
+                elif enc == "deflate":
+                    try:
+                        import zlib
+
+                        raw = zlib.decompress(raw)
+                    except Exception:
+                        pass
+
+                # Content negotiation
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                text: str | None = None
+                j: Any | None = None
+
+                if "application/json" in ctype or ctype.endswith("+json"):
+                    try:
+                        text = raw.decode("utf-8", errors="ignore")
+                        j = json.loads(text) if text else None
+                    except Exception:
+                        j = None
+                elif ctype.startswith("text/") or "xml" in ctype or "html" in ctype:
+                    try:
+                        text = raw.decode("utf-8", errors="ignore")
+                    except Exception:
+                        text = None
+                else:
+                    # Heuristic: treat as JSON if it "looks" like JSON
+                    if raw and raw.lstrip()[:1] in (b"{", b"["):
+                        try:
+                            text = raw.decode("utf-8", errors="ignore")
+                            j = json.loads(text)
+                        except Exception:
+                            pass
+
+                elapsed_ms = int((time.time() - t0) * 1000)
+                return {
+                    "status": resp.status,
+                    "url": url,
+                    "final_url": final_url,
+                    "headers": dict(resp.headers.items()),
+                    "bytes_len": len(raw),
+                    "elapsed_ms": elapsed_ms,
+                    "json": j,
+                    "text": text,
+                    "truncated": truncated,
+                    "not_modified": (resp.status == 304),
+                }
+
+        except urllib.error.HTTPError as e:
+            # HTTP error with a body; decide whether to retry
+            try:
+                body_text = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                body_text = None
+
+            if e.code in retry_on and attempt <= retry_max:
+                # Respect Retry-After (seconds) if provided
+                ra = None
+                try:
+                    ra = e.headers.get("Retry-After")
+                except Exception:
+                    ra = None
+                if ra and str(ra).isdigit():
+                    time.sleep(int(ra))
+                else:
+                    # simple exponential backoff with optional jitter
+                    delay = backoff_ms * (2 ** (attempt - 1))
+                    if jitter:
+                        import random
+
+                        delay += random.randint(0, backoff_ms)
+                    time.sleep(delay / 1000.0)
+                continue
+
+            elapsed_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": e.code,
+                "url": url,
+                "final_url": getattr(e, "url", current_url),
+                "headers": dict(getattr(e, "headers", {}) or {}),
+                "bytes_len": len(body_text.encode("utf-8")) if body_text else 0,
+                "elapsed_ms": elapsed_ms,
+                "error": "HTTPError",
+                "text": body_text,
+                "truncated": False,
+            }
+
+        except (urllib.error.URLError, TimeoutError) as e:
+            # Network-level issues (DNS, TLS, timeouts) → retry if allowed
+            if attempt <= retry_max:
+                delay = backoff_ms * (2 ** (attempt - 1))
+                if jitter:
+                    import random
+
+                    delay += random.randint(0, backoff_ms)
+                time.sleep(delay / 1000.0)
+                continue
+
+            elapsed_ms = int((time.time() - t0) * 1000)
+            return {
+                "status": 0,
+                "url": url,
+                "final_url": current_url,
+                "headers": {},
+                "bytes_len": 0,
+                "elapsed_ms": elapsed_ms,
+                "error": type(e).__name__,
+                "message": str(e),
+                "truncated": False,
+            }
