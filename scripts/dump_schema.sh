@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SCRIPT_VERSION=v3.2
+# SCRIPT_VERSION tag for logs
+SCRIPT_VERSION="${SCRIPT_VERSION:-v3.2}"
 set -uo pipefail
 [[ "${DEBUG:-0}" == "1" ]] && set -x
 
