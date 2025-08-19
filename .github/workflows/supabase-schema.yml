@@ -46,10 +46,15 @@ jobs:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
         run: |
-          if ! git diff --quiet -- schema/; then
-            git add schema/
-            git commit -m "chore(schema): daily Supabase schema snapshot"
-            git push
-          else
+          # Stage all updates (including new & deletions) under schema/
+          git add -A schema/
+      
+          # If nothing is staged, there are no actual changes
+          if git diff --cached --quiet; then
             echo "No schema changes."
+            exit 0
           fi
+      
+          git commit -m "chore(schema): daily Supabase schema snapshot"
+          git push
+
