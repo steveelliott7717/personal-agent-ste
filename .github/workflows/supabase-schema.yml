@@ -27,15 +27,16 @@ jobs:
       # Run your script (writes into schema/ by itself)
       - name: Dump Supabase schema to /schema
         env:
-          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}   # <-- add this secret in repo settings
-          SCHEMAS_TO_INCLUDE: public                     # comma-separated if you want more
-          OUT_ROOT: schema                               # where to write files in the repo
-          ALLOW_PARTIAL: "1"                             # <— keep CI green on a few failures
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_DIRECT_URL }}   # recommend direct for dumps
+          SCHEMAS_TO_INCLUDE: public
+          OUT_ROOT: schema
+          ALLOW_PARTIAL: "1"    # ✅ let workflow succeed even if some tables fail
           DEBUG: "0"
         run: |
           chmod +x scripts/dump_schema.sh
           ./scripts/dump_schema.sh
           test -d schema && ls -la schema || (echo "schema/ missing" && exit 1)
+
 
       - name: Commit & push if changed
         env:
