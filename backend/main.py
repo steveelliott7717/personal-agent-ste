@@ -23,6 +23,8 @@ from fastapi.responses import PlainTextResponse
 from backend.agents.repo_agent import generate_artifact_from_task
 import re
 
+from backend.api import call_agent_verb, call_agent_plan  # reuse handlers from api.py
+
 
 from dotenv import load_dotenv
 
@@ -41,6 +43,10 @@ from backend.routers import schema as schema_router
 app.include_router(schema_router.router)
 
 setup_logging()
+
+# Expose the capability-registry endpoints defined in backend/api.py on this main app
+app.add_api_route("/app/api/agents/verb", call_agent_verb, methods=["POST"])
+app.add_api_route("/app/api/agents/plan", call_agent_plan, methods=["POST"])
 
 
 app.add_middleware(RequestLoggingMiddleware)
