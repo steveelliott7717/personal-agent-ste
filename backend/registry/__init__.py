@@ -1,0 +1,1 @@
+from .capability_registry import CapabilityRegistry
