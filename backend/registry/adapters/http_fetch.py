@@ -17,6 +17,43 @@ from backend.services.supabase_service import supabase
 import json
 import hashlib
 import re
+from pathlib import Path
+import hashlib
+import os
+
+# Root for on-disk saves (override on Fly with: HTTP_FETCH_SAVE_ROOT=/tmp)
+SAVE_ROOT = os.getenv("HTTP_FETCH_SAVE_ROOT", "/tmp")
+
+
+def _save_stream_to_path(stream_iter, dest_path: str) -> Dict[str, Any]:
+    """
+    Streams bytes to a local file safely under SAVE_ROOT.
+    - If dest_path is relative, it is resolved under SAVE_ROOT.
+    - If absolute, it must resolve within SAVE_ROOT (prevents path traversal).
+    Returns { path, bytes, sha256 }.
+    """
+    root = Path(SAVE_ROOT).resolve()
+    p = Path(dest_path)
+    if not p.is_absolute():
+        p = root / p
+    p = p.resolve()
+    # ensure p is inside root
+    if not (p == root or root in p.parents):
+        raise ValueError(f"save_to path must be within {root}")
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    total = 0
+    h = hashlib.sha256()
+    with open(p, "wb") as f:
+        for chunk in stream_iter:
+            if not chunk:
+                continue
+            f.write(chunk)
+            total += len(chunk)
+            h.update(chunk)
+
+    return {"path": str(p), "bytes": total, "sha256": h.hexdigest()}
 
 
 def _upload_to_github(dest: Dict[str, Any], content_bytes: bytes) -> Dict[str, Any]:
@@ -247,12 +284,47 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
 
     # Execute (destination-aware) with Retry-After/backoff
     retry_cfg = args.get("retry") or {}
-    max_retries = int(
-        retry_cfg.get("max", 0)
-    )  # number of retries after the first attempt
+    max_retries = int(retry_cfg.get("max", 0))
     retry_on = set(retry_cfg.get("on") or [429, 500, 502, 503, 504])
     backoff_ms = int(retry_cfg.get("backoff_ms", 100))
     jitter = bool(retry_cfg.get("jitter", True))
+
+    # --- save_to (stream to local file) ---
+    save_to = args.get("save_to")
+    if isinstance(save_to, str) and save_to.strip():
+        attempt = 0
+        while True:
+            req = http_request.build(args)
+            meta, stream = req.send_stream(chunk_size=64 * 1024)
+            info = _save_stream_to_path(stream, save_to)
+            if meta.status in retry_on and attempt < max_retries:
+                attempt += 1
+                try:
+                    os.remove(info["path"])
+                except Exception:
+                    pass
+                wait_s = compute_retry_wait(
+                    meta.headers,
+                    attempt=attempt,
+                    backoff_ms=backoff_ms,
+                    jitter=jitter,
+                    cap_seconds=60.0,
+                )
+                time.sleep(wait_s)
+                continue
+            return {
+                "status": meta.status,
+                "url": req.url,
+                "final_url": meta.final_url,
+                "headers": meta.headers,
+                "bytes_len": info["bytes"],
+                "elapsed_ms": meta.elapsed_ms,
+                "json": None,
+                "text": None,
+                "truncated": False,
+                "not_modified": (meta.status == 304),
+                "saved": {"backend": "file", **info},
+            }
 
     destination_chain = args.get("destination_chain")
     destination = args.get("destination")
