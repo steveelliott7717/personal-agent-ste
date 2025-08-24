@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-from backend.registry.capability_registry import CapabilityRegistry
+from backend.registry.Archived_capability_registry_ import CapabilityRegistry
 from backend.services.supabase_service import supabase
 
 
