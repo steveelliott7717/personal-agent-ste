@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 from typing import Any, Dict
+from urllib.parse import unquote
 
 from backend.services.supabase_service import supabase
 
@@ -58,7 +59,7 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
 
     sel = args.get("select", "*")
     if isinstance(sel, list):
-        sel = ",".join(sel)
+        sel = ",".join(str(s).strip() for s in sel if s and str(s).strip())
 
         # ---- optional safety allowlists (env-driven) ----
     # Format examples:
@@ -194,7 +195,7 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
     count_mode: str | None = None
 
     # capture caller's base select (before we append aggregates)
-    _base_select = (args.get("select") or "").strip()
+    _base_select = sel.strip() if isinstance(sel, str) else "*"
 
     def _alias(col: str, fn: str) -> str:
         # Use PostgREST-friendly projection with alias:
@@ -924,20 +925,42 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
 
     def _as_filter_token(field: str, op: str, value: object, cast: str | None) -> str:
         """
-        Convert a single *leaf* into a PostgREST boolean token fragment usable inside
+        Convert a single *leaf* into a PostgREST boolean token usable inside
         or(...), and(...), not.and(...), etc.
 
         Examples:
         col.eq.value                 -> "col.eq.value"
         col.in.(a,b)                -> "col.in.(a,b)"
-        not.in                      -> "col.not.in.(a,b)"
-        regex                       -> "col.imatch.^foo.*$"
-        JSON key presence           -> "parent.cs.{key}" or "parent.ov.{k1,k2}"
-        *any pattern sugar          -> "or(col.like.p1,col.like.p2,...)"
+        col.not.in.(a,b)            -> "col.not.in.(a,b)"
+        col.imatch.^foo.*$          -> "col.imatch.^foo.*$"
+        parent.cs.{key}             -> "parent.cs.{key}"    (JSON keys-all)
+        parent.ov.{k1,k2}           -> "parent.ov.{k1,k2}"  (JSON keys-any)
+        pattern sugar               -> starts_with/ends_with/contains -> like/ilike with %
+        NOT wrapper                 -> not {op: <inner>, value|values: ...}
+        NOT shorthands              -> not_eq / not_like / not_ilike / not_match / not_imatch
         """
         op = (op or "eq").lower()
 
-        # 1) ANY pattern sugar → build a *single* or(...) token
+        # 0) Single-value pattern sugar: starts/ends/contains (+ case-insensitive)
+        if op in (
+            "starts_with",
+            "istarts_with",
+            "ends_with",
+            "iends_with",
+            "contains",
+            "icontains",
+        ):
+            base = "" if value is None else str(value)
+            patt = (
+                f"{base}%"
+                if op in ("starts_with", "istarts_with")
+                else (f"%{base}" if op in ("ends_with", "iends_with") else f"%{base}%")
+            )
+            oper = "ilike" if op.startswith("i") else "like"
+            col = _colexpr(field, op=oper, cast=cast, text_mode=True)
+            return f"{col}.{oper}.{_pg_encode(patt)}"
+
+        # 1) ANY-of pattern sugar: *_any → or(col.like p1, col.like p2, ...)
         if op in (
             "starts_with_any",
             "istarts_with_any",
@@ -955,12 +978,12 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             col = _colexpr(field, op=oper, cast=cast, text_mode=True)
             parts = []
             for v in value:
-                if kind == "starts":
-                    patt = f"{v}%"
-                elif kind == "ends":
-                    patt = f"%{v}"
-                else:
-                    patt = f"%{v}%"
+                v = "" if v is None else str(v)
+                patt = (
+                    f"{v}%"
+                    if kind == "starts"
+                    else (f"%{v}" if kind == "ends" else f"%{v}%")
+                )
                 parts.append(f"{col}.{oper}.{_pg_encode(patt)}")
             return f"or({','.join(parts)})"
 
@@ -969,7 +992,7 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             coltxt = _colexpr(field, op=op, cast=cast, text_mode=True)
             return f"{coltxt}.not.is.null"
 
-            # relative time helpers for grouped boolean expressions
+        # 2a) Relative time helpers
         if op == "since":
             start_iso = _parse_relative_time(value)
             col = _colexpr(field, op=op, cast=cast, text_mode=True)
@@ -990,7 +1013,6 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 raise ValueError("has_keys_any expects a non-empty array of keys")
             parent_expr, _ = _split_json_path(field)
             keys = "{" + ",".join(_pg_encode(k) for k in value) + "}"
-            # overlaps of key sets -> parent.ov.{k1,k2}
             return f"{parent_expr}.ov.{keys}"
 
         if op in ("has_keys_all", "exists_all"):
@@ -998,7 +1020,6 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 raise ValueError("has_keys_all expects a non-empty array of keys")
             parent_expr, _ = _split_json_path(field)
             keys = "{" + ",".join(_pg_encode(k) for k in value) + "}"
-            # contains all keys -> parent.cs.{k1,k2}
             return f"{parent_expr}.cs.{keys}"
 
         # 3) Regex ops
@@ -1006,7 +1027,75 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             col = _colexpr(field, op=op, cast=cast, text_mode=True)
             return f"{col}.{op}.{_pg_encode(value)}"
 
-        # 4) IN / NOT IN
+        # -- NOT (negation) forms -----------------------------------------------
+        # 4a) Explicit NOT wrapper: {"op":"not", "value":{"op":"ilike","value":"plan.%"}}
+        if op == "not":
+            if not isinstance(value, dict) or "op" not in value:
+                raise ValueError(
+                    "not expects an object: {'op': <inner_op>, 'value'|'values': ...}"
+                )
+            inner_op = str(value["op"]).lower()
+            col = _colexpr(
+                field, op=inner_op, cast=cast, text_mode=_op_is_textual(inner_op)
+            )
+
+            if inner_op in ("in", "not_in"):
+                vals = value.get("values") or value.get("value")
+                if not isinstance(vals, (list, tuple)) or not vals:
+                    raise ValueError("not.in requires a non-empty list under 'values'")
+                inner = ",".join(_pg_encode(v) for v in vals)
+                return f"{col}.not.in.({inner})"
+
+            if inner_op in ("match", "imatch"):
+                return f"{col}.not.{inner_op}.{_pg_encode(value.get('value'))}"
+
+            if inner_op in ("like", "ilike"):
+                return f"{col}.not.{inner_op}.{_pg_encode(value.get('value'))}"
+
+            # basic comparisons (eq/gt/gte/lt/lte/is)
+            mapped = {
+                "eq": "eq",
+                "gt": "gt",
+                "gte": "gte",
+                "lt": "lt",
+                "lte": "lte",
+                "is": "is",
+                "ne": "eq",
+                "neq": "eq",
+                "!=": "eq",  # discourage double-negation inputs
+            }.get(inner_op, inner_op)
+            return f"{col}.not.{mapped}.{_pg_encode(value.get('value'))}"
+
+        # 4b) Shorthand NOT aliases
+        if op in (
+            "not_eq",
+            "not-like",
+            "not_like",
+            "not-ilike",
+            "not_ilike",
+            "not_match",
+            "not_imatch",
+        ):
+            base = op.replace("-", "_")
+            if base.endswith("_eq"):
+                col = _colexpr(
+                    field, op="eq", cast=cast, text_mode=_op_is_textual("eq")
+                )
+                return f"{col}.not.eq.{_pg_encode(value)}"
+            if base.endswith("_like"):
+                col = _colexpr(field, op="like", cast=cast, text_mode=True)
+                return f"{col}.not.like.{_pg_encode(value)}"
+            if base.endswith("_ilike"):
+                col = _colexpr(field, op="ilike", cast=cast, text_mode=True)
+                return f"{col}.not.ilike.{_pg_encode(value)}"
+            if base.endswith("_match"):
+                col = _colexpr(field, op="match", cast=cast, text_mode=True)
+                return f"{col}.not.match.{_pg_encode(value)}"
+            if base.endswith("_imatch"):
+                col = _colexpr(field, op="imatch", cast=cast, text_mode=True)
+                return f"{col}.not.imatch.{_pg_encode(value)}"
+
+        # 5) IN / NOT IN
         if op == "in":
             if not isinstance(value, (list, tuple)) or not value:
                 raise ValueError("IN requires a non-empty list")
@@ -1021,7 +1110,15 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             inner = ",".join(_pg_encode(v) for v in value)
             return f"{col}.not.in.({inner})"
 
-        # 5) Simple scalar/pattern comparisons (eq/neq/gt/gte/lt/lte/like/ilike/is)
+        # 6) Null shorthands
+        if op in ("is_null", "isnull", "is-null"):
+            col = _colexpr(field, op=op, cast=cast, text_mode=True)
+            return f"{col}.is.null"
+        if op in ("not_null", "notnull", "not-null"):
+            col = _colexpr(field, op=op, cast=cast, text_mode=True)
+            return f"{col}.not.is.null"
+
+        # 7) Simple scalar/pattern comparisons (eq/neq/gt/gte/lt/lte/like/ilike/is)
         pgop = {
             "eq": "eq",
             "=": "eq",
@@ -1653,13 +1750,65 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         mac = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).digest()
         return base64.urlsafe_b64encode(mac).decode("ascii").rstrip("=")
 
-    def _cursor_verify(payload: dict, sig: str, secret: str) -> bool:
+    def _b64url_nopad(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+    def _hmac_payload_bytes(payload: dict, secret: str) -> bytes:
+        """
+        HMAC-SHA256 over canonical JSON (sorted keys, no spaces).
+        Returns raw 32-byte MAC (not base64).
+        """
+        raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).digest()
+
+    def _cursor_sign(payload: dict, secret: str) -> str:
+        """
+        Returns a base64url(no padding) string for the HMAC of `payload`.
+        """
+        mac = _hmac_payload_bytes(payload, secret)
+        return _b64url_nopad(mac)
+
+    def _sig_to_bytes(sig: str) -> bytes | None:
+        """
+        Tolerant decoder for signatures:
+        - base64url (with/without padding)
+        - standard base64 (with/without padding)
+        - hex
+        - percent-encoded variants
+        Returns raw bytes on success, None otherwise.
+        """
+        if not isinstance(sig, str):
+            return None
+        s = unquote(sig.strip().strip('"').strip("'"))
+
+        # Try base64url first (accept '-' '_' and missing padding)
         try:
-            expected = _cursor_sign(payload, secret)
-            # constant-time compare
-            return hmac.compare_digest(expected, sig)
+            pad = "=" * (-len(s) % 4)
+            return base64.urlsafe_b64decode(s + pad)
         except Exception:
-            return False
+            pass
+
+        # Try standard base64 (accept '+' '/')
+        try:
+            pad = "=" * (-len(s) % 4)
+            return base64.b64decode(s + pad)
+        except Exception:
+            pass
+
+        # Finally try hex
+        try:
+            return bytes.fromhex(s)
+        except Exception:
+            return None
+
+    def _cursor_verify(payload: dict, sig: str, secret: str) -> bool:
+        """
+        Verify `sig` against canonical HMAC of `payload`.
+        Works even if client used b64, b64url, hex, or percent-encoded forms.
+        """
+        expected = _hmac_payload_bytes(payload, secret)
+        got = _sig_to_bytes(sig)
+        return bool(got) and hmac.compare_digest(got, expected)
 
     def _apply_keyset_cursor(qh, order_spec, cursor):
         after = cursor.get("after")
@@ -1745,32 +1894,56 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
     # ---- keyset cursor (optional) ----
     cursor = args.get("cursor")
     if isinstance(cursor, dict) and cursor.get("mode") == "keyset" and normalized_order:
-        # Optional sealing
-        secret = os.getenv("CURSOR_SIGNING_SECRET")
-        if secret:
-            # If a signature is provided, verify; if not, we still proceed (first page).
-            sig = cursor.get("sig")
-            # Consider only the directional part for signature (after/before)
-            payload_for_sig = {}
-            if "after" in cursor and isinstance(cursor["after"], dict):
-                payload_for_sig = {"mode": "keyset", "after": cursor["after"]}
-            elif "before" in cursor and isinstance(cursor["before"], dict):
-                payload_for_sig = {"mode": "keyset", "before": cursor["before"]}
+        secret = os.getenv("CURSOR_SIGNING_SECRET", "")
+        sig = cursor.get("sig")
 
-            if payload_for_sig and (
-                not sig or not _cursor_verify(payload_for_sig, sig, secret)
+        # Verify ONLY if a signature is present; allow legacy unsigned cursors.
+        if secret and sig:
+            # Build candidate payloads to verify against
+            candidates: list[dict] = []
+
+            # Directional minimal forms
+            if isinstance(cursor.get("after"), dict):
+                candidates.append({"mode": "keyset", "after": cursor["after"]})
+            if isinstance(cursor.get("before"), dict):
+                candidates.append({"mode": "keyset", "before": cursor["before"]})
+                # Legacy: 'before' body signed as 'after'
+                candidates.append({"mode": "keyset", "after": cursor["before"]})
+
+            # Canonical d/o/dir form (if supplied)
+            d, o, dirv = cursor.get("d"), cursor.get("o"), cursor.get("dir")
+            if (
+                isinstance(d, dict)
+                and isinstance(o, list)
+                and dirv in ("after", "before")
             ):
+                candidates.append({"mode": "keyset", "d": d, "o": o, "dir": dirv})
+
+            # Very old clients: inner dict only
+            if isinstance(cursor.get("after"), dict):
+                candidates.append(cursor["after"])
+            if isinstance(cursor.get("before"), dict):
+                candidates.append(cursor["before"])
+            if isinstance(cursor.get("d"), dict):
+                candidates.append(cursor["d"])
+
+            def _verified_any() -> bool:
+                for p in candidates:
+                    if _cursor_verify(p, sig, secret):
+                        return True
+                return False
+
+            if candidates and not _verified_any():
                 raise ValueError("invalid or missing cursor signature")
 
-        q = _apply_keyset_cursor(q, normalized_order, cursor)
+        # Optional integrity check: ensure the cursor's order matches this request (when provided)
+        if isinstance(cursor.get("o"), list):
+            expected_o = [f"{c}.{d}" for (c, d) in normalized_order]
+            if cursor["o"] != expected_o:
+                raise ValueError("cursor order mismatch")
 
-    # If caller didn’t pass order but gave a tiebreaker, apply it.
-    if (
-        not applied_any_order
-        and isinstance(tiebreaker, dict)
-        and tiebreaker.get("field")
-    ):
-        q = _apply_order(q, tiebreaker)
+        # Apply keyset (supports both 'after' and 'before')
+        q = _apply_keyset_cursor(q, normalized_order, cursor)
 
     # If still no order was applied, fall back to a stable tiebreaker
     if not applied_any_order and not args.get("_force_no_order"):

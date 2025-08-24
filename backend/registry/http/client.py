@@ -20,6 +20,10 @@ import uuid
 import base64
 from urllib.parse import urlencode
 from typing import Any, Dict, Optional, Tuple, Iterator
+import uuid
+import mimetypes
+import os
+from pathlib import Path
 
 
 def decode_response_bytes(
@@ -414,86 +418,121 @@ def _coerce_file_bytes(value: Any) -> bytes:
     raise TypeError(f"Unsupported file content type: {type(value).__name__}")
 
 
-def build_request_body(args: Dict[str, Any]) -> Tuple[Optional[bytes], Dict[str, str]]:
+def _guess_ct(filename: str | None, fallback: str = "application/octet-stream") -> str:
+    if not filename:
+        return fallback
+    ctype, _ = mimetypes.guess_type(filename)
+    return ctype or fallback
+
+
+def _encode_multipart(form: dict | None, files: list[dict]) -> tuple[bytes, dict]:
     """
-    Builds the outbound request body and any Content-Type header needed.
+    Encode multipart/form-data body.
 
-    Supported shapes (first match wins):
-      - files: List[ {name, filename?, content|content_b64, content_type?} ]  -> multipart/form-data
-        * optional: form: Dict[str, str|List[str]] -> extra simple fields in same multipart
-      - json: Any                                     -> application/json
-      - form: Dict[str, str|List[str]]                -> application/x-www-form-urlencoded
-      - body: str|bytes                               -> caller-provided; no Content-Type set here
-
-    Returns: (payload_bytes or None, headers_to_add)
+    files: [
+      {"name":"file", "filename":"a.txt", "content": b"..."/"str", "path": "/abs/or/rel", "content_type":"text/plain"},
+      ...
+    ]
+    If both 'content' and 'path' are passed, 'content' wins.
     """
-    headers: Dict[str, str] = {}
+    boundary = f"----pa-{uuid.uuid4().hex}"
+    CRLF = b"\r\n"
+    out = bytearray()
 
+    # form fields
+    if form:
+        for k, v in form.items():
+            out += b"--" + boundary.encode() + CRLF
+            out += f'Content-Disposition: form-data; name="{k}"'.encode() + CRLF
+            out += b"Content-Type: text/plain; charset=utf-8" + CRLF + CRLF
+            out += (str(v)).encode("utf-8") + CRLF
+
+    # files
+    for f in files:
+        name = f.get("name")
+        if not name:
+            raise ValueError("files[].name is required")
+
+        filename = f.get("filename")
+        content = f.get("content", None)
+        fpath = f.get("path")
+
+        if content is None and fpath:
+            p = Path(str(fpath))
+            if not p.exists() or not p.is_file():
+                raise ValueError(f"files[].path not found or not a file: {fpath}")
+            if not filename:
+                filename = p.name
+            with p.open("rb") as fp:
+                content = fp.read()
+
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        elif isinstance(content, (bytes, bytearray)):
+            content = bytes(content)
+        elif content is None:
+            # allow empty file
+            content = b""
+
+        if not filename:
+            filename = "upload.bin"
+
+        ctype = f.get("content_type") or _guess_ct(filename)
+
+        out += b"--" + boundary.encode() + CRLF
+        out += (
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"'
+        ).encode() + CRLF
+        out += f"Content-Type: {ctype}".encode() + CRLF + CRLF
+        out += content + CRLF
+
+    out += b"--" + boundary.encode() + b"--" + CRLF
+    return bytes(out), {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+
+
+def build_request_body(args: Dict[str, Any]) -> tuple[bytes | None, Dict[str, str]]:
+    """
+    Returns (payload_bytes_or_None, hdrs_add)
+    Chooses one of: multipart (files present) > urlencoded form > JSON > raw str/bytes > None
+    Does NOT overwrite caller's explicit Content-Type; we only suggest via hdrs_add.
+    """
+    hdrs_add: Dict[str, str] = {}
     files = args.get("files")
-    if files:
-        boundary = f"----registry-{uuid.uuid4().hex}"
-        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
-        buf = io.BytesIO()
+    form = args.get("form")
+    body = args.get("body", None)
 
-        # optional simple fields alongside files
-        form = args.get("form") or {}
-        for k, v in form.items() if isinstance(form, dict) else []:
-            values = v if isinstance(v, list) else [v]
-            for sv in values:
-                buf.write(f"--{boundary}\r\n".encode())
-                buf.write(
-                    f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode()
-                )
-                buf.write(str(sv).encode())
-                buf.write(b"\r\n")
+    # 1) multipart (takes precedence if files present)
+    if isinstance(files, list) and files:
+        payload, hdrs = _encode_multipart(form if isinstance(form, dict) else {}, files)
+        hdrs_add.update(hdrs)
+        return payload, hdrs_add
 
-        for part in files:
-            if not isinstance(part, dict) or "name" not in part:
-                raise ValueError(
-                    "each files[] item must be a dict with at least 'name'"
-                )
-            name = part["name"]
-            filename = part.get("filename") or "upload.bin"
-            ctype = part.get("content_type") or "application/octet-stream"
-            # allow either 'content' or 'content_b64'
-            raw = part.get("content", None)
-            if raw is None and "content_b64" in part:
-                raw = part["content_b64"]
-            content_bytes = _coerce_file_bytes(raw)
+    # 2) application/x-www-form-urlencoded (when form provided without files)
+    if isinstance(form, dict) and form:
+        from urllib.parse import urlencode
 
-            buf.write(f"--{boundary}\r\n".encode())
-            buf.write(
-                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
-            )
-            buf.write(f"Content-Type: {ctype}\r\n\r\n".encode())
-            buf.write(content_bytes)
-            buf.write(b"\r\n")
-
-        buf.write(f"--{boundary}--\r\n".encode())
-        return buf.getvalue(), headers
-
-    if "json" in args and args["json"] is not None:
-        payload = json.dumps(args["json"]).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-        return payload, headers
-
-    if "form" in args and args["form"] is not None:
-        form = args["form"]
-        if not isinstance(form, dict):
-            raise ValueError("args.form must be a dict")
         payload = urlencode(form, doseq=True).encode("utf-8")
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        return payload, headers
+        hdrs_add["Content-Type"] = "application/x-www-form-urlencoded; charset=utf-8"
+        return payload, hdrs_add
 
-    if "body" in args and args["body"] is not None:
-        data = args["body"]
-        if isinstance(data, bytes):
-            return data, headers
-        if isinstance(data, str):
-            return data.encode("utf-8"), headers
-        raise ValueError("args.body must be str or bytes")
+    # 3) body dict/list -> JSON
+    if isinstance(body, (dict, list)):
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        hdrs_add["Content-Type"] = "application/json"
+        return payload, hdrs_add
 
-    return None, headers
+    # 4) body str -> text/plain
+    if isinstance(body, str):
+        payload = body.encode("utf-8")
+        hdrs_add["Content-Type"] = "text/plain; charset=utf-8"
+        return payload, hdrs_add
+
+    # 5) body bytes/bytearray
+    if isinstance(body, (bytes, bytearray)):
+        return bytes(body), hdrs_add  # caller may have set Content-Type explicitly
+
+    # 6) nothing to send
+    return None, hdrs_add
 
 
 def _decompress_stream(enc: str | None):

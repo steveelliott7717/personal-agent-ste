@@ -20,40 +20,54 @@ import re
 from pathlib import Path
 import hashlib
 import os
+from backend.registry.http.client import _decompress_if_needed  # local helper
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+import random
+import threading
+import time
+
 
 # Root for on-disk saves (override on Fly with: HTTP_FETCH_SAVE_ROOT=/tmp)
 SAVE_ROOT = os.getenv("HTTP_FETCH_SAVE_ROOT", "/tmp")
 
 
-def _save_stream_to_path(stream_iter, dest_path: str) -> Dict[str, Any]:
+def _save_stream_to_path(stream, dest_path: str) -> Dict[str, Any]:
     """
-    Streams bytes to a local file safely under SAVE_ROOT.
-    - If dest_path is relative, it is resolved under SAVE_ROOT.
-    - If absolute, it must resolve within SAVE_ROOT (prevents path traversal).
-    Returns { path, bytes, sha256 }.
+    Streams to a temp file in the target directory, fsyncs, then atomically renames.
+    Returns {"path": final_path, "bytes": n}
     """
-    root = Path(SAVE_ROOT).resolve()
-    p = Path(dest_path)
-    if not p.is_absolute():
-        p = root / p
-    p = p.resolve()
-    # ensure p is inside root
-    if not (p == root or root in p.parents):
-        raise ValueError(f"save_to path must be within {root}")
+    import os, tempfile
 
-    p.parent.mkdir(parents=True, exist_ok=True)
+    dest_dir = os.path.dirname(dest_path) or "."
+    os.makedirs(dest_dir, exist_ok=True)
 
     total = 0
-    h = hashlib.sha256()
-    with open(p, "wb") as f:
-        for chunk in stream_iter:
-            if not chunk:
-                continue
-            f.write(chunk)
-            total += len(chunk)
-            h.update(chunk)
-
-    return {"path": str(p), "bytes": total, "sha256": h.hexdigest()}
+    # create temp file in same directory for atomic rename on all platforms
+    fd, tmp_path = tempfile.mkstemp(prefix=".pa_tmp_", dir=dest_dir)
+    try:
+        with os.fdopen(fd, "wb", buffering=0) as f:
+            for chunk in stream:
+                if not chunk:
+                    continue
+                f.write(chunk)
+                total += len(chunk)
+            try:
+                f.flush()
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+        # atomic move
+        os.replace(tmp_path, dest_path)
+        return {"path": dest_path, "bytes": total}
+    except Exception:
+        # best-effort cleanup
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+        raise
 
 
 def _upload_to_github(dest: Dict[str, Any], content_bytes: bytes) -> Dict[str, Any]:
@@ -245,32 +259,120 @@ def _run_destination_chain(
     return {"saved_chain": results}
 
 
-def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
-    # Build body (files/json/form/body) and merge headers before constructing the request
-    payload, hdrs_add = build_request_body(args)
+def _parse_retry_after(header_val: str | None) -> int | None:
+    """
+    Returns milliseconds to wait, or None if unparseable.
+    Accepts either delta-seconds (e.g., '120') or HTTP-date.
+    """
+    if not header_val:
+        return None
+    s = header_val.strip()
+    # delta-seconds
+    if s.isdigit():
+        try:
+            return int(s) * 1000
+        except Exception:
+            return None
+    # HTTP date
+    try:
+        dt = parsedate_to_datetime(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        ms = int((dt - now).total_seconds() * 1000)
+        return ms if ms > 0 else 0
+    except Exception:
+        return None
 
+
+def _sleep_ms(ms: int):
+    if ms and ms > 0:
+        time.sleep(ms / 1000.0)
+
+
+# ---- per-host token bucket (process-local) ----
+_TOKEN_BUCKETS: dict[str, dict] = {}
+_TOKEN_LOCK = threading.Lock()
+
+
+def _tb_take(host: str, capacity: int, refill_per_sec: float, max_wait_ms: int) -> None:
+    """
+    Blocks until a token is available or max_wait_ms exceeded.
+    Raises TimeoutError if couldn't take a token in time.
+    """
+    now = time.monotonic()
+    with _TOKEN_LOCK:
+        b = _TOKEN_BUCKETS.get(host)
+        if not b:
+            b = {"tokens": capacity, "last": now}
+            _TOKEN_BUCKETS[host] = b
+
+    deadline = now + max(0, max_wait_ms) / 1000.0
+
+    while True:
+        with _TOKEN_LOCK:
+            # refill
+            now = time.monotonic()
+            elapsed = max(0.0, now - b["last"])
+            if refill_per_sec > 0:
+                b["tokens"] = min(
+                    capacity, b["tokens"] + elapsed * float(refill_per_sec)
+                )
+            b["last"] = now
+
+            if b["tokens"] >= 1.0:
+                b["tokens"] -= 1.0
+                return  # got a token
+
+        # no token; check deadline then sleep briefly
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"rate limit exceeded for host '{host}'")
+        time.sleep(0.02)
+
+
+def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Registry verb: http.fetch
+    Supports:
+      - JSON/text/binary fetch with gzip/deflate decoding
+      - Retries honoring Retry-After (bounded) + exponential backoff + jitter
+      - Streaming to local file (save_to), or piping into destinations (github/supabase)
+      - Pagination modes via paginate_response (cursor/header_link/page)
+      - Per-host token-bucket rate limiting
+    """
+
+    # ---- build body and baseline headers ----
+    payload, hdrs_add = build_request_body(
+        args
+    )  # may set Content-Type when encoding form/json/files
     headers = dict(args.get("headers") or {})
-    # Respect caller's explicit Content-Type; only set if absent
-    if (
-        "Content-Type" not in {k.title(): v for k, v in headers.items()}
-        and "Content-Type" in hdrs_add
-    ):
-        headers["Content-Type"] = hdrs_add["Content-Type"]
-    # Ask servers to compress unless caller already specified
-    if "Accept-Encoding" not in {k.title(): v for k, v in headers.items()}:
+
+    # case-insensitive header checks
+    def _has(h: Dict[str, Any], key: str) -> bool:
+        lk = key.lower()
+        return any(k.lower() == lk for k in h.keys())
+
+    # default UA and Accept-Encoding; don't stomp caller's values
+    headers.setdefault("User-Agent", "personal-agent/1.0 (+registry-http.fetch)")
+    if not _has(headers, "Accept-Encoding"):
         headers["Accept-Encoding"] = "gzip, deflate"
 
+    # respect caller's explicit Content-Type; only add if absent and we encoded a body
+    if not _has(headers, "Content-Type") and "Content-Type" in (hdrs_add or {}):
+        headers["Content-Type"] = hdrs_add["Content-Type"]
+
+    # apply composed headers back to args and body payload (if any)
     args["headers"] = headers
     if payload is not None:
         args["body"] = payload
 
-    # Build request
+    # ---- build request & safety checks (host/port/IP) ----
     req = http_request.build(args)
 
-    # Allow/deny + port checks
     host_ok, why = host_port_allowed(req.url)
     if not host_ok:
         return {"status": 0, "error": "PortNotAllowed", "message": why}
+
     if is_disallowed_ip_host(req.host):
         return {
             "status": 0,
@@ -278,85 +380,136 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
             "message": f"Disallowed IP for host: {req.host}",
         }
 
-    # Apply auth/cache headers (no-op if not provided)
+    # ---- auth + cache validators (no-op if not provided) ----
     apply_auth_headers(req, args.get("auth") or {})
     apply_cache_headers(req, args.get("cache") or {})
 
-    # Execute (destination-aware) with Retry-After/backoff
+    # ---- retry config ----
     retry_cfg = args.get("retry") or {}
-    max_retries = int(retry_cfg.get("max", 0))
-    retry_on = set(retry_cfg.get("on") or [429, 500, 502, 503, 504])
+    max_retries = int(
+        retry_cfg.get("max", 0)
+    )  # number of retry attempts (0 = no retry)
+    retry_on = set(int(s) for s in (retry_cfg.get("on") or [429, 500, 502, 503, 504]))
     backoff_ms = int(retry_cfg.get("backoff_ms", 100))
     jitter = bool(retry_cfg.get("jitter", True))
 
-    # --- save_to (stream to local file) ---
+    # ---- rate limit (per-host) ----
+    rl_cfg = (args.get("rate_limit") or {}).get("per_host") or {}
+    rl_capacity = int(rl_cfg.get("capacity", 5))
+    rl_refill = float(rl_cfg.get("refill_per_sec", 2.0))
+    rl_maxwait = int(rl_cfg.get("max_wait_ms", 2000))
+
+    # ---- streaming to file (save_to) ----
     save_to = args.get("save_to")
     if isinstance(save_to, str) and save_to.strip():
         attempt = 0
         while True:
-            req = http_request.build(args)
-            meta, stream = req.send_stream(chunk_size=64 * 1024)
+            req = http_request.build(
+                args
+            )  # re-build to include any per-attempt header changes
+            try:
+                _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
+                meta_r, stream = req.send_stream(chunk_size=64 * 1024)
+            except TimeoutError as e:
+                # Treat as a structured RateLimited error
+                return {
+                    "status": 0,
+                    "url": req.url,
+                    "final_url": req.url,
+                    "headers": {},
+                    "bytes_len": 0,
+                    "elapsed_ms": 0,
+                    "json": None,
+                    "text": None,
+                    "truncated": False,
+                    "not_modified": False,
+                    "error": "RateLimited",
+                    "message": str(e),
+                }
+
             info = _save_stream_to_path(stream, save_to)
-            if meta.status in retry_on and attempt < max_retries:
+
+            if meta_r.status in retry_on and attempt < max_retries:
                 attempt += 1
+                # clean partial file
                 try:
                     os.remove(info["path"])
                 except Exception:
                     pass
-                wait_s = compute_retry_wait(
-                    meta.headers,
-                    attempt=attempt,
-                    backoff_ms=backoff_ms,
-                    jitter=jitter,
-                    cap_seconds=60.0,
+                time.sleep(
+                    compute_retry_wait(
+                        meta_r.headers,
+                        attempt=attempt,
+                        backoff_ms=backoff_ms,
+                        jitter=jitter,
+                        cap_seconds=60.0,
+                    )
                 )
-                time.sleep(wait_s)
                 continue
+
             return {
-                "status": meta.status,
+                "status": meta_r.status,
                 "url": req.url,
-                "final_url": meta.final_url,
-                "headers": meta.headers,
+                "final_url": meta_r.final_url,
+                "headers": meta_r.headers,
                 "bytes_len": info["bytes"],
-                "elapsed_ms": meta.elapsed_ms,
+                "elapsed_ms": meta_r.elapsed_ms,
                 "json": None,
                 "text": None,
                 "truncated": False,
-                "not_modified": (meta.status == 304),
+                "not_modified": (meta_r.status == 304),
                 "saved": {"backend": "file", **info},
             }
 
+    # ---- destination chain / single destination (stream, then handle) ----
     destination_chain = args.get("destination_chain")
     destination = args.get("destination")
 
     if destination_chain:
-        # Single stream for entire chain
         attempt = 0
         collected = bytearray()
         while True:
             req = http_request.build(args)
-            meta, stream = req.send_stream(chunk_size=64 * 1024)
+            try:
+                _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
+                meta_r, stream = req.send_stream(chunk_size=64 * 1024)
+            except TimeoutError as e:
+                return {
+                    "status": 0,
+                    "url": req.url,
+                    "final_url": req.url,
+                    "headers": {},
+                    "bytes_len": 0,
+                    "elapsed_ms": 0,
+                    "json": None,
+                    "text": None,
+                    "truncated": False,
+                    "not_modified": False,
+                    "error": "RateLimited",
+                    "message": str(e),
+                }
+
             for chunk in stream:
                 collected.extend(chunk)
 
-            if meta.status in retry_on and attempt < max_retries:
+            if meta_r.status in retry_on and attempt < max_retries:
                 attempt += 1
                 collected = bytearray()
-                wait_s = compute_retry_wait(
-                    meta.headers,
-                    attempt=attempt,
-                    backoff_ms=backoff_ms,
-                    jitter=jitter,
-                    cap_seconds=60.0,
+                time.sleep(
+                    compute_retry_wait(
+                        meta_r.headers,
+                        attempt=attempt,
+                        backoff_ms=backoff_ms,
+                        jitter=jitter,
+                        cap_seconds=60.0,
+                    )
                 )
-                time.sleep(wait_s)
                 continue
 
             content = bytes(collected)
-            # context for templating
             sha256 = hashlib.sha256(content).hexdigest()
             content_type = (
-                (meta.headers.get("Content-Type") or "").split(";")[0].strip()
+                (meta_r.headers.get("Content-Type") or "").split(";")[0].strip()
             )
             base_ctx = {
                 "bytes_len": len(content),
@@ -366,120 +519,148 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
             chain_out = _run_destination_chain(destination_chain, content, base_ctx)
 
             return {
-                "status": meta.status,
+                "status": meta_r.status,
                 "url": req.url,
-                "final_url": meta.final_url,
-                "headers": meta.headers,
+                "final_url": meta_r.final_url,
+                "headers": meta_r.headers,
                 "bytes_len": len(content),
-                "elapsed_ms": meta.elapsed_ms,
+                "elapsed_ms": meta_r.elapsed_ms,
                 "json": None,
                 "text": None,
                 "truncated": False,
-                "not_modified": (meta.status == 304),
+                "not_modified": (meta_r.status == 304),
                 **chain_out,
             }
 
-    elif destination:
-        # Stream → single destination (existing behavior)
+    if destination:
         attempt = 0
         collected = bytearray()
         while True:
             req = http_request.build(args)
-            meta, stream = req.send_stream(chunk_size=64 * 1024)
+            try:
+                _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
+                meta_r, stream = req.send_stream(chunk_size=64 * 1024)
+            except TimeoutError as e:
+                return {
+                    "status": 0,
+                    "url": req.url,
+                    "final_url": req.url,
+                    "headers": {},
+                    "bytes_len": 0,
+                    "elapsed_ms": 0,
+                    "json": None,
+                    "text": None,
+                    "truncated": False,
+                    "not_modified": False,
+                    "error": "RateLimited",
+                    "message": str(e),
+                }
+
             for chunk in stream:
                 collected.extend(chunk)
 
-            if meta.status in retry_on and attempt < max_retries:
+            if meta_r.status in retry_on and attempt < max_retries:
                 attempt += 1
                 collected = bytearray()
-                wait_s = compute_retry_wait(
-                    meta.headers,
-                    attempt=attempt,
-                    backoff_ms=backoff_ms,
-                    jitter=jitter,
-                    cap_seconds=60.0,
+                time.sleep(
+                    compute_retry_wait(
+                        meta_r.headers,
+                        attempt=attempt,
+                        backoff_ms=backoff_ms,
+                        jitter=jitter,
+                        cap_seconds=60.0,
+                    )
                 )
-                time.sleep(wait_s)
                 continue
 
             content = bytes(collected)
             dtype = (destination.get("type") or "").lower()
             if dtype == "github":
                 up = _upload_to_github(destination, content)
-                return {
-                    "status": meta.status,
-                    "url": req.url,
-                    "final_url": meta.final_url,
-                    "headers": meta.headers,
-                    "bytes_len": len(content),
-                    "elapsed_ms": meta.elapsed_ms,
-                    "json": None,
-                    "text": None,
-                    "truncated": False,
-                    "not_modified": (meta.status == 304),
-                    "saved": {"backend": "github", **up},
-                }
+                backend_tag = {"backend": "github", **up}
             elif dtype == "supabase_storage":
                 up = _upload_to_supabase_storage(destination, content)
-                return {
-                    "status": meta.status,
-                    "url": req.url,
-                    "final_url": meta.final_url,
-                    "headers": meta.headers,
-                    "bytes_len": len(content),
-                    "elapsed_ms": meta.elapsed_ms,
-                    "json": None,
-                    "text": None,
-                    "truncated": False,
-                    "not_modified": (meta.status == 304),
-                    "saved": {"backend": "supabase_storage", **up},
-                }
+                backend_tag = {"backend": "supabase_storage", **up}
             elif dtype == "supabase_table":
                 up = _insert_into_supabase_table(destination, content)
-                return {
-                    "status": meta.status,
-                    "url": req.url,
-                    "final_url": meta.final_url,
-                    "headers": meta.headers,
-                    "bytes_len": len(content),
-                    "elapsed_ms": meta.elapsed_ms,
-                    "json": None,
-                    "text": None,
-                    "truncated": False,
-                    "not_modified": (meta.status == 304),
-                    "saved": {"backend": "supabase_table", **up},
-                }
+                backend_tag = {"backend": "supabase_table", **up}
             else:
                 raise ValueError(
                     "destination.type must be one of: github | supabase_storage | supabase_table"
                 )
-    else:
-        # Normal in-memory path (existing behavior)
-        attempt = 0  # completed retries so far
-        while True:
-            req = http_request.build(args)
+
+            return {
+                "status": meta_r.status,
+                "url": req.url,
+                "final_url": meta_r.final_url,
+                "headers": meta_r.headers,
+                "bytes_len": len(content),
+                "elapsed_ms": meta_r.elapsed_ms,
+                "json": None,
+                "text": None,
+                "truncated": False,
+                "not_modified": (meta_r.status == 304),
+                "saved": backend_tag,
+            }
+
+    # ---- normal in-memory path (with retries + rate limit) ----
+    attempt = 0
+    last_rate_error: str | None = None
+    while True:
+        req = http_request.build(args)
+        try:
+            _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
             resp = req.send()
-
-            # stop if not retryable OR we already used up all retries
-            if resp.status not in retry_on or attempt >= max_retries:
-                break
-
-            # wait according to Retry-After (if present) or backoff policy, then retry
+        except TimeoutError as e:
+            last_rate_error = str(e)
+            if attempt >= max_retries:
+                return {
+                    "status": 0,
+                    "url": req.url,
+                    "final_url": req.url,
+                    "headers": {},
+                    "bytes_len": 0,
+                    "elapsed_ms": 0,
+                    "json": None,
+                    "text": None,
+                    "truncated": False,
+                    "not_modified": False,
+                    "error": "RateLimited",
+                    "message": last_rate_error,
+                }
             attempt += 1
-            wait_s = compute_retry_wait(
+            time.sleep(
+                compute_retry_wait(
+                    {},
+                    attempt=attempt,
+                    backoff_ms=backoff_ms,
+                    jitter=jitter,
+                    cap_seconds=5.0,
+                )
+            )
+            continue
+
+        # stop if not retryable OR we already used up all retries
+        if resp.status not in retry_on or attempt >= max_retries:
+            break
+
+        attempt += 1
+        time.sleep(
+            compute_retry_wait(
                 resp.headers,
                 attempt=attempt,
                 backoff_ms=backoff_ms,
                 jitter=jitter,
                 cap_seconds=60.0,
             )
-            time.sleep(wait_s)
+        )
 
-    # Parse + clamp
-    body = clamp_bytes(resp.body, max_bytes=args.get("max_bytes"))
+    # ---- decompress -> clamp -> parse (FIRST PAGE) ----
+    content_encoding = (resp.headers.get("Content-Encoding") or "").lower()
+    decoded = _decompress_if_needed(resp.body, content_encoding)
+    body = clamp_bytes(decoded, max_bytes=args.get("max_bytes"))
     text, json_data = choose_parse_body(resp.headers, body)
 
-    # First page as dict
     first = {
         "status": resp.status,
         "url": req.url,
@@ -489,44 +670,76 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
         "elapsed_ms": resp.elapsed_ms,
         "json": json_data,
         "text": text,
-        "truncated": resp.truncated,
+        "truncated": resp.truncated or (len(decoded) > len(body)),
         "not_modified": (resp.status == 304),
     }
 
-    # Optional pagination
+    # ---- pagination (uses same decompress->clamp->parse for each page) ----
     paginated = None
     paginate_cfg = args.get("paginate") or {}
     if paginate_cfg:
 
         def _fetch_next(next_url: str) -> Dict[str, Any]:
-            next_req = http_request.build(
-                {
-                    "url": next_url,
-                    "method": "GET",
-                    "headers": req.headers,  # reuse headers/auth
-                    "timeout": args.get("timeout"),
-                    "allow_redirects": args.get("allow_redirects", True),
-                    "max_bytes": args.get("max_bytes", 2_000_000),
-                }
-            )
-            # retry for next pages too
+            next_args = {
+                "url": next_url,
+                "method": "GET",
+                "headers": req.headers,  # reuse auth/UA
+                "timeout": args.get("timeout"),
+                "allow_redirects": args.get("allow_redirects", True),
+                "max_bytes": args.get("max_bytes", 2_000_000),
+            }
+            next_req = http_request.build(next_args)
+
             _attempt = 0
             while True:
-                next_resp = next_req.send()
+                try:
+                    _tb_take(next_req.host, rl_capacity, rl_refill, rl_maxwait)
+                    next_resp = next_req.send()
+                except TimeoutError as e:
+                    if _attempt >= max_retries:
+                        return {
+                            "status": 0,
+                            "url": next_url,
+                            "final_url": next_url,
+                            "headers": {},
+                            "bytes_len": 0,
+                            "elapsed_ms": 0,
+                            "json": None,
+                            "text": None,
+                            "truncated": False,
+                            "error": "RateLimited",
+                            "message": str(e),
+                        }
+                    _attempt += 1
+                    time.sleep(
+                        compute_retry_wait(
+                            {},
+                            attempt=_attempt,
+                            backoff_ms=backoff_ms,
+                            jitter=jitter,
+                            cap_seconds=5.0,
+                        )
+                    )
+                    continue
+
                 if next_resp.status not in retry_on or _attempt >= max_retries:
                     break
                 _attempt += 1
-                _wait_s = compute_retry_wait(
-                    next_resp.headers,
-                    attempt=_attempt,
-                    backoff_ms=backoff_ms,
-                    jitter=jitter,
-                    cap_seconds=60.0,
+                time.sleep(
+                    compute_retry_wait(
+                        next_resp.headers,
+                        attempt=_attempt,
+                        backoff_ms=backoff_ms,
+                        jitter=jitter,
+                        cap_seconds=60.0,
+                    )
                 )
-                time.sleep(_wait_s)
 
-            next_body = clamp_bytes(next_resp.body, max_bytes=args.get("max_bytes"))
+            enc_n = (next_resp.headers.get("Content-Encoding") or "").lower()
+            decoded_n = _decompress_if_needed(next_resp.body, enc_n)
+            next_body = clamp_bytes(decoded_n, max_bytes=args.get("max_bytes"))
             next_text, next_json = choose_parse_body(next_resp.headers, next_body)
+
             return {
                 "status": next_resp.status,
                 "url": next_url,
@@ -536,24 +749,15 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
                 "elapsed_ms": next_resp.elapsed_ms,
                 "json": next_json,
                 "text": next_text,
+                "truncated": next_resp.truncated or (len(decoded_n) > len(next_body)),
             }
 
         cfg = dict(paginate_cfg)
         cfg["fetch"] = _fetch_next
         paginated = paginate_response(first, args, cfg)
 
-    out = {
-        "status": resp.status,
-        "url": req.url,
-        "final_url": resp.final_url,
-        "headers": resp.headers,
-        "bytes_len": len(body),
-        "elapsed_ms": resp.elapsed_ms,
-        "json": json_data,
-        "text": text,
-        "truncated": resp.truncated,
-        "not_modified": (resp.status == 304),
-    }
+    # ---- assemble final output ----
+    out = dict(first)  # base fields from first page
     if paginated:
         out["pagination"] = paginated
     if args.get("trace"):
