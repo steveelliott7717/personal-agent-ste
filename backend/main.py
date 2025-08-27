@@ -53,6 +53,26 @@ app.add_api_route("/app/api/agents/plan", call_agent_plan, methods=["POST"])
 _BEGIN_RE = re.compile(r"^BEGIN_FILE\s+(.+)$")
 _END_RE = re.compile(r"^END_FILE\s*$")
 
+from starlette.middleware.base import BaseHTTPMiddleware
+import uuid
+
+
+class CorrelationMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # If the client didn't provide these, create them so everything still traces
+        if "x-correlation-id" not in request.headers:
+            request.scope["headers"].append(
+                (b"x-correlation-id", str(uuid.uuid4()).encode())
+            )
+        if "x-idempotency-key" not in request.headers:
+            request.scope["headers"].append(
+                (b"x-idempotency-key", str(uuid.uuid4()).encode())
+            )
+        return await call_next(request)
+
+
+app.add_middleware(CorrelationMiddleware)
+
 
 def _is_ascii_lf(s: str) -> bool:
     try:
@@ -364,11 +384,24 @@ def _structured_error_payload(
     }
 
 
+def _extract_ids_from_request(request: Request) -> tuple[str | None, str | None]:
+    corr = request.headers.get("X-Correlation-Id") or ""
+    idem = request.headers.get("X-Idempotency-Key") or ""
+    # also accept query-string fallbacks if you want:
+    corr = corr or request.query_params.get("correlation_id") or ""
+    idem = idem or request.query_params.get("idempotency_key") or ""
+    return corr or None, idem or None
+
+
 @app.exception_handler(RequestValidationError)
 async def on_validation_error(request: Request, exc: RequestValidationError):
+    corr, idem = _extract_ids_from_request(request)
     return JSONResponse(
         _structured_error_payload(
-            "invalid_request: " + str(exc.errors()), code="ValidationError"
+            "invalid_request: " + str(exc.errors()),
+            code="ValidationError",
+            correlation_id=corr,
+            idempotency_key=idem,
         ),
         status_code=200,
     )
@@ -376,10 +409,28 @@ async def on_validation_error(request: Request, exc: RequestValidationError):
 
 @app.exception_handler(StarletteHTTPException)
 async def on_http_exception(request: Request, exc: StarletteHTTPException):
+    corr, idem = _extract_ids_from_request(request)
     return JSONResponse(
         _structured_error_payload(
             f"http_error_{exc.status_code}: {exc.detail}",
             code=f"HTTP_{exc.status_code}",
+            correlation_id=corr,
+            idempotency_key=idem,
+        ),
+        status_code=200,
+    )
+
+
+@app.exception_handler(Exception)
+async def on_any_exception(request: Request, exc: Exception):
+    corr, idem = _extract_ids_from_request(request)
+    # Keep messages terse in production; the registry already includes tracebacks when needed.
+    return JSONResponse(
+        _structured_error_payload(
+            f"internal_error: {exc.__class__.__name__}",
+            code="InternalError",
+            correlation_id=corr,
+            idempotency_key=idem,
         ),
         status_code=200,
     )

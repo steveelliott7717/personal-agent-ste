@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional, TypedDict
 from datetime import datetime, timezone
+import traceback
+import uuid
 import time
+
 
 # Import only adapter entrypoints here
 from backend.registry.adapters.http_fetch import http_fetch_adapter
@@ -11,19 +14,19 @@ from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
 from backend.registry.adapters.browser_adapter import browser_run_adapter
 
-
 # -----------------------------
 # Structured error helpers
 # -----------------------------
-STRUCTURED_ERROR_VERSION = 1
+import traceback
+
+ERR_VERSION = 1
 
 
 def _mk_error(
-    code: str, message: str, hint: Optional[str] = None, details: Any = None
-) -> Dict[str, Any]:
-    """Create a normalized error object."""
+    code: str, message: str, hint: str | None = None, details: str | dict | None = None
+) -> dict:
     return {
-        "version": STRUCTURED_ERROR_VERSION,
+        "version": ERR_VERSION,
         "code": str(code),
         "message": str(message),
         "hint": hint,
@@ -31,62 +34,69 @@ def _mk_error(
     }
 
 
-def _normalize_exception(exc: Exception) -> Dict[str, Any]:
-    """Turn exceptions (ValueError, API errors, timeouts) into structured errors."""
-    # PostgREST / Supabase style (many adapters attach .data)
+def _normalize_exception(exc: Exception) -> dict:
+    """
+    Map Python/PostgREST/browser/http exceptions to a stable {code,message,hint,details}.
+    """
+    # PostgREST/Supabase-style dict in args?  e.g. {'message': '...', 'code': 'PGRST100', ...}
+    if exc.args and isinstance(exc.args[0], dict):
+        d = exc.args[0]
+        if "message" in d or "code" in d:
+            return _mk_error(
+                code=d.get("code") or exc.__class__.__name__,
+                message=d.get("message") or str(exc),
+                hint=d.get("hint"),
+                details=d.get("details"),
+            )
+
+    # Some SDKs attach .data (dict with code/message)
     data = getattr(exc, "data", None)
     if isinstance(data, dict) and ("code" in data or "message" in data):
         return _mk_error(
-            data.get("code") or exc.__class__.__name__,
-            data.get("message") or str(exc),
-            data.get("hint"),
-            data.get("details"),
+            code=data.get("code") or exc.__class__.__name__,
+            message=data.get("message") or str(exc),
+            hint=data.get("hint"),
+            details=data.get("details"),
         )
 
-    # Some adapters expose .code / .message
-    code = getattr(exc, "code", None)
-    msg = getattr(exc, "message", None)
-    if code or msg:
-        return _mk_error(code or exc.__class__.__name__, msg or str(exc))
-
     # Common Python exceptions
-    name = exc.__class__.__name__
-    if name in ("TimeoutError",):
+    if isinstance(exc, TimeoutError):
         return _mk_error(
             "Timeout", str(exc), "Increase timeout_ms or simplify the request."
         )
-    if name in ("ValueError", "TypeError"):
+    if isinstance(exc, (ValueError, TypeError)):
         return _mk_error("ValidationError", str(exc))
-    if name in ("KeyError",):
-        return _mk_error("NotFound", str(exc))
+    if isinstance(exc, KeyError):
+        return _mk_error("ValidationError", f"missing key: {exc}")
 
     # Fallback
-    return _mk_error(name, str(exc))
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return _mk_error("InternalError", str(exc), details=tb)
 
 
 def _extract_error_from_result(res: Any) -> Optional[Dict[str, Any]]:
     """
     If an adapter returned a dict that *looks* like an error (status:0 or 'error'/'message' keys),
-    turn it into a structured error so the envelope is consistent.
+    convert to a structured error so envelopes are consistent.
     """
     if not isinstance(res, dict):
         return None
 
-    # If adapter already returns structured {error:{code,message,…}}, pass it through.
+    # Adapter already returned structured error?
     if isinstance(res.get("error"), dict) and "message" in res["error"]:
         return res["error"]
 
-    # status==0 or explicit 'error' key are our adapter error conventions
+    # status==0 or string error
     if res.get("status") == 0 or "error" in res:
         err = res.get("error")
+        code = (
+            res.get("code") or (err.get("code") if isinstance(err, dict) else None)
+        ) or "AdapterError"
         msg = (
             res.get("message")
             or (err if isinstance(err, str) else None)
             or "Adapter error"
         )
-        code = (
-            res.get("code") or (err.get("code") if isinstance(err, dict) else None)
-        ) or "AdapterError"
         return _mk_error(code, msg, res.get("hint"), res.get("details"))
 
     return None

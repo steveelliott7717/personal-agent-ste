@@ -97,7 +97,6 @@ def _structured_error(
     }
 
 
-# was: @app.post(f"{BASE}/api/agents/verb", response_model=AgentCallResponse)
 @app.post(f"{BASE}/api/agents/verb")
 async def call_agent_verb(
     req: AgentCallRequest,
