@@ -216,6 +216,21 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         override = (args.get("aggregate_count_mode") or "").strip().lower()
         count_mode = explicit or override or "planned"
 
+    def _count_select_for(table: str, args: dict) -> str:
+        """
+        Choose a safe, dup-free select list for count queries.
+        Prefer a primary-ish column if available; fall back to 'id' then '*'.
+        If the user requested DISTINCT columns, reuse them.
+        """
+        distinct = args.get("distinct")
+        if distinct is True:
+            # safest: count distinct on id if present, else '*'
+            return "id"  # PostgREST will do DISTINCT via 'select=distinct id'
+        if isinstance(distinct, list) and distinct:
+            return ",".join(distinct)
+        # default to one stable column to avoid row multiplication
+        return "id"
+
     def _parse_fn_col_token(token: str):
         # Accept "min:created_at", "max:created_at", "avg:latency_ms", "sum:latency_ms"
         t = token.strip()
@@ -267,6 +282,20 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
     elif isinstance(agg, str):
         _parse_fn_col_token(agg)
 
+        # --- COUNT-ONLY MODE GUARDRAIL ---
+    if isinstance(agg, dict) and "count" in agg and (not agg_items):
+        # If caller asked for count only (with limit:0 recommended), make select minimal
+        sel = _count_select_for(table, args)
+        # Drop ordering/pagination so Supabase returns one row + header
+        order = None
+        offset = None
+        args["limit"] = 0
+        args["_force_no_order"] = True
+        if debug_explain:
+            _debug_meta.setdefault("notes", []).append(
+                "count-only mode: disabled order, forced limit(0)"
+            )
+
     # Append aggregates to select
     if agg_items:
         sel = f"{sel},{','.join(agg_items)}" if sel else ",".join(agg_items)
@@ -314,31 +343,51 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         # ----- column expression helper (shared by flat + grouped filters) -----
 
     def _colexpr(
-        col: str,
-        *,
+        field: str,
         op: str | None = None,
         cast: str | None = None,
+        *,
         text_mode: bool = True,
+        for_logic: bool = False,
     ) -> str:
         """
-        Normalize a column reference; supports JSON path via dot notation.
-        IMPORTANT: PostgREST filter keys do not accept SQL casts. For JSON paths,
-        we return text extraction (->>) without ::cast, because adding :: will be
-        treated as an identifier and fail.
+        Build a PostgREST column/path expression.
+
+        - Top-level columns: return the column as-is.
+        - JSON paths:
+            * text_mode=True  => parents with ->key, final with ->>key
+            * text_mode=False => all with ->key (keeps JSON type)
+        - If 'cast' is provided, append ::cast to the WHOLE expression.
+        For logic tokens (for_logic=True), do NOT add parentheses and do NOT quote keys.
         """
-        # Plain column: return as-is
-        if not (isinstance(col, str) and "." in col):
-            return col
 
-        left, right = col.split(".", 1)
+        def _seg(seg: str) -> str:
+            # logic tokens want bare keys (no quotes)
+            if for_logic:
+                return seg
+            # non-logic contexts can keep quoting for safety
+            seg = "" if seg is None else str(seg)
+            seg = seg.replace("'", "''")
+            return f"'{seg}'"
 
-        # JSON roots we support
-        if left in ("payload",):
-            # Always use text extraction for filters
-            return f"{left}->>{right}"
+        if "." not in field:
+            expr = field
+        else:
+            parts = field.split(".")
+            top, keys = parts[0], parts[1:]
+            expr = top
+            if text_mode:
+                for k in keys[:-1]:
+                    expr = f"{expr}->{_seg(k)}"
+                expr = f"{expr}->>{_seg(keys[-1])}"
+            else:
+                for k in keys:
+                    expr = f"{expr}->{_seg(k)}"
 
-        # Dotted but not known JSON root — return as-is
-        return col
+        if cast:
+            # never wrap in parentheses (logic-tree grammar doesn’t like it)
+            expr = f"{expr}::{cast}"
+        return expr
 
     if count_mode:
         q = supabase.table(table).select(sel, count=count_mode)
@@ -475,6 +524,16 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             and node["op"].lower() in {"and", "or", "not"}
         )
 
+    # Add once, near your other tiny helpers
+    def _param_or_error(v: object, *, op: str, field: str) -> str:
+        """
+        Convert a scalar to a PostgREST param string.
+        Forbid None for ops that don't accept it (caller enforces eq/neq special-case).
+        """
+        if v is None:
+            raise ValueError(f"{field}.{op} does not accept null; use is_null/not_null")
+        return str(v)
+
     def _normalize_leaf(node: object) -> tuple[str, str, object, str | None]:
         """
         Accept as leaf:
@@ -509,118 +568,132 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         Apply one leaf predicate to the query handle.
         Fast-path eq/neq/in on top-level columns; use .filter(expr, op, val) for others/JSON.
         """
+        op = (op or "").lower()
         expr = _colexpr(field, op=op, cast=cast, text_mode=True)
 
-        # IN on real columns
+        # ---- NULL smart handling (before fast-paths) ----
+        if value is None:
+            if op in ("eq", "="):
+                return qh.filter(expr, "is", "null")
+            if op in ("ne", "neq", "!="):
+                return qh.filter(expr, "not.is", "null")
+            raise ValueError(
+                f"{field}.{op} does not accept null; use is_null/not_null or provide a value"
+            )
+
+        # ---- IN / NOT IN on real columns ----
         if op == "in":
-            values = value or []
-            if not isinstance(values, list):
+            if not isinstance(value, list):
                 raise ValueError(f"{field}.op=in requires list 'value'")
             if expr == field:
-                return qh.in_(field, values)
+                return qh.in_(field, value)
             raise ValueError("IN on JSON path not supported directly; use an OR group.")
-
         if op == "not_in":
-            values = value or []
-            if not isinstance(values, list):
+            if not isinstance(value, list):
                 raise ValueError(f"{field}.op=not_in requires list 'value'")
             if expr == field:
-                return qh.filter(field, "not.in", f"({','.join(map(str, values))})")
+                return qh.filter(field, "not.in", f"({','.join(map(str, value))})")
             raise ValueError(
                 "NOT IN on JSON path not supported directly; use a NOT/OR group."
             )
 
-        # eq / neq fast paths on real columns
+        # ---- eq/neq fast paths on real columns ----
         if op in ("eq", "=") and expr == field:
             return qh.eq(field, value)
         if op in ("ne", "neq", "!=") and expr == field:
             return qh.neq(field, value)
 
-            # ---- pattern/regex ops (PostgREST docs: match=~, imatch=~*) ----
-        if op == "match":  # regex, case-sensitive
-            return q.filter(
-                _colexpr(field, op=op, cast=cast, text_mode=True), "match", value
-            )
-        if op == "imatch":  # regex, case-insensitive
-            return q.filter(
-                _colexpr(field, op=op, cast=cast, text_mode=True), "imatch", value
+        # ---- regex ops (PostgREST ~ / ~*) ----  # NEW
+        if op == "match":
+            rexpr = _colexpr(field, op=op, cast=cast, text_mode=True)
+            return qh.filter(rexpr, "match", str(value))
+        if op == "imatch":
+            rexpr = _colexpr(field, op=op, cast=cast, text_mode=True)
+            return qh.filter(rexpr, "imatch", str(value))
+
+        # ---- pattern ops (unified) ----
+        if op in (
+            "like",
+            "ilike",
+            "contains",
+            "icontains",
+            "starts_with",
+            "istarts_with",
+            "ends_with",
+            "iends_with",
+        ):
+            base = "" if value is None else str(value)
+            if op in ("contains", "icontains"):
+                patt = f"%{base}%"
+                oper = "ilike" if op == "icontains" else "like"
+            elif op in ("starts_with", "istarts_with"):
+                patt = f"{base}%"
+                oper = "ilike" if op == "istarts_with" else "like"
+            elif op in ("ends_with", "iends_with"):
+                patt = f"%{base}"
+                oper = "ilike" if op == "iends_with" else "like"
+            else:
+                patt = base
+                oper = op
+            return qh.filter(
+                _colexpr(field, op=oper, cast=cast, text_mode=True), oper, patt
             )
 
-        # ---- "exists" for JSON paths (pragmatic version) ----
-        # Treat as "json path not null" by using -> or ->> expression and NOT IS NULL.
-        # NOTE: This checks presence of a key with a non-null value. If a key exists
-        # but its value is JSON null, this will read as absent (which is usually OK).
+        # ---- JSON key existence (present AND value not null) ----
         if op in ("exists", "has_key"):
-            expr = _colexpr(
-                field, op=op, cast=cast, text_mode=False
-            )  # use -> for JSON, not text only
-            # PostgREST "not.is.null" is the portable way to assert non-null
-            return q.filter(expr, "not.is", "null")
+            jexpr = _colexpr(field, op=op, cast=cast, text_mode=False)  # JSON mode (->)
+            return qh.filter(jexpr, "not.is", "null")
 
-        # ---- inclusive between (you already have "between" most likely) ----
+        # ---- between variants ----
+        if op == "between":
+            if not (isinstance(value, (list, tuple)) and len(value) == 2):
+                raise ValueError(f"{field}.between requires [low, high]")
+            lo, hi = value
+            return qh.filter(expr, "gte", str(lo)).filter(expr, "lte", str(hi))
+
         if op == "between_exclusive":
-            # strict bounds: a < x < b
             if not (isinstance(value, (list, tuple)) and len(value) == 2):
                 raise ValueError("between_exclusive expects a 2-item [low, high] array")
-            low, high = value
-            qh = q.gt(_colexpr(field, op=op, cast=cast, text_mode=False), low)
-            return qh.lt(_colexpr(field, op=op, cast=cast, text_mode=False), high)
+            lo, hi = value
+            col = _colexpr(field, op=op, cast=cast, text_mode=False)
+            return qh.gt(col, lo).lt(col, hi)
 
         if op == "not_between":
-            # logical NOT of inclusive between: NOT(a <= x AND x <= b)
             if not (isinstance(value, (list, tuple)) and len(value) == 2):
                 raise ValueError("not_between expects a 2-item [low, high] array")
-            low, high = value
+            lo, hi = value
             col = _colexpr(field, op=op, cast=cast, text_mode=False)
-            # Use a single boolean-expression param. See PostgREST logical operators.
-            token = f"{col}.not.and({col}.gte.{_pg_encode(low)},{col}.lte.{_pg_encode(high)})"
-            return q.or_(token)
+            token = (
+                f"{col}.not.and({col}.gte.{_pg_encode(lo)},{col}.lte.{_pg_encode(hi)})"
+            )
+            return qh.or_(token)
 
-        # other ops (or JSON) via .filter with the casted expr
-        if op in ("eq", "="):
-            return qh.filter(expr, "eq", str(value))
-        if op in ("ne", "neq", "!="):
-            return qh.filter(expr, "neq", str(value))
-        if op in ("gt", ">"):
-            return qh.filter(expr, "gt", str(value))
-        if op in ("gte", ">="):
-            return qh.filter(expr, "gte", str(value))
-        if op in ("lt", "<"):
-            return qh.filter(expr, "lt", str(value))
-        if op in ("lte", "<="):
-            return qh.filter(expr, "lte", str(value))
-        if op == "like":
-            return qh.filter(expr, "like", str(value))
-        if op == "ilike":
-            return qh.filter(expr, "ilike", str(value))
-        if op in ("contains", "icontains"):
-            pat = f"%{value}%"
-            return qh.filter(expr, "ilike" if op == "icontains" else "like", pat)
-        if op in ("starts_with", "istarts_with"):
-            pat = f"{value}%"
-            return qh.filter(expr, "ilike" if op == "istarts_with" else "like", pat)
-        if op in ("ends_with", "iends_with"):
-            pat = f"%{value}"
-            return qh.filter(expr, "ilike" if op == "iends_with" else "like", pat)
+        # ---- boolean IS / IS NOT helpers ----
         if op in ("is_null", "isnull", "is-null"):
             return qh.filter(expr, "is", "null")
         if op in ("not_null", "notnull", "not-null"):
             return qh.filter(expr, "not.is", "null")
-        if op == "between":
-            if not (isinstance(value, (list, tuple)) and len(value) == 2):
-                raise ValueError(f"{field}.between requires [low, high]")
-            low, high = value
-            return qh.filter(expr, "gte", str(low)).filter(expr, "lte", str(high))
         if op == "is":
+            # For boolean checks on JSON paths, use TEXT mode and cast to boolean.
+            # Example: (payload->>'ok')::boolean is true
+            is_bool = isinstance(value, bool)
+            if is_bool:
+                expr_bool = _colexpr(field, op=op, cast="boolean", text_mode=True)
+                return qh.filter(expr_bool, "is", str(value).lower())  # "true"/"false"
+            # Null/others fall back to text-mode IS
+            expr2 = _colexpr(field, op=op, cast=cast, text_mode=True)
             return qh.filter(
-                expr, "is", "null" if value in (None, "null") else str(value)
+                expr2, "is", "null" if value in (None, "null") else str(value)
             )
+
+        # ---- explicit NOT wrapper (including pattern/regex/boolean NOTs) ----
         if op == "not":
             if not isinstance(value, dict) or "op" not in value:
                 raise ValueError(f"{field}.not requires nested {{op,value}}")
             iop = (value.get("op") or "eq").lower()
             ival = value.get("value")
 
+            # NOT of regex/pattern ops  # NEW: handle match/imatch too
             if iop in (
                 "contains",
                 "icontains",
@@ -628,97 +701,60 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 "istarts_with",
                 "ends_with",
                 "iends_with",
+                "like",
+                "ilike",
+                "match",
+                "imatch",
             ):
+                if iop in ("match", "imatch"):
+                    rexpr = _colexpr(field, op=iop, cast=cast, text_mode=True)
+                    return qh.filter(rexpr, f"not.{iop}", str(ival))
                 base = "" if ival is None else str(ival)
-                patt = (
-                    f"%{base}%"
-                    if iop in ("contains", "icontains")
-                    else (
-                        f"{base}%"
-                        if iop in ("starts_with", "istarts_with")
-                        else f"%{base}"
-                    )
-                )
-                oper = (
-                    "not.ilike"
-                    if iop in ("icontains", "istarts_with", "iends_with")
-                    else "not.like"
-                )
-                return qh.filter(expr, oper, patt)
+                if iop in ("contains", "icontains"):
+                    patt = f"%{base}%"
+                    oper = "ilike" if iop == "icontains" else "like"
+                elif iop in ("starts_with", "istarts_with"):
+                    patt = f"{base}%"
+                    oper = "ilike" if iop == "istarts_with" else "like"
+                elif iop in ("ends_with", "iends_with"):
+                    patt = f"%{base}"
+                    oper = "ilike" if iop == "iends_with" else "like"
+                else:
+                    patt = base
+                    oper = iop  # like / ilike
+                texpr = _colexpr(field, op=oper, cast=cast, text_mode=True)
+                return qh.filter(texpr, f"not.{oper}", patt)
 
+            # NOT of boolean IS needs text->boolean cast
+            if iop == "is":
+                if isinstance(ival, bool):
+                    expr_bool = _colexpr(field, op=iop, cast="boolean", text_mode=True)
+                    return qh.filter(expr_bool, "not.is", str(ival).lower())
+                expr2 = _colexpr(field, op=iop, cast=cast, text_mode=True)
+                val_str = "null" if ival in (None, "null") else str(ival)
+                return qh.filter(expr2, "not.is", val_str)
+
+            # NOT of simple ops
             op_str = _map_simple_op(iop)
             val_str = "null" if op_str == "is" and ival in (None, "null") else str(ival)
             return qh.filter(expr, f"not.{op_str}", val_str)
 
-            # --- regex ops (PostgREST ~ / ~*) ---
-        if op == "match":  # case-sensitive regex
-            expr = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return q.filter(expr, "match", value)
-        if op == "imatch":  # case-insensitive regex
-            expr = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return q.filter(expr, "imatch", value)
-
-        # --- JSON key existence (pragmatic: "key present AND value not null") ---
-        # Works for dotted JSON paths like payload.latency_ms
-        if op in ("exists", "has_key"):
-            # use JSON mode (->) so PostgREST treats it as JSON, then "not.is null"
-            expr = _colexpr(field, op=op, cast=cast, text_mode=False)
-            return q.filter(expr, "not.is", "null")
-
-            # --- JSONB key existence family ---
-        # NOTE: For dotted JSON paths (payload.foo.bar) these check the LAST segment
-        #       as a key of the JSON object at the parent path.
-        # --- JSON key present (practical): parent->>key is not null ---
-        if op in ("has_key", "exists", "exists_strict"):
-            coltxt = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return q.filter(coltxt, "not.is", "null")
-
-        if op in ("has_keys_any", "exists_any"):
-            # any of the keys present
-            if not isinstance(value, (list, tuple)) or not value:
-                raise ValueError("has_keys_any expects a non-empty array of keys")
-            parent_expr, _ = _split_json_path(field)
-            keys = "{" + ",".join(_pg_encode(k) for k in value) + "}"
-            token = f"{parent_expr}.ov.{keys}"  # ov => overlaps
-            return q.or_(token)
-
-        if op in ("has_keys_all", "exists_all"):
-            # all keys present
-            if not isinstance(value, (list, tuple)) or not value:
-                raise ValueError("has_keys_all expects a non-empty array of keys")
-            parent_expr, _ = _split_json_path(field)
-            keys = "{" + ",".join(_pg_encode(k) for k in value) + "}"
-            token = f"{parent_expr}.cs.{keys}"  # cs => contains
-            return q.or_(token)
-
-            # --- array containment on ARRAY-typed columns ---
-        # contains_all  -> col.cs.{a,b}     (array contains ALL of the given values)
-        # contains_any  -> col.ov.{a,b}     (array overlaps ANY of the given values)
-        # contained_by  -> col.cd.{a,b}     (array is contained BY the given set)
+        # ---- array containment on ARRAY columns ----
         if op in ("contains_all", "contains_any", "contained_by"):
             if not isinstance(value, (list, tuple)) or not value:
                 raise ValueError(f"{field}.{op} expects a non-empty array value")
-
-            # These operators are for *array* columns (NOT JSON paths).
-            # If a dotted JSON path was provided, suggest reshaping the data or
-            # querying via a view with a real array column.
             if "." in field:
                 raise ValueError(
                     f"{field}.{op} is only supported on array columns (not JSON paths). "
                     "Consider a view that exposes a real array column."
                 )
-
-            # PostgREST array literal: {v1,v2,...}
             arr_lit = "{" + ",".join(str(v) for v in value) + "}"
-
             oper = {"contains_all": "cs", "contains_any": "ov", "contained_by": "cd"}[
                 op
             ]
-            qh = q.filter(field, oper, arr_lit)
-            return qh
+            return qh.filter(field, oper, arr_lit)
 
-        # --- pattern ANY sugar (fold to one boolean token) ---
-        # starts_with_any / ends_with_any / contains_any
+        # ---- any-of pattern sugar ----
         if op in (
             "starts_with_any",
             "istarts_with_any",
@@ -729,77 +765,65 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         ):
             if not isinstance(value, (list, tuple)) or not value:
                 raise ValueError(f"{op} expects a non-empty array of strings")
-            case_ins = op.startswith(("i",)) or "i" in op.split("_")[0]
             kind = (
                 "starts" if "starts" in op else ("ends" if "ends" in op else "contains")
             )
-            oper = "ilike" if ("i" in op) else "like"
+            oper = "ilike" if op.startswith("i") else "like"
             col = _colexpr(field, op=oper, cast=cast, text_mode=True)
-
-            patt_list = []
+            parts = []
             for v in value:
-                if kind == "starts":
-                    patt_list.append(f"{v}%")
-                elif kind == "ends":
-                    patt_list.append(f"%{v}")
-                else:
-                    patt_list.append(f"%{v}%")
-
-            # Build one token or(p1,p2,...) with not needed here
-            parts = [f"{col}.{oper}.{_pg_encode(p)}" for p in patt_list]
-            token = f"or({','.join(parts)})"
-            return q.or_(token)
-
-        # --- strict range: a < x < b ---
-        if op == "between_exclusive":
-            pair = value if isinstance(value, (list, tuple)) else None
-            if pair is None:
-                # support {values:[...]} too
-                pair = (
-                    node.get("values")
-                    if isinstance(node := {"value": value}, dict)
-                    else None
-                )  # harmless fallback
-            if not (isinstance(pair, (list, tuple)) and len(pair) == 2):
-                raise ValueError(
-                    "between_exclusive expects a 2-item [low, high] array as 'value' or 'values'"
+                s = "" if v is None else str(v)
+                patt = (
+                    f"{s}%"
+                    if kind == "starts"
+                    else (f"%{s}" if kind == "ends" else f"%{s}%")
                 )
-            low, high = pair
-            col = _colexpr(field, op=op, cast=cast, text_mode=False)
-            qh2 = q.gt(col, low)
-            return qh2.lt(col, high)
+                parts.append(f"{col}.{oper}.{_pg_encode(patt)}")
+            return qh.or_(f"or({','.join(parts)})")
 
-        # --- NOT of inclusive between: NOT(a <= x AND x <= b) ---
-        if op == "not_between":
-            pair = value if isinstance(value, (list, tuple)) else None
-            if pair is None:
-                # support {values:[...]} too
-                pair = (
-                    node.get("values")
-                    if isinstance(node := {"value": value}, dict)
-                    else None
-                )  # harmless fallback
-            if not (isinstance(pair, (list, tuple)) and len(pair) == 2):
-                raise ValueError(
-                    "not_between expects a 2-item [low, high] array as 'value' or 'values'"
-                )
-            low, high = pair
-            col = _colexpr(field, op=op, cast=cast, text_mode=False)
-            # Build ONE boolean token using PostgREST logical operator grammar:
-            # not.and(col.gte.low,col.lte.high)
-            token = f"not.and({col}.gte.{_pg_encode(low)},{col}.lte.{_pg_encode(high)})"
-            return q.or_(token)
+        # ---- standard comparisons ----
+        if op in ("eq", "="):
+            return qh.filter(expr, "eq", _param_or_error(value, op=op, field=field))
+        if op in ("ne", "neq", "!="):
+            return qh.filter(expr, "neq", _param_or_error(value, op=op, field=field))
+        if op in ("gt", ">"):
+            return qh.filter(expr, "gt", _param_or_error(value, op=op, field=field))
+        if op in ("gte", ">="):
+            return qh.filter(expr, "gte", _param_or_error(value, op=op, field=field))
+        if op in ("lt", "<"):
+            return qh.filter(expr, "lt", _param_or_error(value, op=op, field=field))
+        if op in ("lte", "<="):
+            return qh.filter(expr, "lte", _param_or_error(value, op=op, field=field))
 
         raise ValueError(f"Unsupported operator: {op}")
 
-        # --- shared helpers -------------------------------------------------
+    # --- safe select for count ----------------------------------------------------
+
+    def _count_select_for(table: str, args: dict) -> str:
+        """
+        Choose a dup-free select list for count queries.
+        If the caller asked for DISTINCT, reuse that; otherwise prefer a single
+        stable base column (id) so embeds/joins cannot inflate row counts.
+        """
+        distinct = args.get("distinct")
+        if distinct is True:
+            return "id"
+        if isinstance(distinct, list) and distinct:
+            return ",".join(distinct)
+        return "id"
 
     def _pg_encode(val: object) -> str:
         """
         Encode just the characters that break PostgREST boolean expr parsing
         when used inside or= / and= CSVs. Keep ISO timestamps, UUIDs, '%' etc.
         """
-        s = "" if val is None else str(val)
+        # Normalize JSON-y primitives first
+        if val is None:
+            return "null"
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        s = str(val)
+        # (rest of your escaping logic stays the same)
 
         # Allow common typed literals unmodified
         if re.match(
@@ -912,7 +936,6 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             "istarts_with",
             "ends_with",
             "iends_with",
-            "is",
             "is_null",
             "not_null",
             "isnull",
@@ -923,25 +946,76 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             "not_in",
         }
 
-    def _as_filter_token(field: str, op: str, value: object, cast: str | None) -> str:
-        """
-        Convert a single *leaf* into a PostgREST boolean token usable inside
-        or(...), and(...), not.and(...), etc.
+    # --- Pattern operators (LIKE/ILIKE/regex) helpers -------------------------
+    def _is_pattern_op(op: str) -> bool:
+        op = (op or "").lower()
+        return op in {
+            "like",
+            "ilike",
+            "contains",
+            "icontains",
+            "starts_with",
+            "istarts_with",
+            "ends_with",
+            "iends_with",
+            "match",
+            "imatch",
+        }
 
-        Examples:
-        col.eq.value                 -> "col.eq.value"
-        col.in.(a,b)                -> "col.in.(a,b)"
-        col.not.in.(a,b)            -> "col.not.in.(a,b)"
-        col.imatch.^foo.*$          -> "col.imatch.^foo.*$"
-        parent.cs.{key}             -> "parent.cs.{key}"    (JSON keys-all)
-        parent.ov.{k1,k2}           -> "parent.ov.{k1,k2}"  (JSON keys-any)
-        pattern sugar               -> starts_with/ends_with/contains -> like/ilike with %
-        NOT wrapper                 -> not {op: <inner>, value|values: ...}
-        NOT shorthands              -> not_eq / not_like / not_ilike / not_match / not_imatch
+    def _normalize_pattern_op(op: str, value: object) -> tuple[str, str]:
         """
+        Normalize a pattern-style op into a concrete PostgREST operator and RHS string.
+
+        Returns:
+            (operator, rhs) where operator ∈ {"like","ilike","match","imatch"}
+            and rhs is the final pattern/regex string.
+        """
+        op = (op or "").lower()
+        base = "" if value is None else str(value)
+
+        # Direct LIKE/ILIKE
+        if op in ("like", "ilike"):
+            return op, base
+
+        # Wildcarded LIKE/ILIKE shorthands
+        if op in (
+            "contains",
+            "icontains",
+            "starts_with",
+            "istarts_with",
+            "ends_with",
+            "iends_with",
+        ):
+            if op in ("contains", "icontains"):
+                patt = f"%{base}%"
+            elif op in ("starts_with", "istarts_with"):
+                patt = f"{base}%"
+            else:  # ends_with / iends_with
+                patt = f"%{base}"
+            oper = "ilike" if op.startswith("i") else "like"
+            return oper, patt
+
+        # Regex
+        if op in ("match", "imatch"):
+            return op, base
+
+        raise ValueError(f"not a pattern op: {op}")
+
+    def _as_filter_token(field: str, op: str, value: object, cast: str | None) -> str:
         op = (op or "eq").lower()
 
-        # 0) Single-value pattern sugar: starts/ends/contains (+ case-insensitive)
+        # A) value-less ops
+        if op in ("is_null", "isnull", "is-null"):
+            col = _colexpr(field, op=op, cast=cast, text_mode=True, for_logic=True)
+            return f"{col}.is.null"
+        if op in ("not_null", "notnull", "not-null"):
+            col = _colexpr(field, op=op, cast=cast, text_mode=True, for_logic=True)
+            return f"{col}.not.is.null"
+        if op in ("has_key", "exists", "exists_strict"):
+            jcol = _colexpr(field, op=op, cast=cast, text_mode=False, for_logic=True)
+            return f"{jcol}.not.is.null"
+
+        # B) single-value pattern sugar
         if op in (
             "starts_with",
             "istarts_with",
@@ -957,10 +1031,10 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 else (f"%{base}" if op in ("ends_with", "iends_with") else f"%{base}%")
             )
             oper = "ilike" if op.startswith("i") else "like"
-            col = _colexpr(field, op=oper, cast=cast, text_mode=True)
+            col = _colexpr(field, op=oper, cast=cast, text_mode=True, for_logic=True)
             return f"{col}.{oper}.{_pg_encode(patt)}"
 
-        # 1) ANY-of pattern sugar: *_any → or(col.like p1, col.like p2, ...)
+        # C) *_any pattern sugar
         if op in (
             "starts_with_any",
             "istarts_with_any",
@@ -975,7 +1049,7 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 "starts" if "starts" in op else ("ends" if "ends" in op else "contains")
             )
             oper = "ilike" if op.startswith("i") else "like"
-            col = _colexpr(field, op=oper, cast=cast, text_mode=True)
+            col = _colexpr(field, op=oper, cast=cast, text_mode=True, for_logic=True)
             parts = []
             for v in value:
                 v = "" if v is None else str(v)
@@ -987,56 +1061,40 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 parts.append(f"{col}.{oper}.{_pg_encode(patt)}")
             return f"or({','.join(parts)})"
 
-        # 2) JSON key presence family
-        if op in ("has_key", "exists", "exists_strict"):
-            coltxt = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return f"{coltxt}.not.is.null"
-
-        # 2a) Relative time helpers
-        if op == "since":
-            start_iso = _parse_relative_time(value)
-            col = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return f"{col}.gte.{_pg_encode(start_iso)}"
-
-        if op == "between_relative":
-            if not isinstance(value, dict):
-                raise ValueError(
-                    f"{field}.between_relative requires object value with start/end"
-                )
-            start_iso = _parse_relative_time(value.get("start"))
-            end_iso = _parse_relative_time(value.get("end") or "now")
-            col = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return f"and({col}.gte.{_pg_encode(start_iso)},{col}.lte.{_pg_encode(end_iso)})"
-
-        if op in ("has_keys_any", "exists_any"):
-            if not isinstance(value, (list, tuple)) or not value:
-                raise ValueError("has_keys_any expects a non-empty array of keys")
-            parent_expr, _ = _split_json_path(field)
-            keys = "{" + ",".join(_pg_encode(k) for k in value) + "}"
-            return f"{parent_expr}.ov.{keys}"
-
-        if op in ("has_keys_all", "exists_all"):
-            if not isinstance(value, (list, tuple)) or not value:
-                raise ValueError("has_keys_all expects a non-empty array of keys")
-            parent_expr, _ = _split_json_path(field)
-            keys = "{" + ",".join(_pg_encode(k) for k in value) + "}"
-            return f"{parent_expr}.cs.{keys}"
-
-        # 3) Regex ops
+        # D) regex
         if op in ("match", "imatch"):
-            col = _colexpr(field, op=op, cast=cast, text_mode=True)
+            col = _colexpr(field, op=op, cast=cast, text_mode=True, for_logic=True)
             return f"{col}.{op}.{_pg_encode(value)}"
 
-        # -- NOT (negation) forms -----------------------------------------------
-        # 4a) Explicit NOT wrapper: {"op":"not", "value":{"op":"ilike","value":"plan.%"}}
+        # E) NOT wrapper / shorthands
         if op == "not":
             if not isinstance(value, dict) or "op" not in value:
                 raise ValueError(
                     "not expects an object: {'op': <inner_op>, 'value'|'values': ...}"
                 )
             inner_op = str(value["op"]).lower()
+            ival = value.get("value")
+
+            # Special-case NOT(IS ...)
+            if inner_op == "is":
+                if isinstance(ival, bool):
+                    # JSON mode (->), no cast; negate equality on jsonb true/false
+                    col = _colexpr(
+                        field, op=inner_op, cast=None, text_mode=False, for_logic=True
+                    )
+                    return f"{col}.not.eq.{str(ival).lower()}"
+                col = _colexpr(
+                    field, op=inner_op, cast=None, text_mode=True, for_logic=True
+                )
+                lit = "null" if ival in (None, "null") else _pg_encode(ival)
+                return f"{col}.not.is.{lit}"
+
             col = _colexpr(
-                field, op=inner_op, cast=cast, text_mode=_op_is_textual(inner_op)
+                field,
+                op=inner_op,
+                cast=cast,
+                text_mode=_op_is_textual(inner_op),
+                for_logic=True,
             )
 
             if inner_op in ("in", "not_in"):
@@ -1046,13 +1104,9 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 inner = ",".join(_pg_encode(v) for v in vals)
                 return f"{col}.not.in.({inner})"
 
-            if inner_op in ("match", "imatch"):
+            if inner_op in ("match", "imatch", "like", "ilike"):
                 return f"{col}.not.{inner_op}.{_pg_encode(value.get('value'))}"
 
-            if inner_op in ("like", "ilike"):
-                return f"{col}.not.{inner_op}.{_pg_encode(value.get('value'))}"
-
-            # basic comparisons (eq/gt/gte/lt/lte/is)
             mapped = {
                 "eq": "eq",
                 "gt": "gt",
@@ -1062,11 +1116,10 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 "is": "is",
                 "ne": "eq",
                 "neq": "eq",
-                "!=": "eq",  # discourage double-negation inputs
+                "!=": "eq",
             }.get(inner_op, inner_op)
             return f"{col}.not.{mapped}.{_pg_encode(value.get('value'))}"
 
-        # 4b) Shorthand NOT aliases
         if op in (
             "not_eq",
             "not-like",
@@ -1079,46 +1132,68 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             base = op.replace("-", "_")
             if base.endswith("_eq"):
                 col = _colexpr(
-                    field, op="eq", cast=cast, text_mode=_op_is_textual("eq")
+                    field,
+                    op="eq",
+                    cast=cast,
+                    text_mode=_op_is_textual("eq"),
+                    for_logic=True,
                 )
                 return f"{col}.not.eq.{_pg_encode(value)}"
             if base.endswith("_like"):
-                col = _colexpr(field, op="like", cast=cast, text_mode=True)
+                col = _colexpr(
+                    field, op="like", cast=cast, text_mode=True, for_logic=True
+                )
                 return f"{col}.not.like.{_pg_encode(value)}"
             if base.endswith("_ilike"):
-                col = _colexpr(field, op="ilike", cast=cast, text_mode=True)
+                col = _colexpr(
+                    field, op="ilike", cast=cast, text_mode=True, for_logic=True
+                )
                 return f"{col}.not.ilike.{_pg_encode(value)}"
             if base.endswith("_match"):
-                col = _colexpr(field, op="match", cast=cast, text_mode=True)
+                col = _colexpr(
+                    field, op="match", cast=cast, text_mode=True, for_logic=True
+                )
                 return f"{col}.not.match.{_pg_encode(value)}"
             if base.endswith("_imatch"):
-                col = _colexpr(field, op="imatch", cast=cast, text_mode=True)
+                col = _colexpr(
+                    field, op="imatch", cast=cast, text_mode=True, for_logic=True
+                )
                 return f"{col}.not.imatch.{_pg_encode(value)}"
 
-        # 5) IN / NOT IN
+        # F) IN / NOT IN
         if op == "in":
             if not isinstance(value, (list, tuple)) or not value:
                 raise ValueError("IN requires a non-empty list")
-            col = _colexpr(field, op=op, cast=cast, text_mode=_op_is_textual(op))
+            col = _colexpr(
+                field, op=op, cast=cast, text_mode=_op_is_textual(op), for_logic=True
+            )
             inner = ",".join(_pg_encode(v) for v in value)
             return f"{col}.in.({inner})"
-
         if op == "not_in":
             if not isinstance(value, (list, tuple)) or not value:
                 raise ValueError("NOT IN requires a non-empty list")
-            col = _colexpr(field, op=op, cast=cast, text_mode=_op_is_textual(op))
+            col = _colexpr(
+                field, op=op, cast=cast, text_mode=_op_is_textual(op), for_logic=True
+            )
             inner = ",".join(_pg_encode(v) for v in value)
             return f"{col}.not.in.({inner})"
 
-        # 6) Null shorthands
-        if op in ("is_null", "isnull", "is-null"):
-            col = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return f"{col}.is.null"
-        if op in ("not_null", "notnull", "not-null"):
-            col = _colexpr(field, op=op, cast=cast, text_mode=True)
-            return f"{col}.not.is.null"
+        # G) eq/neq None → IS / NOT IS
+        if value is None and op in ("eq", "=", "ne", "neq", "!="):
+            col = _colexpr(field, op=op, cast=cast, text_mode=True, for_logic=True)
+            return f"{col}.is.null" if op in ("eq", "=") else f"{col}.not.is.null"
 
-        # 7) Simple scalar/pattern comparisons (eq/neq/gt/gte/lt/lte/like/ilike/is)
+        # H) Simple comparisons + boolean-aware IS
+        if op == "is":
+            if isinstance(value, bool):
+                # JSON mode (->), no cast; compare jsonb true/false directly
+                col = _colexpr(field, op=op, cast=None, text_mode=False, for_logic=True)
+                return f"{col}.eq.{str(value).lower()}"
+            # null and other literals still use IS
+            col = _colexpr(field, op=op, cast=None, text_mode=True, for_logic=True)
+            lit = "null" if value in (None, "null") else _pg_encode(value)
+            return f"{col}.is.{lit}"
+
         pgop = {
             "eq": "eq",
             "=": "eq",
@@ -1134,39 +1209,10 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             "is": "is",
         }.get(op, op)
 
-        col = _colexpr(field, op=op, cast=cast, text_mode=_op_is_textual(op))
+        col = _colexpr(
+            field, op=op, cast=cast, text_mode=_op_is_textual(op), for_logic=True
+        )
         return f"{col}.{pgop}.{_pg_encode(value)}"
-
-    def _as_group_token(node: dict) -> str:
-        """
-        Recursively serialize a group node into a single boolean token:
-        and(a,b), or(a,b), or not.and(...)/not.or(...)
-        """
-        if _is_group(node):
-            op = (node.get("op") or "").lower()
-            conds = node.get("conditions") or []
-            if not isinstance(conds, list):
-                conds = [conds]
-            parts = []
-            for c in conds:
-                if _is_group(c):
-                    parts.append(_as_group_token(c))
-                else:
-                    fld, cop, val, cst = _normalize_leaf(c)
-                    parts.append(_as_filter_token(fld, cop, val, cst))
-            if op == "and":
-                return f"and({','.join(parts)})"
-            if op == "or":
-                return f"or({','.join(parts)})"
-            if op == "not":
-                # default to NOT of AND if unspecified; if the single child is an OR,
-                # caller should have normalized already in _apply_group.
-                return f"not.and({','.join(parts)})"
-            raise ValueError(f"unsupported group op '{op}'")
-        # leaf
-        fld, cop, val, cst = _normalize_leaf(node)
-        _assert_allowed_column(fld)
-        return _as_filter_token(fld, cop, val, cst)
 
     def _serialize_node_to_postgrest(node: dict) -> str:
         if _is_group(node):
@@ -1191,107 +1237,8 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 # Multiple children → NOT of an AND group
                 return f"not.and({','.join(parts)})"
 
-        # leaf
-        field, op, value, cast = _normalize_leaf(node)
-        col = _colexpr(field, op=op, cast=cast, text_mode=True)
-
-        if op in ("eq", "="):
-            return f"{col}.eq.{_pg_encode(value)}"
-        if op in ("ne", "neq", "!="):
-            return f"{col}.neq.{_pg_encode(value)}"
-        if op in ("gt", ">"):
-            return f"{col}.gt.{_pg_encode(value)}"
-        if op in ("gte", ">="):
-            return f"{col}.gte.{_pg_encode(value)}"
-        if op in ("lt", "<"):
-            return f"{col}.lt.{_pg_encode(value)}"
-        if op in ("lte", "<="):
-            return f"{col}.lte.{_pg_encode(value)}"
-        if op == "like":
-            return f"{col}.like.{_pg_encode(value)}"
-        if op == "ilike":
-            return f"{col}.ilike.{_pg_encode(value)}"
-        if op == "in":
-            if not isinstance(value, list):
-                raise ValueError(f"{field}.op=in requires list 'value'")
-            items = ",".join(_pg_encode(v) for v in value)
-            return f"{col}.in.({items})"
-        if op in (
-            "starts_with",
-            "istarts_with",
-            "ends_with",
-            "iends_with",
-            "contains",
-            "icontains",
-        ):
-            base = "" if value is None else str(value)
-            if op in ("starts_with", "istarts_with"):
-                patt = f"{base}%"
-            elif op in ("ends_with", "iends_with"):
-                patt = f"%{base}"
-            else:
-                patt = f"%{base}%"
-            operator = (
-                "ilike" if op in ("istarts_with", "iends_with", "icontains") else "like"
-            )
-            return f"{col}.{operator}.{_pg_encode(patt)}"
-
-        if op == "not":
-            if not isinstance(value, dict) or "op" not in value:
-                raise ValueError(f"{field}.not requires nested {{op,value}}")
-            iop = (value.get("op") or "eq").lower()
-            ival = value.get("value")
-
-            if iop in (
-                "contains",
-                "icontains",
-                "starts_with",
-                "istarts_with",
-                "ends_with",
-                "iends_with",
-            ):
-                base = "" if ival is None else str(ival)
-                patt = (
-                    f"%{base}%"
-                    if iop in ("contains", "icontains")
-                    else (
-                        f"{base}%"
-                        if iop in ("starts_with", "istarts_with")
-                        else f"%{base}"
-                    )
-                )
-                operator = (
-                    "not.ilike"
-                    if iop in ("icontains", "istarts_with", "iends_with")
-                    else "not.like"
-                )
-                return f"{col}.{operator}.{_pg_encode(patt)}"
-
-            op_str = _map_simple_op(iop)
-            val_str = (
-                "null"
-                if op_str == "is" and ival in (None, "null")
-                else _pg_encode(ival)
-            )
-            return f"{col}.not.{op_str}.{val_str}"
-
-        if op == "not_in":
-            if not isinstance(value, list):
-                raise ValueError(f"{field}.op=not_in requires list 'value'")
-            items = ",".join(_pg_encode(v) for v in value)
-            return f"{col}.not.in.({items})"
-
-        if op in ("is_null", "isnull", "is-null"):
-            return f"{col}.is.null"
-        if op in ("not_null", "notnull", "not-null"):
-            return f"{col}.not.is.null"
-        if op == "between":
-            if not (isinstance(value, (list, tuple)) and len(value) == 2):
-                raise ValueError(f"{field}.between requires [low, high]")
-            low, high = value
-            return f"and({col}.gte.{_pg_encode(low)},{col}.lte.{_pg_encode(high)})"
-
-        raise ValueError(f"Unsupported op in serializer: {op}")
+            field, op, value, cast = _normalize_leaf(node)
+            return _as_filter_token(field, op, value, cast)
 
     # ---- record boolean expression when present ----
     if debug_explain:
@@ -1309,26 +1256,32 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         """
         Apply a boolean group node of the form:
         {"op":"and"|"or"|"not", "conditions":[ ... ]}
+
         - Leaves are delegated to _apply_leaf(...)
         - AND: recursively apply each child (implicit AND in PostgREST)
         - OR: build ONE boolean token "or(a,b,...)" and send via qh.or_(...)
         - NOT: build ONE token "not.and(...)" or "not.or(...)" and send via qh.or_(...)
         """
-        # Leaf short-circuit
+        # ---- Leaf short-circuit ---------------------------------------------------
         if not _is_group(node):
             fld, op, val, cast = _normalize_leaf(node)
             _assert_allowed_column(fld)
             return _apply_leaf(qh, fld, op, val, cast)
 
+        # ---- Normalize group ------------------------------------------------------
         op = (node.get("op") or "").lower()
         conds = node.get("conditions") or []
         if not isinstance(conds, list):
             conds = [conds]
 
-        # ---------- group-level NOT ----------
+        # Empty group -> no-op
+        if not conds:
+            return qh
+
+        # ---- NOT group ------------------------------------------------------------
         if op == "not":
-            # If NOT wraps a single subgroup that has an 'op', keep that op so we can emit
-            # not.and(...) or not.or(...). Otherwise, treat as NOT(AND(...)).
+            # If NOT wraps a single subgroup with 'and' or 'or', preserve that op:
+            #   not.and(...) or not.or(...)
             children = conds
             negate_as = "and"
             if len(children) == 1 and isinstance(children[0], dict):
@@ -1336,36 +1289,47 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 inner = (c0.get("op") or "").lower() if "op" in c0 else None
                 if inner in ("and", "or"):
                     negate_as = inner
-                    # replace with inner group's conditions to avoid nested parens bloat
+                    # flatten inner group's conditions to avoid extra parens
                     children = c0.get("conditions") or []
                     if not isinstance(children, list):
                         children = [children]
 
-            parts: list[str] = []
+            parts = []
             for ch in children:
                 if _is_group(ch):
-                    parts.append(_as_group_token(ch))
+                    # Use the kept serializer for nested groups
+                    parts.append(_serialize_node_to_postgrest(ch))
                 else:
                     fld, cop, val, cst = _normalize_leaf(ch)
+                    _assert_allowed_column(fld)
                     parts.append(_as_filter_token(fld, cop, val, cst))
+
+            if not parts:
+                return qh  # NOT of empty -> no-op
 
             token = f"not.{negate_as}({','.join(parts)})"
             return qh.or_(token)
 
-        # ---------- OR fast-path: eq on same column => IN ----------
+        # ---- OR group -------------------------------------------------------------
         if op == "or":
+            # Fast-path: OR of eq on the SAME top-level column -> IN(...)
             same_col = None
             values = []
             all_eq_same_col = True
+            all_values_non_null = True
+
             for ch in conds:
                 if _is_group(ch):
                     all_eq_same_col = False
                     break
-                fld, cop, val, _ = _normalize_leaf(ch)  # 4-tuple; ignore cast here
+                fld, cop, val, _ = _normalize_leaf(ch)
                 _assert_allowed_column(fld)
                 if cop not in ("eq", "="):
                     all_eq_same_col = False
                     break
+                if val is None:
+                    # IN(...) cannot match NULL, so if any branch is = NULL we can't use IN
+                    all_values_non_null = False
                 if same_col is None:
                     same_col = fld
                 elif fld != same_col:
@@ -1373,29 +1337,29 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                     break
                 values.append(val)
 
-            if all_eq_same_col and same_col is not None:
-                # Only safe to use qh.in_(...) when it's a *real* column (not a JSON path)
+            if all_eq_same_col and same_col is not None and all_values_non_null:
+                # Only safe to use qh.in_(...) on a real (top-level) column
                 expr = _colexpr(
                     same_col, op="in", cast=None, text_mode=_op_is_textual("in")
                 )
                 if expr == same_col:
                     return qh.in_(same_col, values)
-                # JSON path IN not supported directly: fall through to general OR token
-                # to avoid exploding into many filters; token form keeps it to one .or_(...)
-                # (col.eq.a,col.eq.b,...) is equivalent.
-            # General OR: build one boolean token
-            parts: list[str] = []
+                # else: JSON path -> fall back to generic OR token
+
+            # Generic OR: one boolean token via serializer for groups + tokenizer for leaves
+            parts = []
             for ch in conds:
                 if _is_group(ch):
-                    parts.append(_as_group_token(ch))
+                    parts.append(_serialize_node_to_postgrest(ch))
                 else:
                     fld, cop, val, cst = _normalize_leaf(ch)
+                    _assert_allowed_column(fld)
                     parts.append(_as_filter_token(fld, cop, val, cst))
             token = f"or({','.join(parts)})"
             return qh.or_(token)
 
-        # ---------- AND (default): apply children sequentially ----------
-        # In PostgREST, multiple filters are ANDed, so we just recurse/apply in order.
+        # ---- AND group (default) --------------------------------------------------
+        # In PostgREST, multiple filters are ANDed; apply sequentially.
         for ch in conds:
             qh = (
                 _apply_group(qh, ch)
@@ -1420,11 +1384,34 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         def _apply_pred(col: str, spec: Any):
             nonlocal q
             _assert_allowed_column(col)
-            # equality shortcut (scalar)
+
+            # ---- Bare equality shortcut (scalar) ----
             if not isinstance(spec, dict):
                 expr = _colexpr(col, op="eq", cast=None, text_mode=True)
-                q = q.eq(col, spec) if expr == col else q.filter(expr, "eq", str(spec))
+                if spec is None:
+                    # Treat bare {"col": null} as IS NULL
+                    q = q.filter(expr, "is", "null")
+                else:
+                    if expr == col:
+                        q = q.eq(col, spec)  # PostgREST will type it correctly
+                    else:
+                        q = q.filter(
+                            expr, "eq", _param_or_error(spec, op="eq", field=col)
+                        )
                 return
+
+            # ---- Dict spec (normal path) ----
+            # Operator-shorthand support, e.g. {"topic": {"ilike": "plan.%"}}
+            # If no "op" but exactly one non-meta key, treat that key as the op.
+            if "op" not in spec:
+                keys = [k for k in spec.keys() if k not in ("cast", "field", "value")]
+                if len(keys) == 1:
+                    k = keys[0]
+                    spec = {
+                        "op": str(k).lower(),
+                        "value": spec[k],
+                        "cast": spec.get("cast"),
+                    }
 
             op = (spec.get("op") or "eq").lower()
             val = spec.get("value")
@@ -1432,11 +1419,145 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             expr_text = _colexpr(col, op=op, cast=cast, text_mode=True)
             expr_json = _colexpr(col, op=op, cast=cast, text_mode=False)
 
-            # --- IN / NOT IN ---
+            # NULL smart handling for dict specs
+            if val is None:
+                if op in ("eq", "="):
+                    q = q.filter(expr_text, "is", "null")
+                    return
+                if op in ("ne", "neq", "!="):
+                    q = q.filter(expr_text, "not.is", "null")
+                    return
+                raise ValueError(
+                    f"{col}.{op} does not accept null; use is_null/not_null or provide a value"
+                )
+
+            # ---- boolean IS on JSON paths ----
+            # For JSON booleans we must compare the jsonb value directly (eq.true/false)
+            # instead of "IS TRUE" which only works on real boolean columns.
+            if op == "is" and isinstance(val, bool):
+                # use JSON mode (->) so PostgREST sees jsonb true/false
+                q = q.filter(expr_json, "eq", str(val).lower())
+                return
+
+            # boolean shortcuts for null tests: {"is_null": true} / {"not_null": true}
+            if op in ("is_null", "isnull", "is null"):
+                q = q.filter(expr_text, "is", "null")
+                return
+            if op in ("not_null", "notnull", "is not null"):
+                q = q.filter(expr_text, "not.is", "null")
+                return
+
+            # BETWEEN arity guard for shorthand
+            if op in ("between", "not_between", "between_exclusive"):
+                if not (isinstance(val, (list, tuple)) and len(val) == 2):
+                    raise ValueError(f"{col}.{op} expects [low, high]")
+
+            # Fast-paths and common ops (mirror the normal path)
+            if op == "in":
+                if not isinstance(val, list):
+                    raise ValueError(f"{col}.op=in requires list 'value'")
+                if expr_text == col:
+                    q = q.in_(col, val)
+                    return
+                raise ValueError(
+                    "IN on JSON path not supported directly; use an OR group."
+                )
+
+            if op in ("eq", "=") and expr_text == col:
+                q = q.eq(col, val)
+                return
+            if op in ("ne", "neq", "!=") and expr_text == col:
+                q = q.neq(col, val)
+                return
+
+            # pattern helpers
+            if op in ("like", "ilike"):
+                q = q.filter(expr_text, op, str(val))
+                return
+            if op in ("contains", "icontains"):
+                patt = f"%{val}%"
+                q = q.filter(expr_text, "ilike" if op == "icontains" else "like", patt)
+                return
+            if op in ("starts_with", "istarts_with"):
+                patt = f"{val}%"
+                q = q.filter(
+                    expr_text, "ilike" if op == "istarts_with" else "like", patt
+                )
+                return
+            if op in ("ends_with", "iends_with"):
+                patt = f"%{val}"
+                q = q.filter(expr_text, "ilike" if op == "iends_with" else "like", patt)
+                return
+
+            # numeric/compare
+            if op in ("gt", "gte", "lt", "lte"):
+                q = q.filter(expr_text, op, str(val))
+                return
+
+            # regex
+            if op in ("match", "imatch"):
+                q = q.filter(expr_text, op, str(val))
+                return
+
+            # explicit is / not (with literal)
+            if op in ("is", "not.is", "not_is"):
+                oper = "not.is" if op.startswith("not") else "is"
+                lit = "null" if val in (None, "null") else str(val)
+                q = q.filter(expr_text, oper, lit)
+                return
+
+            # fallback to the standard path by synthesizing op/value below
+            spec = {"op": op, "value": val, "cast": cast if cast else None}
+
+            # ---- Normalized inputs ----
+            op = (spec.get("op") or "eq").lower()
+            val = spec.get("value")
+            cast = spec.get("cast")
+
+            expr_text = _colexpr(col, op=op, cast=cast, text_mode=True)
+            expr_json = _colexpr(col, op=op, cast=cast, text_mode=False)
+
+            # ------------------------------------------------------------------
+            # A) VALUE-LESS OPS (must run BEFORE any None guards)
+            # ------------------------------------------------------------------
+            if op in ("is_null", "isnull", "is-null"):
+                q = q.filter(expr_text, "is", "null")
+                return
+
+            if op in ("not_null", "notnull", "not-null"):
+                q = q.filter(expr_text, "not.is", "null")
+                return
+
+            if op in ("exists", "has_key"):
+                # JSON-mode expression (->), then "not.is.null" for pragmatic existence
+                jexpr = _colexpr(col, op=op, cast=cast, text_mode=False)
+                q = q.filter(jexpr, "not.is", "null")
+                return
+
+            # ------------------------------------------------------------------
+            # B) NULL smart handling for other ops
+            # ------------------------------------------------------------------
+            # eq(None)  -> IS NULL
+            # ne(None)  -> IS NOT NULL
+            # others(None) -> ValidationError
+            if val is None:
+                if op in ("eq", "="):
+                    q = q.filter(expr_text, "is", "null")
+                    return
+                if op in ("ne", "neq", "!="):
+                    q = q.filter(expr_text, "not.is", "null")
+                    return
+                raise ValueError(
+                    f"{col}.{op} does not accept null; use is_null/not_null or provide a value"
+                )
+
+            # ------------------------------------------------------------------
+            # C) IN / NOT IN
+            # ------------------------------------------------------------------
             if ("in" in spec) or op == "in":
                 values = spec.get("in") if "in" in spec else val
-                if not isinstance(values, list):
-                    raise ValueError(f"{col}.in must be a list")
+                if not isinstance(values, list) or not values:
+                    raise ValueError(f"{col}.in must be a non-empty list")
                 if expr_text != col:
                     # Guardrail: IN on JSON path can’t be expressed cleanly; ask caller to OR
                     raise ValueError(
@@ -1454,20 +1575,21 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 q = q.filter(expr_text, "not.in", f"({csv})")
                 return
 
-            # --- regex (PostgREST ~ / ~*) ---
+            # ------------------------------------------------------------------
+            # D) Regex (PostgREST ~ / ~*)
+            # ------------------------------------------------------------------
             if op == "match":
-                q = q.filter(expr_text, "match", str(val))
+                q = q.filter(expr_text, "match", _param_or_error(val, op=op, field=col))
                 return
             if op == "imatch":
-                q = q.filter(expr_text, "imatch", str(val))
+                q = q.filter(
+                    expr_text, "imatch", _param_or_error(val, op=op, field=col)
+                )
                 return
 
-            # --- JSON key existence (pragmatic: key present AND value not null) ---
-            if op in ("exists", "has_key"):
-                q = q.filter(expr_json, "not.is", "null")
-                return
-
-                # --- relative time helpers ---
+            # ------------------------------------------------------------------
+            # E) Relative time helpers
+            # ------------------------------------------------------------------
             if op == "since":
                 # value: "7d", "-24h", "now", or an ISO timestamp
                 start_iso = _parse_relative_time(val)
@@ -1487,7 +1609,9 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 )
                 return
 
-            # --- between variants ---
+            # ------------------------------------------------------------------
+            # F) Between variants
+            # ------------------------------------------------------------------
             if op == "between":
                 if not (isinstance(val, (list, tuple)) and len(val) == 2):
                     raise ValueError(f"{col}.between requires [low, high]")
@@ -1506,80 +1630,66 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                         "between_exclusive expects a 2-item [low, high] array"
                     )
                 lo, hi = val
-                if expr_json == col:
-                    q = q.gt(col, lo).lt(col, hi)
-                else:
-                    q = q.filter(expr_json, "gt", str(lo)).filter(
-                        expr_json, "lt", str(hi)
-                    )
+                # Use JSON-mode column for strict numeric comparisons across JSON paths
+                q = q.gt(expr_json, lo).lt(expr_json, hi)
                 return
 
             if op == "not_between":
                 if not (isinstance(val, (list, tuple)) and len(val) == 2):
                     raise ValueError("not_between expects a 2-item [low, high] array")
                 lo, hi = val
-                # Build one boolean token: not.and(col.gte.lo,col.lte.hi)
+                # Build ONE boolean token: not.and(col.gte.lo,col.lte.hi)
                 coltok = expr_json
                 token = f"not.and({coltok}.gte.{_pg_encode(lo)},{coltok}.lte.{_pg_encode(hi)})"
-                if debug_explain:
+                # Optional debug hook, guarded to avoid NameError if not defined
+                if globals().get("debug_explain"):
                     _debug_meta.setdefault("keyset_or", []).append(token)
                 q = q.or_(token)
                 return
 
-            # --- simple comparisons on real column fast-paths ---
-            if op in ("eq", "="):
-                q = (
-                    q.eq(col, val)
-                    if expr_text == col
-                    else q.filter(expr_text, "eq", str(val))
-                )
-                return
-            if op in ("ne", "neq", "!="):
-                q = (
-                    q.neq(col, val)
-                    if expr_text == col
-                    else q.filter(expr_text, "neq", str(val))
-                )
-                return
-            if op in ("gt", ">"):
-                q = (
-                    q.gt(col, val)
-                    if expr_text == col
-                    else q.filter(expr_text, "gt", str(val))
-                )
-                return
-            if op in ("gte", ">="):
-                q = (
-                    q.gte(col, val)
-                    if expr_text == col
-                    else q.filter(expr_text, "gte", str(val))
-                )
-                return
-            if op in ("lt", "<"):
-                q = (
-                    q.lt(col, val)
-                    if expr_text == col
-                    else q.filter(expr_text, "lt", str(val))
-                )
-                return
-            if op in ("lte", "<="):
-                q = (
-                    q.lte(col, val)
-                    if expr_text == col
-                    else q.filter(expr_text, "lte", str(val))
+            # ------------------------------------------------------------------
+            # G) Pattern helpers (single)
+            # ------------------------------------------------------------------
+            if op in (
+                "like",
+                "ilike",
+                "contains",
+                "icontains",
+                "starts_with",
+                "istarts_with",
+                "ends_with",
+                "iends_with",
+            ):
+                base = "" if val is None else str(val)
+                if op in ("contains", "icontains"):
+                    patt = f"%{base}%"
+                    oper = "ilike" if op == "icontains" else "like"
+                elif op in ("starts_with", "istarts_with"):
+                    patt = f"{base}%"
+                    oper = "ilike" if op == "istarts_with" else "like"
+                elif op in ("ends_with", "iends_with"):
+                    patt = f"%{base}"
+                    oper = "ilike" if op == "iends_with" else "like"
+                else:
+                    patt = base
+                    oper = op
+                q = q.filter(
+                    _colexpr(col, op=oper, cast=cast, text_mode=True), oper, patt
                 )
                 return
 
-                # --- array containment on ARRAY-typed columns (flat path) ---
-            # contains_all  -> col.cs.{a,b}     (array contains ALL of the given values)
-            # contains_any  -> col.ov.{a,b}     (array overlaps ANY of the given values)
-            # contained_by  -> col.cd.{a,b}     (array is contained BY the given set)
+            # ------------------------------------------------------------------
+            # H) ARRAY containment on ARRAY-typed columns (flat path)
+            # ------------------------------------------------------------------
+            # contains_all -> col.cs.{a,b}
+            # contains_any -> col.ov.{a,b}
+            # contained_by -> col.cd.{a,b}
             if op in ("contains_all", "contains_any", "contained_by"):
                 if not isinstance(val, (list, tuple)) or not val:
                     raise ValueError(
                         f"where.{col}.{op} requires a non-empty list value"
                     )
-                # These operators are for *array* columns (NOT dotted JSON paths)
+                # Only for real array columns (NOT dotted JSON paths)
                 if "." in col:
                     raise ValueError(
                         f"{col}.{op} is only supported on array columns (not JSON paths). "
@@ -1591,69 +1701,12 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                     "contains_any": "ov",
                     "contained_by": "cd",
                 }[op]
-                return q.filter(col, oper, arr_lit)
-
-            # --- pattern helpers ---
-            if op == "like":
-                q = q.filter(expr_text, "like", str(val))
-                return
-            if op == "ilike":
-                q = q.filter(expr_text, "ilike", str(val))
-                return
-            if op in ("contains", "icontains"):
-                patt = f"%{val}%"
-                q = q.filter(expr_text, "ilike" if op == "icontains" else "like", patt)
-                return
-            if op in ("starts_with", "istarts_with"):
-                patt = f"{val}%"
-                q = q.filter(
-                    expr_text, "ilike" if op == "istarts_with" else "like", patt
-                )
-                return
-            if op in ("ends_with", "iends_with"):
-                patt = f"%{val}"
-                q = q.filter(expr_text, "ilike" if op == "iends_with" else "like", patt)
+                q = q.filter(col, oper, arr_lit)
                 return
 
-            # --- null checks / explicit IS ---
-            if op in ("is_null", "isnull", "is-null"):
-                q = q.filter(expr_text, "is", "null")
-                return
-            if op in ("not_null", "notnull", "not-null"):
-                q = q.filter(expr_text, "not.is", "null")
-                return
-            if op == "is":
-                q = q.filter(
-                    expr_text, "is", "null" if val in (None, "null") else str(val)
-                )
-                return
-
-                # --- JSONB key existence family (flat path) ---
-            # --- JSON key present (practical): parent->>key is not null ---
-            if op in ("has_key", "exists", "exists_strict"):
-                expr_text = _colexpr(
-                    col, op=op, cast=cast, text_mode=True
-                )  # uses ->> for JSON paths
-                q = q.filter(expr_text, "not.is", "null")
-                return
-
-            if op in ("has_keys_any", "exists_any"):
-                if not isinstance(val, (list, tuple)) or not val:
-                    raise ValueError("has_keys_any expects a non-empty array of keys")
-                parent_expr, _ = _split_json_path(col)
-                keys = "{" + ",".join(_pg_encode(k) for k in val) + "}"
-                q = q.or_(f"{parent_expr}.ov.{keys}")
-                return
-
-            if op in ("has_keys_all", "exists_all"):
-                if not isinstance(val, (list, tuple)) or not val:
-                    raise ValueError("has_keys_all expects a non-empty array of keys")
-                parent_expr, _ = _split_json_path(col)
-                keys = "{" + ",".join(_pg_encode(k) for k in val) + "}"
-                q = q.or_(f"{parent_expr}.cs.{keys}")
-                return
-
-            # --- pattern ANY sugar (flat path) ---
+            # ------------------------------------------------------------------
+            # I) ANY-of pattern sugar
+            # ------------------------------------------------------------------
             if op in (
                 "starts_with_any",
                 "istarts_with_any",
@@ -1664,34 +1717,40 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             ):
                 if not isinstance(val, (list, tuple)) or not val:
                     raise ValueError(f"{op} expects a non-empty array of strings")
-                case_ins = op.startswith(("i",)) or "i" in op.split("_")[0]
                 kind = (
                     "starts"
                     if "starts" in op
                     else ("ends" if "ends" in op else "contains")
                 )
-                oper = "ilike" if ("i" in op) else "like"
+                oper = "ilike" if op.startswith("i") else "like"
                 col_expr = _colexpr(col, op=oper, cast=cast, text_mode=True)
-
-                patt_list = []
+                parts = []
                 for v in val:
-                    if kind == "starts":
-                        patt_list.append(f"{v}%")
-                    elif kind == "ends":
-                        patt_list.append(f"%{v}")
-                    else:
-                        patt_list.append(f"%{v}%")
-
-                parts = [f"{col_expr}.{oper}.{_pg_encode(p)}" for p in patt_list]
+                    s = "" if v is None else str(v)
+                    patt = (
+                        f"{s}%"
+                        if kind == "starts"
+                        else (f"%{s}" if kind == "ends" else f"%{s}%")
+                    )
+                    parts.append(f"{col_expr}.{oper}.{_pg_encode(patt)}")
                 q = q.or_(f"or({','.join(parts)})")
                 return
 
-            # --- NOT (covers simple + pattern NOTs) ---
+            # ------------------------------------------------------------------
+            # J) NOT wrapper (covers simple + pattern NOTs)
+            # ------------------------------------------------------------------
             if op == "not":
                 inner = val if isinstance(val, dict) else {"op": "eq", "value": val}
                 iop = (inner.get("op") or "eq").lower()
                 ival = inner.get("value")
 
+                # Special-case NOT(IS true/false) for JSON booleans
+                if iop == "is" and isinstance(ival, bool):
+                    # negate equality on the jsonb boolean
+                    q = q.filter(expr_json, "not.eq", str(ival).lower())
+                    return
+
+                # Pattern NOTs
                 if iop in (
                     "contains",
                     "icontains",
@@ -1701,23 +1760,19 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                     "iends_with",
                 ):
                     base = "" if ival is None else str(ival)
-                    patt = (
-                        f"%{base}%"
-                        if iop in ("contains", "icontains")
-                        else (
-                            f"{base}%"
-                            if iop in ("starts_with", "istarts_with")
-                            else f"%{base}"
-                        )
-                    )
-                    oper = (
-                        "not.ilike"
-                        if iop in ("icontains", "istarts_with", "iends_with")
-                        else "not.like"
-                    )
-                    q = q.filter(expr_text, oper, patt)
+                    if iop in ("contains", "icontains"):
+                        patt = f"%{base}%"
+                        oper = "ilike" if iop == "icontains" else "like"
+                    elif iop in ("starts_with", "istarts_with"):
+                        patt = f"{base}%"
+                        oper = "ilike" if iop == "istarts_with" else "like"
+                    else:
+                        patt = f"%{base}"
+                        oper = "ilike" if iop == "iends_with" else "like"
+                    q = q.filter(expr_text, f"not.{oper}", patt)
                     return
 
+                # Simple NOTs
                 op_str = _map_simple_op(iop)
                 crit = (
                     "null" if (op_str == "is" and ival in (None, "null")) else str(ival)
@@ -1725,12 +1780,105 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
                 q = q.filter(expr_text, f"not.{op_str}", crit)
                 return
 
+            # ------------------------------------------------------------------
+            # K) Standard comparisons
+            # ------------------------------------------------------------------
+            if op in ("eq", "="):
+                q = (
+                    q.eq(col, val)
+                    if expr_text == col
+                    else q.filter(
+                        expr_text, "eq", _param_or_error(val, op=op, field=col)
+                    )
+                )
+                return
+            if op in ("ne", "neq", "!="):
+                q = (
+                    q.neq(col, val)
+                    if expr_text == col
+                    else q.filter(
+                        expr_text, "neq", _param_or_error(val, op=op, field=col)
+                    )
+                )
+                return
+            if op in ("gt", ">"):
+                q = (
+                    q.gt(col, val)
+                    if expr_text == col
+                    else q.filter(
+                        expr_text, "gt", _param_or_error(val, op=op, field=col)
+                    )
+                )
+                return
+            if op in ("gte", ">="):
+                q = (
+                    q.gte(col, val)
+                    if expr_text == col
+                    else q.filter(
+                        expr_text, "gte", _param_or_error(val, op=op, field=col)
+                    )
+                )
+                return
+            if op in ("lt", "<"):
+                q = (
+                    q.lt(col, val)
+                    if expr_text == col
+                    else q.filter(
+                        expr_text, "lt", _param_or_error(val, op=op, field=col)
+                    )
+                )
+                return
+            if op in ("lte", "<="):
+                q = (
+                    q.lte(col, val)
+                    if expr_text == col
+                    else q.filter(
+                        expr_text, "lte", _param_or_error(val, op=op, field=col)
+                    )
+                )
+                return
+
+            # ------------------------------------------------------------------
+            # Fallback
+            # ------------------------------------------------------------------
             raise ValueError(f"unsupported op '{op}' for column '{col}'")
 
         # apply flat where (unchanged behavior)
         if isinstance(where, dict):
             for col, cond in where.items():
                 _apply_pred(col, cond)
+
+        # Reuse your existing filter logic on any query handle (for count-only path)
+
+    def _apply_where_to(qh, where_obj):
+        if not where_obj:
+            return qh
+
+        # Grouped shape (AND/OR/NOT) -> use your serializer
+        if isinstance(where_obj, dict) and (
+            "op" in where_obj or "conditions" in where_obj
+        ):
+            token = _serialize_node_to_postgrest(where_obj)
+            # PostgREST expects a boolean-expression token in .or=(...)
+            if token.startswith(("or(", "and(", "not.")):
+                return qh.or_(token)
+            # Fallback: if you ever produce a single boolean token, this keeps it valid
+            return qh.or_(f"and({token})")
+
+        # Flat shape: {"col": value|{op,...}, ...}
+        if not isinstance(where_obj, dict):
+            raise ValueError("where must be a dict (flat) or a grouped node")
+
+        # Reuse your flat helper by temporarily rebinding q -> qh
+        nonlocal q
+        old_q = q
+        try:
+            q = qh
+            for col, spec in where_obj.items():
+                _apply_pred(col, spec)  # mutates nonlocal q
+            return q
+        finally:
+            q = old_q
 
     def _parse_nulls_first(v) -> object:
         """
@@ -1745,10 +1893,86 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             return False
         raise ValueError("order.nulls must be 'first' or 'last' if provided")
 
-    def _cursor_sign(payload: dict, secret: str) -> str:
-        msg = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        mac = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).digest()
-        return base64.urlsafe_b64encode(mac).decode("ascii").rstrip("=")
+    def _finish_and_shape(
+        q, args, sel, limit, offset, count_mode, cursor, debug_explain, _debug_meta
+    ):
+        # Execute
+        resp = q.execute() if hasattr(q, "execute") else q
+
+        # Normalize rows / count
+        rows = None
+        cnt = None
+        if hasattr(resp, "data"):
+            rows = resp.data
+            cnt = getattr(resp, "count", None)
+        elif isinstance(resp, dict) and "data" in resp:
+            rows = resp.get("data")
+            cnt = resp.get("count")
+        else:
+            rows = resp
+
+        # Count-only shaping when limit:0 and count requested
+        agg_arg = args.get("aggregate") or {}
+        requested_count = (
+            (isinstance(agg_arg, dict) and "count" in agg_arg)
+            or (isinstance(agg_arg, str) and str(agg_arg).lower().startswith("count"))
+            or (
+                isinstance(agg_arg, list)
+                and any(str(x).lower().startswith("count") for x in agg_arg)
+            )
+        )
+        if (
+            requested_count
+            and count_mode is not None
+            and int(args.get("limit") or 0) == 0
+        ):
+            rows = [{"count": int(cnt or 0)}]
+
+        # Client-side DISTINCT (temporary)
+        distinct = args.get("distinct")
+        if distinct:
+            if rows is None:
+                rows = []
+            if not isinstance(rows, list):
+                rows = list(rows)
+            if isinstance(distinct, list) and distinct:
+                keys = [str(k) for k in distinct]
+            else:
+                if not isinstance(sel, str) or sel.strip() in ("", "*"):
+                    raise ValueError(
+                        "distinct:true requires explicit select columns (not '*')"
+                    )
+                keys = [c.strip() for c in sel.split(",") if "(" not in c and c.strip()]
+            seen, deduped = set(), []
+            for r in rows:
+                if not isinstance(r, dict):
+                    deduped.append(r)
+                    continue
+                t = tuple(r.get(k) for k in keys)
+                if t in seen:
+                    continue
+                seen.add(t)
+                deduped.append(r)
+            rows = deduped
+
+        # Build result/meta
+        result = {"rows": rows}
+        meta = {}
+
+        if isinstance(cursor, dict):
+            result.setdefault("meta", {}).update(
+                {"cursor": {"after": cursor.get("after"), "mode": cursor.get("mode")}}
+            )
+        if count_mode is not None:
+            meta["count"] = cnt
+        if isinstance(limit, int) and limit > 0:
+            meta["limit"] = limit
+        if isinstance(offset, int) and offset >= 0:
+            meta["offset"] = offset
+        if meta:
+            result["meta"] = {**result.get("meta", {}), **meta}
+
+        return result
 
     def _b64url_nopad(data: bytes) -> str:
         return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
@@ -1980,6 +2204,22 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
     else:
         # fallback: assume resp already is the rows
         rows = resp
+
+    # --- count-only shaping (when caller asks for count and no rows are desired) ---
+    # If aggregate.count was requested AND the caller set limit:0 (common pattern),
+    # return a single row with {"count": <number>} instead of full event rows.
+    agg_arg = args.get("aggregate") or {}
+    requested_count = (
+        (isinstance(agg_arg, dict) and "count" in agg_arg)
+        or (isinstance(agg_arg, str) and agg_arg.lower().startswith("count"))
+        or (
+            isinstance(agg_arg, list)
+            and any(str(x).lower().startswith("count") for x in agg_arg)
+        )
+    )
+    if requested_count and count_mode is not None and int(args.get("limit") or 0) == 0:
+        # Normalize to a predictable shape
+        rows = [{"count": int(cnt or 0)}]
 
     # ----- client-side DISTINCT (temporary, until client exposes 'distinct' param) -----
     # Supports: distinct: true  -> distinct over selected columns

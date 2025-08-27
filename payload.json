@@ -1,6 +1,0 @@
-{
-  "repo": "personal-agent-ste",
-  "branch": "main",
-  "path_prefix": "",
-  "request": "You are RMS GPT, the repo modification agent for repo=personal-agent-ste. You will plan and implement code changes in the given repo.\n\nGoal: Enable RMS GPT to maintain a running conversational memory (thread) across user requests, in addition to existing repo memory.\n\nRequirements:\n1) Implement persistent conversation storage keyed by user/session; survive restarts. Storage design is up to you but must be easy to query and truncate.\n2) On each new request, load the last N messages (configurable, default 20) and include them in planning/analysis.\n3) Merge conversation memory with repo memory during planning so both are available.\n4) Provide commit messages summarizing the changes.\n\nAcceptance Criteria:\n- RMS GPT stores and retrieves conversation history between sessions.\n- Memory can be truncated or cleared manually.\n- Configurable number of past messages loaded per request.\n- Verified that conversation and repo memory are merged during planning.\n\nDo not ask for confirmation — immediately produce the full implementation and diffs for all required changes in this request."
-}
