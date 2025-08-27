@@ -8,6 +8,7 @@ from backend.registry.adapters.http_fetch import http_fetch_adapter
 from backend.registry.adapters.db_read import db_read_adapter
 from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
+from backend.registry.adapters.browser_adapter import browser_run_adapter
 
 
 class Envelope(TypedDict, total=False):
@@ -61,3 +62,4 @@ class CapabilityRegistry:
         self.register("db.write", db_write_adapter)
         self.register("notify.push", notify_push_adapter)
         self.register("http.fetch", http_fetch_adapter)
+        self.register("browser.run", browser_run_adapter)

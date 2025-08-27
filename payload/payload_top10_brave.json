@@ -1,0 +1,31 @@
+{
+    "verb": "browser.run",
+    "args": {
+        "url": "https://search.brave.com/search?q=site%3Ahttpbin.org+gzip",
+        "timeout_ms": 60000,
+        "steps": [
+            {
+                "wait_for": {
+                    "state": "domcontentloaded"
+                }
+            },
+            {
+                "wait_for": {
+                    "time_ms": 1200
+                }
+            },
+            {
+                "evaluate": {
+                    "js": "() => { const toItem = a => ({ title: (a.textContent||'').trim(), href: a.href }); const anchors = Array.from(document.querySelectorAll('a.result-header, a[href^=\"http\"]')); const items = anchors.map(toItem).filter(x => x.href.includes('httpbin.org')); const seen = new Set(); return items.filter(x => { if(seen.has(x.href)) return false; seen.add(x.href); return true; }).slice(0,10); }"
+                }
+            },
+            {
+                "screenshot": {
+                    "path": "brave_results.png",
+                    "full_page": true
+                }
+            }
+        ],
+        "return_html": false
+    }
+}

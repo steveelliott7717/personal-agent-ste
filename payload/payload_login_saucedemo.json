@@ -1,0 +1,43 @@
+{
+    "verb": "browser.run",
+    "args": {
+        "url": "https://www.saucedemo.com/",
+        "timeout_ms": 60000,
+        "steps": [
+            {
+                "wait_for": {
+                    "selector": "#user-name",
+                    "state": "visible"
+                }
+            },
+            {
+                "fill": {
+                    "selector": "#user-name",
+                    "value": "standard_user"
+                }
+            },
+            {
+                "fill": {
+                    "selector": "#password",
+                    "value": "secret_sauce"
+                }
+            },
+            {
+                "click": "#login-button"
+            },
+            {
+                "wait_for": {
+                    "state": "networkidle"
+                }
+            },
+            {
+                "screenshot": {
+                    "path": "saucedemo_postlogin.png",
+                    "full_page": true
+                }
+            }
+        ],
+        "save_storage_state_path": "saucedemo_login.json",
+        "return_html": false
+    }
+}

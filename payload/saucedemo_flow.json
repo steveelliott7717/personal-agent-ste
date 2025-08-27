@@ -1,0 +1,80 @@
+{
+    "verb": "browser.run",
+    "args": {
+        "url": "https://www.saucedemo.com/",
+        "timeout_ms": 30000,
+        "steps": [
+            {
+                "wait_for": {
+                    "selector": "#user-name",
+                    "state": "visible"
+                }
+            },
+            {
+                "fill": {
+                    "selector": "#user-name",
+                    "value": "standard_user"
+                }
+            },
+            {
+                "fill": {
+                    "selector": "#password",
+                    "value": "secret_sauce"
+                }
+            },
+            {
+                "click": "#login-button"
+            },
+            {
+                "wait_for": {
+                    "selector": ".inventory_list",
+                    "state": "visible"
+                }
+            },
+            {
+                "evaluate": {
+                    "js": "() => Array.from(document.querySelectorAll('.inventory_item_name')).slice(0,3).map(x=>x.textContent.trim())"
+                }
+            },
+            {
+                "screenshot": {
+                    "path": "saucedemo_inventory.png",
+                    "full_page": true
+                }
+            },
+            {
+                "click": "button.btn_inventory"
+            },
+            {
+                "wait_for": {
+                    "time_ms": 500
+                }
+            },
+            {
+                "click": "#react-burger-menu-btn"
+            },
+            {
+                "wait_for": {
+                    "selector": "#logout_sidebar_link",
+                    "state": "visible"
+                }
+            },
+            {
+                "click": "#logout_sidebar_link"
+            },
+            {
+                "wait_for": {
+                    "selector": "#login-button",
+                    "state": "visible"
+                }
+            },
+            {
+                "screenshot": {
+                    "path": "saucedemo_end.png",
+                    "full_page": true
+                }
+            }
+        ],
+        "return_html": false
+    }
+}
