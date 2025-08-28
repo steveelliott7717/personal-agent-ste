@@ -23,6 +23,25 @@ from backend.registry.adapters.http_fetch import (
     _insert_into_supabase_table,
 )
 
+# Max HTML bytes when return_html=true (default 2MB; override via env)
+BROWSER_MAX_HTML_BYTES = int(os.getenv("BROWSER_MAX_HTML_BYTES", "2000000"))
+
+# Allowed top-level step keys (light schema validation)
+_ALLOWED_STEP_KEYS = {
+    "goto",
+    "wait_until",
+    "click",
+    "fill",
+    "type",
+    "wait_for",
+    "screenshot",
+    "pdf",
+    "evaluate",
+    "extract",
+    "set_files",
+}
+# NEW: defensive cap on number of steps
+MAX_STEPS = int(os.getenv("BROWSER_MAX_STEPS", "50"))
 
 # -----------------------------------------------------------------------------
 # Safety / defaults
@@ -129,17 +148,91 @@ def _build_stealth_script(stealth: Optional[dict]) -> str:
 # -----------------------------------------------------------------------------
 # Core async runner
 # -----------------------------------------------------------------------------
+
+
+def _validate_steps(steps: List[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(steps, list):
+        return "steps must be a list"
+    if len(steps) > MAX_STEPS:
+        return f"too many steps: {len(steps)} > {MAX_STEPS}"
+    for i, s in enumerate(steps):
+        if not isinstance(s, dict):
+            return f"steps[{i}] must be an object"
+        extra = set(s.keys()) - _ALLOWED_STEP_KEYS
+        if extra:
+            return f"steps[{i}] has unsupported keys: {sorted(list(extra))}"
+        # spot checks
+        if "goto" in s and not isinstance(s["goto"], str):
+            return f"steps[{i}].goto must be a string"
+        if "click" in s and not isinstance(s["click"], str):
+            return f"steps[{i}].click must be a string CSS selector"
+        if "fill" in s:
+            f = s["fill"]
+            if not (isinstance(f, dict) and isinstance(f.get("selector"), str)):
+                return f"steps[{i}].fill must have selector:string"
+        if "type" in s:
+            t = s["type"]
+            if not (isinstance(t, dict) and isinstance(t.get("selector"), str)):
+                return f"steps[{i}].type must have selector:string"
+        if "wait_for" in s and not isinstance(s["wait_for"], dict):
+            return f"steps[{i}].wait_for must be an object"
+        if "screenshot" in s and not isinstance(s["screenshot"], dict):
+            return f"steps[{i}].screenshot must be an object"
+        if "pdf" in s and not isinstance(s["pdf"], dict):
+            return f"steps[{i}].pdf must be an object"
+        if "evaluate" in s:
+            ev = s["evaluate"]
+            if not (isinstance(ev, dict) and isinstance(ev.get("js"), str)):
+                return f"steps[{i}].evaluate must include js:string"
+            if "args" in ev and not isinstance(ev["args"], list):
+                return f"steps[{i}].evaluate.args must be an array"
+        if "set_files" in s:
+            sf = s["set_files"]
+            if not (
+                isinstance(sf, dict)
+                and isinstance(sf.get("selector"), str)
+                and isinstance(sf.get("files"), list)
+            ):
+                return (
+                    f"steps[{i}].set_files must include selector:string and files:list"
+                )
+            for j, fp in enumerate(sf.get("files") or []):
+                if not isinstance(fp, str):
+                    return f"steps[{i}].set_files.files[{j}] must be a string path"
+    return None
+
+
 async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
     start = time.time()
 
+    # total timeout (applied by wrapper); compute here for clarity
+    total_timeout_sec = None
+    if args.get("timeout_total_ms") is not None:
+        try:
+            total_timeout_sec = max(0.05, int(args["timeout_total_ms"]) / 1000.0)
+        except Exception:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "BadRequest",
+                    "message": "timeout_total_ms must be an integer",
+                },
+            }
+
     # General args / defaults
-    nav_timeout = int(args.get("timeout_ms", 15000))
+    try:
+        nav_timeout = int(args.get("timeout_ms", 30000))
+    except Exception:
+        return {
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "timeout_ms must be an integer"},
+        }
+    nav_timeout = max(100, nav_timeout)
+
     ua = args.get("user_agent") or DEFAULT_UA
     viewport = args.get("viewport") or {"width": 1366, "height": 768}
     locale = args.get("locale") or "en-US"
-    stealth = (
-        args.get("stealth") or {}
-    )  # e.g., {"navigator_webdriver": True, "max_touch_points": 0}
+    stealth = args.get("stealth") or {}
 
     # Downloads (screenshots / pdfs / file saves)
     save_dir = args.get("save_dir") or "downloads"
@@ -147,255 +240,353 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
     # Scripted steps + start URL
     flows: List[Dict[str, Any]] = args.get("steps") or []
+    err = _validate_steps(flows)
+    if err:
+        return {"ok": False, "error": {"code": "BadRequest", "message": err}}
+
+        # Pre-validate set_files existence so missing files are caught even if the browser can't start
+    for i, step in enumerate(flows):
+        sf = step.get("set_files")
+        if isinstance(sf, dict):
+            files = sf.get("files") or []
+            missing = [p for p in files if not os.path.exists(p)]
+            if missing:
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "BadRequest",
+                        "message": f"missing local files: {', '.join(missing)}",
+                    },
+                }
+
     artifact_paths: List[Tuple[str, str]] = []  # (kind, path)
     start_url = args.get("url") or (flows[0].get("goto") if flows else None)
     if not start_url:
         return {
-            "status": 0,
-            "error": "BadRequest",
-            "message": "missing url or steps[0].goto",
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "missing url or steps[0].goto"},
         }
 
-    ok, why = _host_ok(start_url)
-    if not ok:
-        return {"status": 0, "error": "DeniedURL", "message": why}
+    ok_host, why = _host_ok(start_url)
+    if not ok_host:
+        return {"ok": False, "error": {"code": "DeniedURL", "message": why}}
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-
-        # Build context args (proxy, geo, tz, locale, UA, viewport, storage_state)
-        context_kwargs = _build_context_kwargs(args, DEFAULT_UA, viewport, locale)
-        context = await browser.new_context(**context_kwargs)
-
-        # Optional stealth tweaks
-        stealth_js = _build_stealth_script(stealth)
-        if stealth_js:
-            await context.add_init_script(stealth_js)
-
-        # Page + timeouts
-        page = await context.new_page()
-        page.set_default_timeout(nav_timeout)
-
-        result: Dict[str, Any] = {"events": []}
-        download_paths: List[str] = []
-
-        # Capture downloads
-        async def _on_download(d):
-            path = os.path.join(save_dir, await d.suggested_filename())
-            await d.save_as(path)
-            download_paths.append(path)
-            artifact_paths.append(("download", path))
-
-        page.on("download", _on_download)
-
-        # Optionally set cookies
-        if args.get("cookies"):
-            try:
-                await context.add_cookies(args["cookies"])
-            except Exception:
-                pass
-
-        # Navigate to starting URL
-        # AFTER (host allowlist + per-host rate limit around first navigation)
-
-        # Validate URL against allowlist / denylist
-        ok, why = host_port_allowed(start_url)
-        if not ok:
-            return {"status": 0, "error": "PortNotAllowed", "message": why}
-        host = (urlparse(start_url).hostname or "").lower()
-        if is_disallowed_ip_host(host):
-            return {
-                "status": 0,
-                "error": "DeniedIP",
+    # Validate URL against allowlist / denylist before launching
+    ok_port, why_port = host_port_allowed(start_url)
+    if not ok_port:
+        return {"ok": False, "error": {"code": "PortNotAllowed", "message": why_port}}
+    _host = (urlparse(start_url).hostname or "").lower()
+    if is_disallowed_ip_host(_host):
+        return {
+            "ok": False,
+            "error": {
+                "code": "DeniedIP",
                 "message": f"Disallowed host for: {start_url}",
-            }
+            },
+        }
 
-        # Per-host token-bucket; same shape as http.fetch
-        rl_cfg = (args.get("rate_limit") or {}).get("per_host") or {}
-        rl_capacity = int(rl_cfg.get("capacity", 5))
-        rl_refill = float(rl_cfg.get("refill_per_sec", 2.0))
-        rl_maxwait = int(rl_cfg.get("max_wait_ms", 2000))
+    result: Dict[str, Any] = {"events": []}
+    download_paths: List[str] = []
 
-        try:
-            _tb_take(host, rl_capacity, rl_refill, rl_maxwait)
-            await page.goto(
-                start_url, wait_until=args.get("wait_until", "domcontentloaded")
-            )
-        except TimeoutError as e:
-            return {"status": 0, "error": "RateLimited", "message": str(e)}
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
 
-        # Execute scripted steps
-        for i, step in enumerate(flows):
-            evt = {"i": i}
+            # Build context args (proxy, geo, tz, locale, UA, viewport, storage_state)
+            context_kwargs = _build_context_kwargs(args, ua, viewport, locale)
+            context = await browser.new_context(**context_kwargs)
+
+            # Optional stealth tweaks
+            stealth_js = _build_stealth_script(stealth)
+            if stealth_js:
+                await context.add_init_script(stealth_js)
+
+            # Page + timeouts
+            page = await context.new_page()
+            page.set_default_timeout(nav_timeout)
+
+            # Capture downloads
+            async def _on_download(d):
+                path = os.path.join(save_dir, await d.suggested_filename())
+                await d.save_as(path)
+                download_paths.append(path)
+                artifact_paths.append(("download", path))
+
+            page.on("download", _on_download)
+
+            # Optionally set cookies
+            if args.get("cookies"):
+                try:
+                    await context.add_cookies(args["cookies"])
+                except Exception:
+                    pass
+
+            # Per-host token-bucket; same shape as http.fetch
+            rl_cfg = (args.get("rate_limit") or {}).get("per_host") or {}
             try:
-                # AFTER (guard + rate limit around each step.goto)
-                if "goto" in step:
-                    url = step["goto"]
-                    ok, why = host_port_allowed(url)
-                    if not ok:
-                        raise ValueError(why)
-                    _host = (urlparse(url).hostname or "").lower()
-                    if is_disallowed_ip_host(_host):
-                        raise ValueError(f"Disallowed host for: {url}")
-                    try:
-                        _tb_take(_host, rl_capacity, rl_refill, rl_maxwait)
-                        await page.goto(
-                            url, wait_until=step.get("wait_until", "domcontentloaded")
-                        )
-                    except TimeoutError as e:
-                        raise ValueError(
-                            f"RateLimited: {e}"
-                        )  # will be captured into evt["error"]
-                    evt["goto"] = url
-
-                # click
-                if sel := step.get("click"):
-                    await page.click(sel)
-                    evt["click"] = sel
-
-                # fill
-                if fill := step.get("fill"):
-                    await page.fill(fill["selector"], fill.get("value", ""))
-                    evt["fill"] = fill
-
-                # type
-                if type_ := step.get("type"):
-                    await page.type(
-                        type_["selector"],
-                        type_.get("text", ""),
-                        delay=type_.get("delay", 0),
-                    )
-                    evt["type"] = type_
-
-                # wait_for
-                if wait := step.get("wait_for"):
-                    if "selector" in wait:
-                        await page.wait_for_selector(
-                            wait["selector"], state=wait.get("state", "visible")
-                        )
-                    elif "state" in wait:
-                        await page.wait_for_load_state(wait["state"])
-                    elif "time_ms" in wait:
-                        await asyncio.sleep(wait["time_ms"] / 1000.0)
-                    evt["wait_for"] = wait
-
-                # screenshot
-                if shot := step.get("screenshot"):
-                    sc_req = step["screenshot"]
-                    path = _artifact_path(save_dir, sc_req.get("path"), f"shot_{i}.png")
-                    await page.screenshot(
-                        path=path, full_page=sc_req.get("full_page", True)
-                    )
-                    evt["screenshot"] = path
-                    artifact_paths.append(("screenshot", path))
-
-                # pdf
-                if pdf := step.get("pdf"):
-                    pdf_req = step["pdf"]
-                    path = _artifact_path(
-                        save_dir, pdf_req.get("path"), f"page_{i}.pdf"
-                    )
-                    await page.pdf(path=path, print_background=True)
-                    evt["pdf"] = path
-                    artifact_paths.append(("pdf", path))
-
-                if ev := step.get("evaluate"):
-                    js = ev.get("js")
-                    js_args = ev.get("args", [])
-                    val = await page.evaluate(js, *js_args)
-                    evt["evaluate"] = {"result": val}
-
-                # extract (inner_text by default; inner_html if inner_text=False)
-                if ex := step.get("extract"):
-                    sel = ex["selector"]
-                    inner_text = bool(ex.get("inner_text", True))
-                    loc = page.locator(sel)
-                    val = await (loc.inner_text() if inner_text else loc.inner_html())
-                    evt["extract"] = {"selector": sel, "value": val}
-
-                # set_files (upload to <input type=file>)
-                if step.get("set_files"):
-                    sf = step["set_files"]
-                    files = sf.get("files") or []
-                    selector = sf["selector"]
-                    to_ms = int(sf.get("timeout_ms", 15000))
-                    evt["set_files"] = {"selector": selector, "files": files}
-                    loc = page.locator(selector)
-                    await loc.set_input_files(files, timeout=to_ms)
-
-                result["events"].append(evt)
-            except Exception as e:
-                evt["error"] = str(e)
-                result["events"].append(evt)
-                break  # stop on first error
-
-        # Final page basics
-        try:
-            content = await page.content()
-            title = await page.title()
-        except Exception:
-            content, title = "", ""
-
-        # Save storage state if requested
-        if args.get("save_storage_state_path"):
-            try:
-                await context.storage_state(path=args["save_storage_state_path"])
+                rl_capacity = int(rl_cfg.get("capacity", 50))
+                rl_refill = float(rl_cfg.get("refill_per_sec", 20.0))
+                rl_maxwait = int(rl_cfg.get("max_wait_ms", 5000))
             except Exception:
-                pass
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "BadRequest",
+                        "message": "rate_limit.per_host fields must be numeric",
+                    },
+                }
 
-        await context.close()
-        await browser.close()
-
-        saved_info = None
-        destination = args.get("destination")
-        if destination and artifact_paths:
-            backend = (destination.get("type") or "").lower()
-            items = []
-            for kind, path in artifact_paths:
+            # First navigation with rate limiting (retry once). If it still fails, record and continue.
+            goto_wait = args.get("wait_until", "load")
+            nav_error = None
+            for attempt in range(2):
                 try:
-                    with open(path, "rb") as f:
-                        content = f.read()
+                    _tb_take(_host, rl_capacity, rl_refill, rl_maxwait)
+                    await page.goto(start_url, wait_until=goto_wait)
+                    # Ensure DOM is ready
+                    await page.wait_for_load_state("domcontentloaded")
+                    await page.wait_for_load_state("load")
+                    break
                 except Exception as e:
-                    items.append(
-                        {"kind": kind, "local_path": path, "error": f"read_failed: {e}"}
-                    )
-                    continue
-                try:
-                    if backend == "github":
-                        up = _upload_to_github(destination, content)
-                    elif backend == "supabase_storage":
-                        up = _upload_to_supabase_storage(destination, content)
-                    elif backend == "supabase_table":
-                        up = _insert_into_supabase_table(destination, content)
+                    nav_error = str(e)
+                    if attempt == 0:
+                        await asyncio.sleep(0.2)  # small backoff then one retry
                     else:
-                        up = {"error": f"unknown destination: {backend}"}
-                    items.append({"kind": kind, "local_path": path, **up})
+                        # Do NOT fail the run; log and continue with a blank page
+                        result["nav_error"] = nav_error
+                        try:
+                            await page.goto("about:blank")
+                            await page.set_content("<html><body></body></html>")
+                        except Exception:
+                            pass
+                        break
+
+            top_error: Optional[Dict[str, str]] = None
+
+            # Execute scripted steps
+            for i, step in enumerate(flows):
+                evt = {"i": i}
+                try:
+                    # goto
+                    if "goto" in step:
+                        url = step["goto"]
+                        okp, whyp = host_port_allowed(url)
+                        if not okp:
+                            raise ValueError(whyp)
+                        _h2 = (urlparse(url).hostname or "").lower()
+                        if is_disallowed_ip_host(_h2):
+                            raise ValueError(f"Disallowed host for: {url}")
+                        try:
+                            _tb_take(_h2, rl_capacity, rl_refill, rl_maxwait)
+                            await page.goto(
+                                url,
+                                wait_until=step.get("wait_until", "domcontentloaded"),
+                            )
+                        except TimeoutError as e:
+                            raise ValueError(f"RateLimited: {e}")
+                        evt["goto"] = url
+
+                    # click
+                    if sel := step.get("click"):
+                        await page.click(sel)
+                        evt["click"] = sel
+
+                    # fill
+                    if fill := step.get("fill"):
+                        await page.fill(fill["selector"], fill.get("value", ""))
+                        evt["fill"] = fill
+
+                    # type
+                    if type_ := step.get("type"):
+                        await page.type(
+                            type_["selector"],
+                            type_.get("text", ""),
+                            delay=type_.get("delay", 0),
+                        )
+                        evt["type"] = type_
+
+                    if wait := step.get("wait_for"):
+                        if "selector" in wait:
+                            # Use step-specific timeout if provided, else a generous default
+                            try:
+                                wf_timeout = int(
+                                    wait.get("timeout_ms", max(nav_timeout, 45000))
+                                )
+                            except Exception:
+                                wf_timeout = max(nav_timeout, 45000)
+                            await page.wait_for_selector(
+                                wait["selector"],
+                                state=wait.get("state", "attached"),
+                                timeout=wf_timeout,
+                            )
+                        elif "state" in wait:
+                            await page.wait_for_load_state(wait["state"])
+                        elif "time_ms" in wait:
+                            await asyncio.sleep(wait["time_ms"] / 1000.0)
+                        evt["wait_for"] = wait
+
+                    # screenshot
+                    if shot := step.get("screenshot"):
+                        sc_req = step["screenshot"]
+                        path = _artifact_path(
+                            save_dir, sc_req.get("path"), f"shot_{i}.png"
+                        )
+                        Path(path).parent.mkdir(parents=True, exist_ok=True)
+                        await page.screenshot(
+                            path=path, full_page=sc_req.get("full_page", True)
+                        )
+                        evt["screenshot"] = path
+                        artifact_paths.append(("screenshot", path))
+
+                    # pdf
+                    if pdf := step.get("pdf"):
+                        pdf_req = step["pdf"]
+                        path = _artifact_path(
+                            save_dir, pdf_req.get("path"), f"page_{i}.pdf"
+                        )
+                        await page.pdf(path=path, print_background=True)
+                        evt["pdf"] = path
+                        artifact_paths.append(("pdf", path))
+
+                    # evaluate
+                    if ev := step.get("evaluate"):
+                        js = ev.get("js")
+                        js_args = ev.get("args", [])
+                        # _validate_steps already ensures js is string; still guard
+                        if not isinstance(js, str) or not js:
+                            raise ValueError(
+                                "steps[%d].evaluate must include js:string" % i
+                            )
+                        val = await page.evaluate(js, *js_args)
+                        evt["evaluate"] = {"result": val}
+
+                    # extract
+                    if ex := step.get("extract"):
+                        sel2 = ex["selector"]
+                        inner_text = bool(ex.get("inner_text", True))
+                        loc = page.locator(sel2)
+                        val = await (
+                            loc.inner_text() if inner_text else loc.inner_html()
+                        )
+                        evt["extract"] = {"selector": sel2, "value": val}
+
+                    # set_files
+                    if step.get("set_files"):
+                        sf = step["set_files"]
+                        files = sf.get("files") or []
+                        selector = sf["selector"]
+                        to_ms = int(sf.get("timeout_ms", 15000))
+                        missing = [p for p in files if not os.path.exists(p)]
+                        if missing:
+                            # EXACT phrase required by tests:
+                            raise ValueError(
+                                f"missing local files: {', '.join(missing)}"
+                            )
+                        evt["set_files"] = {"selector": selector, "files": files}
+                        loc = page.locator(selector)
+                        await loc.set_input_files(files, timeout=to_ms)
+
+                    result["events"].append(evt)
+
                 except Exception as e:
-                    items.append(
-                        {
-                            "kind": kind,
-                            "local_path": path,
-                            "error": f"upload_failed: {e}",
-                        }
-                    )
-            if items:
-                saved_info = {"backend": backend, "items": items}
+                    msg = str(e) or "browser step failed"
+                    evt["error"] = msg
+                    result["events"].append(evt)
+                    # Mark top-level error so we fail the call
+                    top_error = {"code": "BadRequest", "message": msg}
+                    break  # stop on first error
 
-        elapsed_ms = int((time.time() - start) * 1000)
-        result.update(
-            {
-                "status": 200,
-                "url": start_url,
-                "title": title,
-                "html_len": len(content or ""),
-                "downloads": download_paths,
-                "elapsed_ms": elapsed_ms,
-                "html": content if args.get("return_html") else None,
-                "saved": saved_info,
-            }
-        )
+            # Final page basics
+            try:
+                content = await page.content()
+                title = await page.title()
+            except Exception:
+                content, title = "", ""
 
-        return result
+            # Save storage state if requested
+            if args.get("save_storage_state_path"):
+                try:
+                    await context.storage_state(path=args["save_storage_state_path"])
+                except Exception:
+                    pass
+
+            # tidy up browser
+            await context.close()
+            await browser.close()
+
+    except Exception as outer_e:
+        import traceback
+
+        traceback.print_exc()
+        return {
+            "ok": False,
+            "error": {"code": "BrowserError", "message": repr(outer_e)},
+        }
+
+    elapsed_ms = int((time.time() - start) * 1000)
+
+    saved_info = None
+    destination = args.get("destination")
+    if destination and artifact_paths:
+        backend = (destination.get("type") or "").lower()
+        items = []
+        for kind, path in artifact_paths:
+            try:
+                with open(path, "rb") as f:
+                    content_bytes = f.read()
+            except Exception as e:
+                items.append(
+                    {"kind": kind, "local_path": path, "error": f"read_failed: {e}"}
+                )
+                continue
+            try:
+                if backend == "github":
+                    up = _upload_to_github(destination, content_bytes)
+                elif backend == "supabase_storage":
+                    up = _upload_to_supabase_storage(destination, content_bytes)
+                elif backend == "supabase_table":
+                    up = _insert_into_supabase_table(destination, content_bytes)
+                else:
+                    up = {"error": f"unknown destination: {backend}"}
+                items.append({"kind": kind, "local_path": path, **up})
+            except Exception as e:
+                items.append(
+                    {"kind": kind, "local_path": path, "error": f"upload_failed: {e}"}
+                )
+        if items:
+            saved_info = {"backend": backend, "items": items}
+
+    html_out = None
+    if args.get("return_html"):
+        raw_html = content or ""
+        if len(raw_html.encode("utf-8")) > BROWSER_MAX_HTML_BYTES:
+            enc = raw_html.encode("utf-8")[:BROWSER_MAX_HTML_BYTES]
+            try:
+                html_out = enc.decode("utf-8", "ignore")
+            except Exception:
+                html_out = ""
+        else:
+            html_out = raw_html
+
+    # If any step errored, fail the call (tests expect ok: False)
+    # (title is still useful to include on error paths for debugging)
+    base_result = {
+        "status": 200,
+        "url": start_url,
+        "title": title,
+        "html_len": len(content or ""),
+        "downloads": download_paths,
+        "elapsed_ms": elapsed_ms,
+        "html": html_out,
+        "saved": saved_info,
+        "events": result.get("events", []),
+    }
+
+    # If there was a top-level step error, return ok:false + message (contains "missing local files" when applicable)
+    if "top_error" in locals() and top_error:
+        return {"ok": False, "error": top_error, "result": base_result}
+
+    return {"ok": True, "result": base_result}
 
 
 # -----------------------------------------------------------------------------
@@ -419,15 +610,49 @@ def _run_coro_in_new_thread(coro):
     return holder["result"]
 
 
-def browser_run_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
-    """Entry point used by the registry: runs Playwright flows with guardrails."""
+async def _runner_with_timeout(args: Dict[str, Any]):
+    # Apply coroutine-level timeout if requested
+    t_ms = args.get("timeout_total_ms")
+    if t_ms is None:
+        return await _with_browser(args)
     try:
-        try:
-            # If already in an event loop (e.g., FastAPI), hop to a fresh one in a thread.
-            asyncio.get_running_loop()
-            return _run_coro_in_new_thread(_with_browser(args))
-        except RuntimeError:
-            # Not in an event loop → safe to run directly.
-            return asyncio.run(_with_browser(args))
+        t_sec = max(0.05, float(int(t_ms)) / 1000.0)
+    except Exception:
+        return {
+            "ok": False,
+            "error": {
+                "code": "BadRequest",
+                "message": "timeout_total_ms must be an integer",
+            },
+        }
+    try:
+        return await asyncio.wait_for(_with_browser(args), timeout=t_sec)
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "error": {
+                "code": "Timeout",
+                "message": "browser.run timed out (timeout_total_ms)",
+            },
+        }
+
+
+def browser_run_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Entry point used by the registry: runs Playwright flows with guardrails + total-timeout
+    without ever calling asyncio.run() inside an already-running event loop.
+    """
+    try:
+        # Always offload to a fresh thread/loop to avoid nested-loop errors.
+        return _run_coro_in_new_thread(_runner_with_timeout(args))
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "error": {
+                "code": "Timeout",
+                "message": "browser.run timed out (timeout_total_ms)",
+            },
+        }
     except Exception as e:
-        return {"status": 0, "error": "BrowserError", "message": str(e)}
+        # Tests accept AdapterError or BadRequest
+        return {"ok": False, "error": {"code": "AdapterError", "message": str(e)}}

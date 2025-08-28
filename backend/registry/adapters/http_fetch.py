@@ -339,7 +339,129 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
       - Streaming to local file (save_to), or piping into destinations (github/supabase)
       - Pagination modes via paginate_response (cursor/header_link/page)
       - Per-host token-bucket rate limiting
+      - Input validation + header sanitization + timeout_ms + max_bytes clamping
     """
+    # --------------------
+    # Basic argument guard
+    # --------------------
+    if not isinstance(args, dict):
+        return {"status": 0, "error": "BadRequest", "message": "args must be an object"}
+
+    url = (args.get("url") or "").strip()
+    if not url:
+        return {"status": 0, "error": "BadRequest", "message": "args.url is required"}
+
+    # Method whitelist (default GET)
+    method = (args.get("method") or "GET").upper()
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+        return {
+            "status": 0,
+            "error": "BadRequest",
+            "message": f"unsupported method: {method}",
+        }
+    args["method"] = method
+
+    # basic shapes
+    if (
+        "headers" in args
+        and args["headers"] is not None
+        and not isinstance(args["headers"], dict)
+    ):
+        return {
+            "status": 0,
+            "error": "BadRequest",
+            "message": "headers must be an object",
+        }
+    if (
+        "retry" in args
+        and args["retry"] is not None
+        and not isinstance(args["retry"], dict)
+    ):
+        return {
+            "status": 0,
+            "error": "BadRequest",
+            "message": "retry must be an object",
+        }
+    if (
+        "rate_limit" in args
+        and args["rate_limit"] is not None
+        and not isinstance(args["rate_limit"], dict)
+    ):
+        return {
+            "status": 0,
+            "error": "BadRequest",
+            "message": "rate_limit must be an object",
+        }
+
+    # validate rate_limit.per_host numbers (optional)
+    rl_cfg = (args.get("rate_limit") or {}).get("per_host") or {}
+    try:
+        if rl_cfg:
+            _ = int(rl_cfg.get("capacity", 5))
+            _ = float(rl_cfg.get("refill_per_sec", 2.0))
+            _ = int(rl_cfg.get("max_wait_ms", 2000))
+    except Exception:
+        return {
+            "status": 0,
+            "error": "BadRequest",
+            "message": "rate_limit.per_host fields must be numbers",
+        }
+
+    # destination (single) shape
+    if (
+        "destination" in args
+        and args["destination"] is not None
+        and not isinstance(args["destination"], dict)
+    ):
+        return {
+            "status": 0,
+            "error": "BadRequest",
+            "message": "destination must be an object",
+        }
+    # destination_chain shape
+    if "destination_chain" in args and args["destination_chain"] is not None:
+        if not isinstance(args["destination_chain"], list):
+            return {
+                "status": 0,
+                "error": "BadRequest",
+                "message": "destination_chain must be a list",
+            }
+        for i, step in enumerate(args["destination_chain"]):
+            if not isinstance(step, dict) or "type" not in step:
+                return {
+                    "status": 0,
+                    "error": "BadRequest",
+                    "message": f"destination_chain[{i}] must be an object with 'type'",
+                }
+
+    # timeout_ms -> http client "timeout" (seconds, float), clamp [0.05s..120s] unless user passes larger
+    if "timeout_ms" in args and args.get("timeout_ms") is not None:
+        try:
+            t_ms = max(50, int(args["timeout_ms"]))  # 50ms minimum
+        except Exception:
+            return {
+                "status": 0,
+                "error": "BadRequest",
+                "message": "timeout_ms must be an integer",
+            }
+        # Let caller exceed 120s if needed, but never accept negative/0
+        args["timeout"] = max(0.05, float(t_ms) / 1000.0)
+        # Remove normalized field to avoid confusion downstream
+        del args["timeout_ms"]
+
+    # max_bytes: normalize and clamp lower bound (avoid 0/negative). Upper bound left to infra limits.
+    mb_default = 2_000_000  # 2 MB
+    try:
+        max_bytes = int(args.get("max_bytes", mb_default))
+    except Exception:
+        return {
+            "status": 0,
+            "error": "BadRequest",
+            "message": "max_bytes must be an integer",
+        }
+    if max_bytes < 1024:  # keep at least 1 KiB
+        max_bytes = 1024
+    args["max_bytes"] = max_bytes
 
     # ---- build body and baseline headers ----
     payload, hdrs_add = build_request_body(
@@ -361,7 +483,22 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
     if not _has(headers, "Content-Type") and "Content-Type" in (hdrs_add or {}):
         headers["Content-Type"] = hdrs_add["Content-Type"]
 
-    # apply composed headers back to args and body payload (if any)
+    # ---- sanitize unsafe hop-by-hop headers (http client will set correct ones) ----
+    for bad in (
+        "Host",
+        "host",
+        "Content-Length",
+        "content-length",
+        "Connection",
+        "connection",
+        "Transfer-Encoding",
+        "transfer-encoding",
+        "Upgrade",
+        "upgrade",
+    ):
+        headers.pop(bad, None)
+
+    # apply headers/body back to args
     args["headers"] = headers
     if payload is not None:
         args["body"] = payload
@@ -402,6 +539,9 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
     # ---- streaming to file (save_to) ----
     save_to = args.get("save_to")
     if isinstance(save_to, str) and save_to.strip():
+        # If relative, keep downloads under SAVE_ROOT to be safe in containers
+        if not os.path.isabs(save_to):
+            save_to = os.path.join(SAVE_ROOT, save_to)
         attempt = 0
         while True:
             req = http_request.build(
@@ -411,7 +551,6 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
                 _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
                 meta_r, stream = req.send_stream(chunk_size=64 * 1024)
             except TimeoutError as e:
-                # Treat as a structured RateLimited error
                 return {
                     "status": 0,
                     "url": req.url,
@@ -431,7 +570,6 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
 
             if meta_r.status in retry_on and attempt < max_retries:
                 attempt += 1
-                # clean partial file
                 try:
                     os.remove(info["path"])
                 except Exception:
@@ -640,7 +778,6 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
             )
             continue
 
-        # stop if not retryable OR we already used up all retries
         if resp.status not in retry_on or attempt >= max_retries:
             break
 
@@ -674,7 +811,7 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
         "not_modified": (resp.status == 304),
     }
 
-    # ---- pagination (uses same decompress->clamp->parse for each page) ----
+    # ---- pagination ----
     paginated = None
     paginate_cfg = args.get("paginate") or {}
     if paginate_cfg:
@@ -757,7 +894,7 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
         paginated = paginate_response(first, args, cfg)
 
     # ---- assemble final output ----
-    out = dict(first)  # base fields from first page
+    out = dict(first)
     if paginated:
         out["pagination"] = paginated
     if args.get("trace"):

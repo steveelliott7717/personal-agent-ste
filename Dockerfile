@@ -60,7 +60,8 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt \
 
 # Install Chromium **into /ms-playwright** (accessible to any user)
 RUN mkdir -p ${PLAYWRIGHT_BROWSERS_PATH} \
-    && python -m playwright install chromium
+    && python -m playwright install chromium --with-deps
+
 
 # Bring in built SPA
 COPY --from=fe_build /app/frontend/dist/ /app/backend/static/
