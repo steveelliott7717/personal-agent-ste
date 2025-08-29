@@ -9,7 +9,43 @@ import hmac
 from typing import Any, Dict
 from urllib.parse import unquote
 
+# --- add for timeout support ---
+import time
+import threading
+
+
 from backend.services.supabase_service import supabase
+
+
+# --- add: best-effort execute-with-timeout wrapper ---
+def _exec_with_timeout(builder, timeout_ms: int | None):
+    """
+    Run builder.execute() in a background thread and wait up to timeout_ms.
+    Returns:
+      - result of .execute() on success
+      - {"__timeout__": True} if the timeout is exceeded
+    """
+    if not timeout_ms or timeout_ms <= 0:
+        return builder.execute()
+
+    box: dict = {}
+    err: dict = {}
+
+    def run():
+        try:
+            box["res"] = builder.execute()
+        except Exception as e:
+            err["e"] = e
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout_ms / 1000.0)
+
+    if t.is_alive():
+        return {"__timeout__": True}
+    if "e" in err:
+        raise err["e"]
+    return box.get("res")
 
 
 def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -78,6 +114,14 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
     col_allow = {
         c.strip() for c in (os.getenv(col_allow_env) or "").split(",") if c.strip()
     }
+
+    # --- add: normalize timeout_ms (milliseconds) ---
+    try:
+        _timeout_ms = int(args.get("timeout_ms") or 0)
+        if _timeout_ms < 0:
+            _timeout_ms = 0
+    except Exception:
+        raise ValueError("timeout_ms must be an integer (milliseconds)")
 
     def _assert_allowed_column(colname: str) -> None:
         if not col_allow:
@@ -1897,7 +1941,16 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         q, args, sel, limit, offset, count_mode, cursor, debug_explain, _debug_meta
     ):
         # Execute
-        resp = q.execute() if hasattr(q, "execute") else q
+        res = _exec_with_timeout(q, _timeout_ms)
+        if isinstance(res, dict) and res.get("__timeout__"):
+            return {
+                "error": {
+                    "code": "Timeout",
+                    "message": f"db.read exceeded {_timeout_ms} ms",
+                },
+                "rows": [],
+                "meta": {"timeout_ms": _timeout_ms},
+            }
 
         # Normalize rows / count
         rows = None
@@ -2189,7 +2242,16 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
             _debug_meta["count_mode"] = agg.get("count")
 
     # --- execute and shape result ---
-    resp = q.execute() if hasattr(q, "execute") else q
+    resp = _exec_with_timeout(q, _timeout_ms)
+    if isinstance(resp, dict) and resp.get("__timeout__"):
+        return {
+            "error": {
+                "code": "Timeout",
+                "message": f"db.read exceeded {_timeout_ms} ms",
+            },
+            "rows": [],
+            "meta": {"timeout_ms": _timeout_ms},
+        }
 
     rows = None
     cnt = None

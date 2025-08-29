@@ -43,6 +43,50 @@ def db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
     if mode not in {"insert", "upsert", "update", "delete"}:
         raise ValueError("args.mode must be one of insert|upsert|update|delete")
 
+        # --- idempotency cache (read-before-write) ---
+    # If meta.idempotency_key is present, return the previously stored result (if any)
+    # to avoid duplicate side effects when callers retry the same logical write.
+    VERB_NAME = "db.write"
+    idem_key = (meta or {}).get("idempotency_key")
+
+    if idem_key:
+        try:
+            cres = (
+                supabase.table("idempo_cache")
+                .select("result_json")
+                .eq("verb", VERB_NAME)
+                .eq("idempotency_key", idem_key)
+                .limit(1)
+                .execute()
+            )
+            cdata = getattr(cres, "data", cres) or []
+            if cdata:
+                # Return the exact prior result to make the call idempotent
+                prior = cdata[0].get("result_json") or {}
+                return prior
+        except Exception:
+            # Cache lookup failures must not block the write path
+            pass
+
+    def _cache_return(res: Dict[str, Any]) -> Dict[str, Any]:
+        """Store successful results in idempotency cache (best-effort)."""
+        if not idem_key:
+            return res
+        try:
+            supabase.table("idempo_cache").upsert(
+                {
+                    "verb": VERB_NAME,
+                    "idempotency_key": idem_key,
+                    "result_json": res,
+                    # created_at default is fine server-side, but supplying ISO is harmless:
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).execute()
+        except Exception:
+            # Never fail the main operation if cache write has issues
+            pass
+        return res
+
     def _collect_write_columns(mode: str, rows, values) -> set[str]:
         cols: set[str] = set()
         if mode in {"insert", "upsert"}:
@@ -89,7 +133,7 @@ def db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
         if not returning:
             op = op.select("*", count="exact").limit(0)  # cheap no-return
         res = op.execute()
-        return {"rows": getattr(res, "data", res)}
+        return _cache_return({"rows": getattr(res, "data", res)})
 
     # ---------- UPDATE (supports inc/dec) ----------
     if mode == "update":
@@ -174,7 +218,7 @@ def db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
             if not returning:
                 q = q.select("*", count="exact").limit(0)
             res = q.execute()
-            return {"rows": getattr(res, "data", res)}
+            return _cache_return({"rows": getattr(res, "data", res)})
 
         # Math present: read-modify-write per row, optimistic lock on updated_at when present
         pk_col = _guess_pk(args)
@@ -189,7 +233,8 @@ def db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
         rres = rq.execute()
         rows_in = getattr(rres, "data", rres) or []
         if not rows_in:
-            return {"updated": 0, "rows": []} if returning else {"updated": 0}
+            out = {"updated": 0, "rows": []} if returning else {"updated": 0}
+            return _cache_return(out)
 
         updated = 0
         out_rows: list[dict] = []
@@ -223,8 +268,8 @@ def db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
                 pass
 
         if returning:
-            return {"updated": updated, "rows": out_rows}
-        return {"updated": updated}
+            return _cache_return({"updated": updated, "rows": out_rows})
+        return _cache_return({"updated": updated})
 
     # ---------- DELETE ----------
     if mode == "delete":
@@ -236,4 +281,4 @@ def db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
         if not returning:
             q = q.select("*", count="exact").limit(0)
         res = q.execute()
-        return {"rows": getattr(res, "data", res)}
+        return _cache_return({"rows": getattr(res, "data", res)})

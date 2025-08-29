@@ -1,6 +1,23 @@
 # backend/registry/adapters/http_fetch.py
+import os
+import re
+import json
+import time
+import base64
+import hashlib
+import urllib.request
+import urllib.error
 from typing import Any, Dict
-from backend.registry.http.client import http_request  # the plumbing
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+
+from backend.services.supabase_service import supabase
+from backend.registry.http.client import (
+    http_request,
+    compute_retry_wait,
+    build_request_body,
+    _decompress_if_needed,
+)
 from backend.registry.http.auth import apply_auth_headers
 from backend.registry.http.caching import apply_cache_headers
 from backend.registry.http.pagination import paginate_response
@@ -8,25 +25,8 @@ from backend.registry.http.headers import choose_parse_body
 from backend.registry.net.safety import is_disallowed_ip_host
 from backend.registry.net.ports import host_port_allowed
 from backend.registry.util.encode import clamp_bytes
-import time
-from backend.registry.http.client import compute_retry_wait, build_request_body
-import os
-import base64
-import urllib.request
-from backend.services.supabase_service import supabase
-import json
-import hashlib
-import re
-from pathlib import Path
-import hashlib
-import os
-from backend.registry.http.client import _decompress_if_needed  # local helper
-import time
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
-import random
+
 import threading
-import time
 
 
 # Root for on-disk saves (override on Fly with: HTTP_FETCH_SAVE_ROOT=/tmp)
@@ -434,20 +434,18 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
                     "message": f"destination_chain[{i}] must be an object with 'type'",
                 }
 
-    # timeout_ms -> http client "timeout" (seconds, float), clamp [0.05s..120s] unless user passes larger
+    # --- add: timeout_ms support (alias for timeout in seconds) ---
     if "timeout_ms" in args and args.get("timeout_ms") is not None:
         try:
-            t_ms = max(50, int(args["timeout_ms"]))  # 50ms minimum
+            t_ms = max(50, int(args["timeout_ms"]))  # enforce 50 ms minimum
         except Exception:
             return {
                 "status": 0,
                 "error": "BadRequest",
                 "message": "timeout_ms must be an integer",
             }
-        # Let caller exceed 120s if needed, but never accept negative/0
-        args["timeout"] = max(0.05, float(t_ms) / 1000.0)
-        # Remove normalized field to avoid confusion downstream
-        del args["timeout_ms"]
+        args["timeout"] = max(0.05, float(t_ms) / 1000.0)  # convert ms → seconds
+        del args["timeout_ms"]  # normalize
 
     # max_bytes: normalize and clamp lower bound (avoid 0/negative). Upper bound left to infra limits.
     mb_default = 2_000_000  # 2 MB
@@ -505,6 +503,10 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
 
     # ---- build request & safety checks (host/port/IP) ----
     req = http_request.build(args)
+    # set per-request timeout on the request object
+    tsec = args.get("timeout")
+    if isinstance(tsec, (int, float)) and tsec > 0:
+        setattr(req, "timeout", float(tsec))
 
     host_ok, why = host_port_allowed(req.url)
     if not host_ok:
@@ -549,7 +551,14 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
             )  # re-build to include any per-attempt header changes
             try:
                 _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
-                meta_r, stream = req.send_stream(chunk_size=64 * 1024)
+                # set per-request timeout
+                tsec = args.get("timeout")
+                if isinstance(tsec, (int, float)) and tsec > 0:
+                    setattr(req, "timeout", float(tsec))
+                meta_r, stream = req.send_stream(
+                    chunk_size=64 * 1024
+                )  # no timeout kwarg
+
             except TimeoutError as e:
                 return {
                     "status": 0,
@@ -607,10 +616,19 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
         attempt = 0
         collected = bytearray()
         while True:
-            req = http_request.build(args)
+            req = http_request.build(
+                args
+            )  # re-build to include any per-attempt header changes
+            # set per-request timeout
+            tsec = args.get("timeout")
+            if isinstance(tsec, (int, float)) and tsec > 0:
+                setattr(req, "timeout", float(tsec))
             try:
                 _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
-                meta_r, stream = req.send_stream(chunk_size=64 * 1024)
+                meta_r, stream = req.send_stream(
+                    chunk_size=64 * 1024
+                )  # no timeout kwarg
+
             except TimeoutError as e:
                 return {
                     "status": 0,
@@ -674,10 +692,19 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
         attempt = 0
         collected = bytearray()
         while True:
-            req = http_request.build(args)
+            req = http_request.build(
+                args
+            )  # re-build to include any per-attempt header changes
+            # set per-request timeout
+            tsec = args.get("timeout")
+            if isinstance(tsec, (int, float)) and tsec > 0:
+                setattr(req, "timeout", float(tsec))
             try:
                 _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
-                meta_r, stream = req.send_stream(chunk_size=64 * 1024)
+                meta_r, stream = req.send_stream(
+                    chunk_size=64 * 1024
+                )  # no timeout kwarg
+
             except TimeoutError as e:
                 return {
                     "status": 0,
@@ -745,10 +772,18 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
     attempt = 0
     last_rate_error: str | None = None
     while True:
-        req = http_request.build(args)
+        req = http_request.build(
+            args
+        )  # re-build to include any per-attempt header changes
+        # set per-request timeout
+        tsec = args.get("timeout")
+        if isinstance(tsec, (int, float)) and tsec > 0:
+            setattr(req, "timeout", float(tsec))
         try:
             _tb_take(req.host, rl_capacity, rl_refill, rl_maxwait)
-            resp = req.send()
+            resp = (
+                req.send()
+            )  # non-streaming call; returns response with .body, .headers, etc.
         except TimeoutError as e:
             last_rate_error = str(e)
             if attempt >= max_retries:
@@ -826,6 +861,10 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
                 "max_bytes": args.get("max_bytes", 2_000_000),
             }
             next_req = http_request.build(next_args)
+            # set per-request timeout
+            tsec = args.get("timeout")
+            if isinstance(tsec, (int, float)) and tsec > 0:
+                setattr(next_req, "timeout", float(tsec))
 
             _attempt = 0
             while True:
