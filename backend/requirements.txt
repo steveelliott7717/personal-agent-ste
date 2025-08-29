@@ -9,3 +9,6 @@ cohere
 python-dotenv
 playwright
 psycopg[binary]>=3.1
+# Add these for Pydantic v2
+pydantic>=2.7,<3
+pydantic-settings>=2.2,<3

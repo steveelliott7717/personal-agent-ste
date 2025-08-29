@@ -4,13 +4,25 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from functools import lru_cache
+
+from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
+from fastapi.responses import (
+    HTMLResponse,
+    FileResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # models
 from backend.models.messages import (
@@ -25,20 +37,83 @@ from backend.models.messages import (
 # orchestrator (meta-agent)
 from backend.agents.orchestrator import Orchestrator
 
+# ⬇️ moved in from main.py so nothing is lost
+from backend.routers import schema as schema_router
+from backend.agents.repo_agent import generate_artifact_from_task, propose_changes
+
 # Load .env (Supabase keys, allowlists, etc.)
 load_dotenv()
 
-BASE = "/app"
-app = FastAPI(title="Personal Agent API", version="0.1.0")
+
+# ---------------------------
+# Settings (env-driven config)
+# ---------------------------
+class Settings(BaseSettings):
+    VERSION: str = "0.1.1"
+    BASE: str = "/app"
+    CORS_ALLOW_ORIGINS: str = "*"  # CSV
+
+    # Policy envs (documented here even if adapters read them directly)
+    DBWRITE_DISABLE_TABLE_GUARD: str = "0"
+    DBWRITE_TABLE_ALLOWLIST: str = ""
+    DBWRITE_COL_ALLOWLIST_events: str = ""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()
+VERSION = settings.VERSION
+BASE = settings.BASE
+
+
+def _csv_env(name: str, default: str = "") -> list[str]:
+    raw = os.getenv(name, default)
+    return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+# ---------------------------
+# App & middleware
+# ---------------------------
+app = FastAPI(title="Personal Agent API", version=VERSION)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ALLOW_ORIGINS", "*").split(","),
+    allow_origins=_csv_env("CORS_ALLOW_ORIGINS", settings.CORS_ALLOW_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+class TraceMiddleware(BaseHTTPMiddleware):
+    """Inject correlation & idempotency into request.state and echo back in response headers."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        cid = request.headers.get("X-Correlation-Id") or uuid.uuid4().hex
+        ikey = request.headers.get("X-Idempotency-Key") or uuid.uuid4().hex
+        request.state.correlation_id = cid
+        request.state.idempotency_key = ikey
+        response = await call_next(request)
+        response.headers.setdefault("X-Correlation-Id", cid)
+        response.headers.setdefault("X-Idempotency-Key", ikey)
+        return response
+
+
+app.add_middleware(TraceMiddleware)
+
+# ---------------------------
+# Static frontend mount (PWA)
+# ---------------------------
 _frontend_root_candidates: List[Path] = [
     Path("frontend/dist"),
     Path("app/dist"),
@@ -56,6 +131,14 @@ except Exception:
     route_request = None
 
 
+# ---------------------------
+# Health / version (keep both plain /health and BASE health)
+# ---------------------------
+@app.get("/health", response_class=PlainTextResponse)
+async def health_plain() -> str:
+    return "ok"
+
+
 @app.get(f"{BASE}/api/health", response_class=PlainTextResponse)
 async def health() -> str:
     return "ok"
@@ -63,9 +146,18 @@ async def health() -> str:
 
 @app.get(f"{BASE}/api/version", response_class=PlainTextResponse)
 async def version() -> str:
-    return "0.1.0"
+    return VERSION
 
 
+# Root redirect (main.py behavior)
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url=f"{BASE}/")
+
+
+# ---------------------------
+# Orchestrator & micro-plans
+# ---------------------------
 orchestrator = Orchestrator()
 
 MICRO_PLANS = {
@@ -97,15 +189,43 @@ def _structured_error(
     }
 
 
-@app.post(f"{BASE}/api/agents/verb")
+# ---------------------------
+# Agents API
+# ---------------------------
+agents_router = APIRouter(prefix=f"{BASE}/api/agents", tags=["agents"])
+
+
+@agents_router.get("/verbs")
+def list_verbs() -> dict:
+    """Optional verb discovery; returns [] if orchestrator can't enumerate."""
+    verbs = []
+    try:
+        if hasattr(orchestrator, "list_verbs"):
+            verbs = sorted(orchestrator.list_verbs())  # type: ignore[attr-defined]
+    except Exception:
+        verbs = []
+    return {"ok": True, "verbs": verbs}
+
+
+@agents_router.post("/verb")
 async def call_agent_verb(
     req: AgentCallRequest,
+    request: Request,
     x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
-    correlation_id = x_correlation_id or req.trace_id or uuid.uuid4().hex
-    idempotency_key = x_idempotency_key or req.idempotency_key or uuid.uuid4().hex
-
+    correlation_id = (
+        x_correlation_id
+        or getattr(request.state, "correlation_id", None)
+        or req.trace_id
+        or uuid.uuid4().hex
+    )
+    idempotency_key = (
+        x_idempotency_key
+        or getattr(request.state, "idempotency_key", None)
+        or req.idempotency_key
+        or uuid.uuid4().hex
+    )
     try:
         out = orchestrator.call_verb(
             req.verb,
@@ -116,34 +236,41 @@ async def call_agent_verb(
             actor=(req.actor.dict() if req.actor else None),
             policy_ctx=(req.policy_ctx.dict() if req.policy_ctx else None),
         )
-        # IMPORTANT: do not reshape/filter; return as-is so `error` survives
-        # Also ensure correlation/idempotency are present
         out.setdefault("correlation_id", correlation_id)
         out.setdefault("idempotency_key", idempotency_key)
         return out
     except Exception as e:
-        # Always shape errors as 200 with structured body
         return _structured_error(
             str(e), correlation_id=correlation_id, idempotency_key=idempotency_key
         )
 
 
-@app.post(f"{BASE}/api/agents/plan", response_model=PlanResponse)
+@agents_router.post("/plan", response_model=PlanResponse)
 async def call_agent_plan(
     req: PlanRequest,
+    request: Request,
     x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     plan_start = datetime.now(timezone.utc).isoformat()
-    plan_corr = x_correlation_id or req.trace_id or uuid.uuid4().hex
-    plan_idem = x_idempotency_key or req.idempotency_key or uuid.uuid4().hex
+    plan_corr = (
+        x_correlation_id
+        or getattr(request.state, "correlation_id", None)
+        or req.trace_id
+        or uuid.uuid4().hex
+    )
+    plan_idem = (
+        x_idempotency_key
+        or getattr(request.state, "idempotency_key", None)
+        or req.idempotency_key
+        or uuid.uuid4().hex
+    )
 
     # Expand named micro-plan
     steps_in: List[PlanStep] = list(req.steps or [])
     if getattr(req, "plan", None):
         micro = MICRO_PLANS.get(req.plan)
         if not micro:
-            # Don’t raise HTTP 400; return structured failure
             return PlanResponse(
                 ok=False,
                 steps=[],
@@ -156,7 +283,6 @@ async def call_agent_plan(
             )
         steps_in.extend(PlanStep(**s) for s in micro)
 
-    # --- plan start audit ---
     orchestrator._log_event(
         "plan.start",
         {
@@ -176,7 +302,6 @@ async def call_agent_plan(
     try:
         for idx, step in enumerate(steps_in):
             step_idem = f"{plan_idem}#{idx}:{step.verb}"
-
             orchestrator._log_event(
                 "plan.step.start",
                 {
@@ -233,7 +358,6 @@ async def call_agent_plan(
                     latency_ms=latency,
                 )
             )
-
             if not step_ok:
                 failed_idx = idx
                 if not req.continue_on_error:
@@ -246,7 +370,6 @@ async def call_agent_plan(
                 failed_idx = next(i for i, s in enumerate(steps_out) if not s.ok)
 
         plan_end = datetime.now(timezone.utc).isoformat()
-
         orchestrator._log_event(
             "plan.end",
             {
@@ -274,7 +397,6 @@ async def call_agent_plan(
         )
 
     except Exception as e:
-        # Shape catastrophic plan failures (e.g., orchestrator crash in step)
         plan_end = datetime.now(timezone.utc).isoformat()
         orchestrator._log_event(
             "plan.end",
@@ -303,20 +425,264 @@ async def call_agent_plan(
         )
 
 
-# ------------ Local dev helpers ------------
+app.include_router(agents_router)
+
+
+# ---------------------------
+# Debug router (policy/introspection) — cache endpoints already existed
+# ---------------------------
+def _norm_table(s: str) -> str:
+    s = (s or "").strip().lower()
+    return s[7:] if s.startswith("public.") else s
+
+
+def _csv_set(name: str) -> set[str]:
+    raw = os.getenv(name, "") or ""
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
+debug_router = APIRouter(prefix=f"{BASE}/api/debug", tags=["debug"])
+debug_router_nobase = APIRouter(prefix="/api/debug", tags=["debug"])
+
+
+@debug_router.get("/cache")
+@debug_router_nobase.get("/cache")
+def debug_cache():
+    return {"ok": True, "cache": orchestrator.get_cache_stats()}
+
+
+@debug_router.post("/cache/clear")
+@debug_router_nobase.post("/cache/clear")
+def debug_cache_clear():
+    return {"ok": True, "cache": orchestrator.clear_cache()}
+
+
+# Optional: route lister for quick diagnostics
+@debug_router.get("/routes")
+@debug_router_nobase.get("/routes")
+def debug_routes():
+    return {
+        "ok": True,
+        "paths": sorted([getattr(r, "path", str(r)) for r in app.routes]),
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+app.include_router(debug_router)
+app.include_router(debug_router_nobase)
+
+
+# ---------------------------
+# ⬇️ REPO API (moved here from main.py)
+# ---------------------------
+def _enforce_trailing_lf_per_file(artifact: str) -> str:
+    t = artifact.replace("\r\n", "\n").replace("\r", "\n")
+    lines = t.split("\n")
+    out: list[str] = []
+    i = 0
+    L = len(lines)
+    while i < L:
+        if not lines[i].startswith("BEGIN_FILE "):
+            i += 1
+            continue
+        path = lines[i][len("BEGIN_FILE ") :].strip()
+        i += 1
+        body_lines: list[str] = []
+        while i < L and lines[i].strip() != "END_FILE":
+            body_lines.append(lines[i])
+            i += 1
+        if i >= L:
+            raise ValueError(f"Missing END_FILE for {path}")
+        i += 1
+        body = "\n".join(body_lines).replace("\r\n", "\n").replace("\r", "\n")
+        body = body.rstrip("\n") + "\n"
+        out.append(f"BEGIN_FILE {path}\n{body}END_FILE\n")
+    return ("".join(out)).rstrip("\n") + "\n"
+
+
+repo_router = APIRouter(prefix=f"{BASE}/api/repo", tags=["repo"])
+
+
+@repo_router.get("/health")
+def repo_health():
+    return {"ok": True, "model": os.getenv("CHAT_MODEL", "gpt-5")}
+
+
+@repo_router.post("/plan")
+def repo_plan(payload: Dict[str, Any], request: Request):
+    task = (payload or {}).get("task")
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task'")
+
+    repo = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix", "backend/")
+    k = int(payload.get("k", 12))
+    session = payload.get("session")
+    thread_n = payload.get("thread_n")
+
+    fmt = request.query_params.get("format") or request.headers.get("X-RMS-Format")
+
+    if fmt == "files":
+        art = generate_artifact_from_task(
+            task,
+            repo=repo,
+            branch=branch,
+            path_prefix=prefix,
+            session=session,
+            mode="files",
+        )
+        if not art.get("ok"):
+            return PlainTextResponse(
+                str(art.get("content", "")),
+                status_code=422,
+                media_type="text/plain; charset=utf-8",
+            )
+        content = art.get("content", "")
+        content = _enforce_trailing_lf_per_file(content)
+        content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
+        return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
+    if fmt == "patch":
+        art = generate_artifact_from_task(
+            task,
+            repo=repo,
+            branch=branch,
+            path_prefix=prefix,
+            session=session,
+            mode="patch",
+        )
+        patch = art.get("patch") or art.get("content") or ""
+        from backend.utils.patch_sanitizer import (
+            sanitize_patch,
+            validate_patch_structure,
+        )
+
+        patch, _warnings = sanitize_patch(patch)
+        ok, msg = validate_patch_structure(patch, path_prefix=prefix)
+        if not ok:
+            # best-effort PowerShell fixer if available
+            from pathlib import Path as _Path
+            import subprocess, tempfile
+
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", delete=False
+                ) as f_in:
+                    f_in.write(patch)
+                    in_path = f_in.name
+                out_path = in_path + ".out.patch"
+                script = (
+                    _Path(__file__).resolve().parents[1] / "tools" / "fix-patch.ps1"
+                )
+                if script.exists():
+                    proc = subprocess.run(
+                        [
+                            "pwsh",
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(script),
+                            "-InPath",
+                            in_path,
+                            "-OutPath",
+                            out_path,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                    if proc.returncode == 0 and _Path(out_path).exists():
+                        patch = _Path(out_path).read_text(encoding="utf-8")
+                        ok, msg = validate_patch_structure(patch, path_prefix=prefix)
+            except Exception:
+                pass
+        if not ok:
+            raise HTTPException(status_code=422, detail=f"Invalid patch: {msg}")
+        return PlainTextResponse(patch, media_type="text/x-patch; charset=utf-8")
+
+    out = propose_changes(
+        task,
+        repo=repo,
+        branch=branch,
+        commit="HEAD",
+        k=k,
+        path_prefix=prefix,
+        session=session,
+        thread_n=thread_n,
+    )
+    return out
+
+
+@repo_router.post("/files")
+def repo_files(payload: Dict[str, Any]):
+    task = (payload or {}).get("task")
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task'")
+
+    repo = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix", "backend/")
+    session = payload.get("session")
+
+    art = generate_artifact_from_task(
+        task,
+        repo=repo,
+        branch=branch,
+        path_prefix=prefix,
+        session=session,
+        mode="files",
+    )
+    content = art.get("content", "")
+    content = _enforce_trailing_lf_per_file(content)
+    content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
+    return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
+
+app.include_router(repo_router)
+
+# ---------------------------
+# Schema router (moved here from main.py)
+# ---------------------------
+app.include_router(schema_router.router)
+
+
+# ---------------------------
+# Global error handler
+# ---------------------------
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    cid = getattr(request.state, "correlation_id", uuid.uuid4().hex)
+    ikey = getattr(request.state, "idempotency_key", uuid.uuid4().hex)
+    return _structured_error(str(exc), correlation_id=cid, idempotency_key=ikey)
+
+
+# ---------------------------
+# Lifespan hooks (light)
+# ---------------------------
+@app.on_event("startup")
+async def on_startup():
+    try:
+        _ = orchestrator
+    except Exception as e:
+        print("Startup warning:", e)
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    pass
+
+
+# ---------------------------
+# Local dev helpers
+# ---------------------------
 @app.get(BASE + "/api/files/{path:path}")
 async def serve_file(path: str):
     p = Path(path)
     if not p.exists() or not p.is_file():
-        # Return structured 200 from the global handlers in main.py via mount,
-        # but here we keep the standard exception for local dev:
         raise HTTPException(status_code=404, detail="file not found")
     return FileResponse(path)
-
-
-@app.get("/")
-async def root_note():
-    return {"ok": True, "hint": f"try {BASE}/api/health or {BASE}/api/agents/verb"}
 
 
 # Serve PWA last

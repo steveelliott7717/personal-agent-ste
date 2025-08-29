@@ -109,46 +109,32 @@ def db_write_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
         # deletes don’t set columns
         return cols
 
-    # --- enforce write allowlists (TEMP DISABLED) ---
+    # --- enforce write allowlists (normalized, per-call) ---
     def _norm_table_name(s: str) -> str:
         s = (s or "").strip().lower()
-        if s.startswith("public."):
-            s = s[len("public.") :]
-        return s
+        return s[len("public.") :] if s.startswith("public.") else s
 
-    # Completely bypass the table gate for now
-    _table_allow_raw = set()
-    _table_allow = set()
-    _table_name = _norm_table_name(table)
+    if os.getenv("DBWRITE_DISABLE_TABLE_GUARD", "0") != "1":
+        _table_allow_raw = _dbwrite_tables_allow()
+        _table_allow = {_norm_table_name(t) for t in _table_allow_raw}
+        _table_name = _norm_table_name(table)
+        if _table_allow and _table_name not in _table_allow:
+            raise ValueError(f"PolicyDenied: writes to '{table}' are not allowed")
 
-    # Debug print so you can confirm what would have been checked
-    print(
-        "TableGate[BYPASSED]:",
-        "raw_table=",
-        repr(table),
-        "norm_table=",
-        repr(_table_name),
-        "allow_raw=",
-        sorted(list(_table_allow_raw)),
-        "allow_norm=",
-        sorted(list(_table_allow)),
-    )
-    # (intentionally no raise here)
+        # Figure out which columns this write would touch
+        write_cols = _collect_write_columns(mode, rows, args.get("values"))
+        allowed_cols = _dbwrite_cols_allow(table)
+        if allowed_cols:
+            # Ignore meta/selector fields that aren't actually written
+            # (pk/where keys aren't in write_cols because we only collect set columns)
+            bad = {c for c in write_cols if c not in allowed_cols}
+            if bad:
+                raise ValueError(
+                    f"PolicyDenied: writing columns {sorted(bad)} on '{table}' is not allowed; "
+                    f"allowed: {sorted(allowed_cols)}"
+                )
 
-    # Figure out which columns this write would touch
-    write_cols = _collect_write_columns(mode, rows, args.get("values"))
-    allowed_cols = _dbwrite_cols_allow(table)
-    if allowed_cols:
-        # Ignore meta/selector fields that aren't actually written
-        # (pk/where keys aren't in write_cols because we only collect set columns)
-        bad = {c for c in write_cols if c not in allowed_cols}
-        if bad:
-            raise ValueError(
-                f"PolicyDenied: writing columns {sorted(bad)} on '{table}' is not allowed; "
-                f"allowed: {sorted(allowed_cols)}"
-            )
-
-    tbl = supabase.table(table)
+        tbl = supabase.table(table)
 
     # ---------- INSERT / UPSERT ----------
     if mode in {"insert", "upsert"}:
