@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-08-29T03:12:16Z",
+  "generated_at": "2025-08-30T03:05:59Z",
   "tables": {
     "public.agent_capabilities": [
       "agent_slug",
@@ -290,6 +290,12 @@
       "url",
       "bucket",
       "path"
+    ],
+    "public.idempo_cache": [
+      "verb",
+      "idempotency_key",
+      "result_json",
+      "created_at"
     ],
     "public.meal_log": [
       "id",
