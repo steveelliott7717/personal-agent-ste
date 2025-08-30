@@ -51,6 +51,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
+
+
 # Copy backend before installing Python deps
 COPY backend/ /app/backend/
 

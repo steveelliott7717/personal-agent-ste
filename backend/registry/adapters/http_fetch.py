@@ -28,7 +28,6 @@ from backend.registry.util.encode import clamp_bytes
 
 import threading
 
-
 # Root for on-disk saves (override on Fly with: HTTP_FETCH_SAVE_ROOT=/tmp)
 SAVE_ROOT = os.getenv("HTTP_FETCH_SAVE_ROOT", "/tmp")
 

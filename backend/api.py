@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 
 from dotenv import load_dotenv
 from functools import lru_cache
+import logging, json, sys
 
 from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +80,26 @@ BASE = settings.BASE
 def _csv_env(name: str, default: str = "") -> list[str]:
     raw = os.getenv(name, default)
     return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+# --- Structured logging (JSON to stdout) --
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        msg = {"level": record.levelname, "message": record.getMessage()}
+        # If adapter passed an 'event' payload via logger.info(..., extra={"event": {...}})
+        evt = getattr(record, "event", None)
+        if isinstance(evt, dict):
+            msg.update(evt)
+        return json.dumps(msg, ensure_ascii=False)
+
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JsonFormatter())
+root = logging.getLogger()
+# avoid duplicate handlers on reload
+if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
 
 
 # ---------------------------
