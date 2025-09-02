@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-08-29T03:12:16Z",
+  "generated_at": "2025-09-02T01:11:47Z",
   "tables": {
     "public.agent_capabilities": [
       "agent_slug",
@@ -277,7 +277,8 @@
       "created_at",
       "latency_ms",
       "agent_id",
-      "tags"
+      "tags",
+      "user_id"
     ],
     "public.files": [
       "id",
@@ -290,6 +291,12 @@
       "url",
       "bucket",
       "path"
+    ],
+    "public.idempo_cache": [
+      "verb",
+      "idempotency_key",
+      "result_json",
+      "created_at"
     ],
     "public.meal_log": [
       "id",
@@ -423,6 +430,12 @@
       "volume",
       "rpe",
       "notes"
+    ],
+    "public.users": [
+      "id",
+      "name",
+      "email",
+      "created_at"
     ]
   }
 }
