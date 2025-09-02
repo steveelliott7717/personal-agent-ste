@@ -32,6 +32,40 @@ import traceback
 ERR_VERSION = 1
 
 
+def _apply_http_fetch_env_defaults(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    If caller didn't specify, inherit safe HTTP defaults from environment.
+    """
+    out = dict(args or {})
+
+    # allow/deny host lists (comma-separated env)
+    if "allow_hosts" not in out and os.getenv("HTTP_FETCH_ALLOW_HOSTS"):
+        out["allow_hosts"] = os.getenv("HTTP_FETCH_ALLOW_HOSTS")
+    if "deny_hosts" not in out and os.getenv("HTTP_FETCH_DENY_HOSTS"):
+        out["deny_hosts"] = os.getenv("HTTP_FETCH_DENY_HOSTS")
+
+    # rate limit defaults (only if caller omitted the per_host block)
+    ph = (out.get("rate_limit") or {}).get("per_host") or {}
+    if not ph:
+        cap = os.getenv("HTTP_FETCH_RL_CAPACITY")
+        ref = os.getenv("HTTP_FETCH_RL_REFILL")
+        mw = os.getenv("HTTP_FETCH_RL_MAXWAIT")
+        if any(v is not None for v in (cap, ref, mw)):
+            out["rate_limit"] = {
+                "per_host": {
+                    "capacity": int(cap) if cap is not None else 5,
+                    "refill_per_sec": float(ref) if ref is not None else 2.0,
+                    "max_wait_ms": int(mw) if mw is not None else 2000,
+                }
+            }
+
+    # max redirects default (adapter will clamp again)
+    if "max_redirects" not in out and os.getenv("HTTP_FETCH_MAX_REDIRECTS_DEFAULT"):
+        out["max_redirects"] = int(os.getenv("HTTP_FETCH_MAX_REDIRECTS_DEFAULT", "5"))
+
+    return out
+
+
 def _mk_error(
     code: str, message: str, hint: str | None = None, details: str | dict | None = None
 ) -> dict:
@@ -465,8 +499,12 @@ class CapabilityRegistry:
             }
 
         # Execute handler
+        # Execute handler
         try:
+            if verb == "http.fetch":
+                args = _apply_http_fetch_env_defaults(args or {})
             raw = handler(args or {}, meta or {})
+
             latency_ms = int((time.perf_counter() - t0) * 1000)
 
             # Coerce in-band adapter error to structured error

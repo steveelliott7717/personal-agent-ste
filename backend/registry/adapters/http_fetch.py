@@ -25,6 +25,9 @@ from backend.registry.http.headers import choose_parse_body
 from backend.registry.net.safety import is_disallowed_ip_host
 from backend.registry.net.ports import host_port_allowed
 from backend.registry.util.encode import clamp_bytes
+from urllib.parse import urlparse
+from typing import Iterable
+
 
 import threading
 
@@ -67,6 +70,63 @@ def _save_stream_to_path(stream, dest_path: str) -> Dict[str, Any]:
         except Exception:
             pass
         raise
+
+
+def _normalize_host_patterns(val: Any) -> list[str]:
+    """
+    Accepts list/tuple/set or comma-separated string.
+    Returns all-lowercase patterns with whitespace trimmed.
+    Supported forms: "example.com", "*.example.com", ".example.com", "*"
+    """
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple, set)):
+        parts = [str(p).strip() for p in val if str(p).strip()]
+    elif isinstance(val, str):
+        parts = [p.strip() for p in val.split(",") if p.strip()]
+    else:
+        return []
+    return [p.lower() for p in parts]
+
+
+def _host_matches(host: str, pattern: str) -> bool:
+    """
+    Suffix wildcard semantics:
+      - "*.example.com" → matches "api.example.com" (and exact "example.com")
+      - ".example.com"  → matches subdomains only (not the apex)
+      - "example.com"   → exact or any subdomain (safe suffix w/ dot boundary)
+      - "*"             → matches anything
+    """
+    h = (host or "").lower()
+    p = (pattern or "").lower()
+    if not h or not p:
+        return False
+    if p == "*":
+        return True
+    if p.startswith("*."):
+        suf = p[2:]
+        return h == suf or h.endswith("." + suf)
+    if p.startswith("."):
+        suf = p[1:]
+        return h.endswith("." + suf)  # subdomains only, not apex
+    # plain domain: exact or subdomain suffix
+    return h == p or h.endswith("." + p)
+
+
+def _enforce_host_policies(
+    host: str, allow: Iterable[str], deny: Iterable[str]
+) -> tuple[bool, str | None, str | None]:
+    """
+    Returns (ok, code, message). 'code' is a short error code string or None.
+    Precedence: allow-list first (if present), then deny-list.
+    """
+    allow = list(allow or [])
+    deny = list(deny or [])
+    if allow and not any(_host_matches(host, pat) for pat in allow):
+        return False, "HostNotAllowed", f"host '{host}' not in allow_hosts"
+    if deny and any(_host_matches(host, pat) for pat in deny):
+        return False, "HostDenied", f"host '{host}' matches deny_hosts"
+    return True, None, None
 
 
 def _upload_to_github(dest: Dict[str, Any], content_bytes: bytes) -> Dict[str, Any]:
@@ -405,6 +465,61 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
             "error": "BadRequest",
             "message": "rate_limit.per_host fields must be numbers",
         }
+
+        # --- allow/deny host lists (args or env) ---
+    env_allow = os.getenv("HTTP_FETCH_ALLOW_HOSTS")
+    env_deny = os.getenv("HTTP_FETCH_DENY_HOSTS")
+    allow_hosts = _normalize_host_patterns(args.get("allow_hosts", env_allow))
+    deny_hosts = _normalize_host_patterns(args.get("deny_hosts", env_deny))
+
+    # --- redirect clamp (default + bounds via env) ---
+    try:
+        _redir_default = int(os.getenv("HTTP_FETCH_MAX_REDIRECTS_DEFAULT", "5"))
+    except Exception:
+        _redir_default = 5
+    try:
+        _redir_cap = int(os.getenv("HTTP_FETCH_MAX_REDIRECTS_MAX", "10"))
+    except Exception:
+        _redir_cap = 10
+
+    def _clamp_redirects(val) -> int:
+        try:
+            v = int(val) if val is not None else _redir_default
+        except Exception:
+            v = _redir_default
+        if v < 0:
+            v = 0
+        if v > _redir_cap:
+            v = _redir_cap
+        return v
+
+    max_redirects = _clamp_redirects(args.get("max_redirects"))
+    args["max_redirects"] = max_redirects
+    if "allow_redirects" not in args:
+        args["allow_redirects"] = bool(max_redirects > 0)
+
+    # --- initial host safety + policy (before building/sending) ---
+    url = (args.get("url") or "").strip()  # already validated earlier
+    host0 = (urlparse(url).hostname or "").lower()
+    if not host0:
+        return {"status": 0, "error": "BadRequest", "message": "invalid url host"}
+
+    # port/scheme allow-list (existing)
+    # We'll still run the canonical checks on the request object below.
+    # Here we preflight policy checks early for clearer errors.
+    okp, whyp = host_port_allowed(url)
+    if not okp:
+        return {"status": 0, "error": "PortNotAllowed", "message": whyp}
+    if is_disallowed_ip_host(host0):
+        return {
+            "status": 0,
+            "error": "DeniedIP",
+            "message": f"Disallowed IP for host: {host0}",
+        }
+
+    okh, codeh, whyh = _enforce_host_policies(host0, allow_hosts, deny_hosts)
+    if not okh:
+        return {"status": 0, "error": codeh or "DeniedHost", "message": whyh}
 
     # destination (single) shape
     if (
@@ -851,12 +966,30 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
     if paginate_cfg:
 
         def _fetch_next(next_url: str) -> Dict[str, Any]:
+            # safety: port/scheme + IP guard + allow/deny policy on *every* paginated hop
+            okp, whyp = host_port_allowed(next_url)
+            if not okp:
+                return {"status": 0, "error": "PortNotAllowed", "message": whyp}
+
+            h2 = (urlparse(next_url).hostname or "").lower()
+            if is_disallowed_ip_host(h2):
+                return {
+                    "status": 0,
+                    "error": "DeniedIP",
+                    "message": f"Disallowed IP for host: {h2}",
+                }
+
+            okh, codeh, whyh = _enforce_host_policies(h2, allow_hosts, deny_hosts)
+            if not okh:
+                return {"status": 0, "error": codeh or "DeniedHost", "message": whyh}
+
             next_args = {
                 "url": next_url,
                 "method": "GET",
                 "headers": req.headers,  # reuse auth/UA
                 "timeout": args.get("timeout"),
-                "allow_redirects": args.get("allow_redirects", True),
+                "allow_redirects": args.get("allow_redirects", bool(max_redirects > 0)),
+                "max_redirects": max_redirects,
                 "max_bytes": args.get("max_bytes", 2_000_000),
             }
             next_req = http_request.build(next_args)

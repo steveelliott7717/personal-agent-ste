@@ -172,7 +172,7 @@ def _enforce_table_allowlist(table: str) -> None:
         if t.startswith("public."):
             t = t[len("public.") :]
         if t not in allow:
-            raise ValueError(f"table '{table}' not allowed (DB_WRITE_ALLOWLIST)")
+            raise ValueError(f"table '{table}' not allowed (DBWRITE_TABLE_ALLOWLIST)")
 
 
 def _enforce_column_allowlist(
@@ -362,8 +362,6 @@ try:
 except Exception:  # pragma: no cover
     APIError = Exception  # fallback
 
-import json
-
 
 def _exec(q):
     try:
@@ -396,10 +394,12 @@ def _exec(q):
             raise ValueError(f"invalid input: {msg}")
         if code == "42703":  # undefined_column
             raise ValueError(f"invalid column: {msg}")
-        if code == "21000":  # PostgREST safety: WHERE required on write
+        if code == "21000":  # WHERE required on write
             raise ValueError(f"unsafe write: {msg}")
+        if code == "23514":  # check_violation
+            raise ValueError(f"check violation: {msg}")
 
-        # Unknown shape/code: let the registry envelope capture it
+        # Unknown shape/code → let the registry envelope capture it
         raise
 
 
