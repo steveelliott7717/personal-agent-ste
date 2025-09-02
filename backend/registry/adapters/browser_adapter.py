@@ -6,9 +6,9 @@ import json
 import os
 import threading
 import time
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright
 from urllib.parse import urlparse
@@ -102,9 +102,6 @@ def _build_context_kwargs(
             pass
 
     return ctx
-
-
-import os
 
 
 def _artifact_path(save_dir: str, requested: str | None, default_name: str) -> str:
@@ -288,6 +285,68 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
     result: Dict[str, Any] = {"events": []}
     download_paths: List[str] = []
 
+    ua_pool = args.get("user_agent_pool") or []
+    ua = args.get("user_agent") or DEFAULT_UA
+    if ua_pool:
+        if args.get("ua_rotate_per") == "host":
+            # choose based on start host for stability across steps
+            key = (urlparse(start_url).hostname or "").lower()
+            random.seed(hash(key))  # deterministic per host if you want
+        ua = random.choice(ua_pool)
+
+    accept_locales = args.get("locale_pool") or ["en-US", "en-GB", "en"]
+    locale = args.get("locale") or random.choice(accept_locales)
+
+    if "viewport" not in args:
+        viewport = {
+            "width": random.choice([1280, 1366, 1440, 1536]),
+            "height": random.choice([720, 768, 800, 900]),
+        }
+    else:
+        viewport = args["viewport"]
+
+    # --- JITTER CONFIG (human-like delays) ---
+    # args["jitter"] = {
+    #   "ms_min": 120, "ms_max": 900,           # range for sleep
+    #   "prob": 0.85,                           # chance to apply each time
+    #   "between_steps": True,                  # jitter before each step
+    #   "between_actions": True,                # jitter before each action within a step
+    #   "post_action_prob": 0.30,               # chance to add a short dwell AFTER click/type
+    #   "debug_events": False,                  # include jitter events in result["events"]
+    #   "max_debug_events": 1000                # cap debug jitter logs
+    # }
+    jit_cfg = args.get("jitter") or {}
+    _jit_ms_min = int(jit_cfg.get("ms_min", 120))
+    _jit_ms_max = int(jit_cfg.get("ms_max", 900))
+    _jit_prob = float(jit_cfg.get("prob", 0.85))
+    _jit_between_steps = bool(jit_cfg.get("between_steps", True))
+    _jit_between_actions = bool(jit_cfg.get("between_actions", True))
+    _jit_post_prob = float(jit_cfg.get("post_action_prob", 0.30))
+    _jit_debug = bool(jit_cfg.get("debug_events", False))
+    _jit_max_debug = int(jit_cfg.get("max_debug_events", 1000))
+
+    def _remaining_total_sec() -> float:
+        if total_timeout_sec is None:
+            return 86400.0  # effectively unlimited
+        return max(0.0, total_timeout_sec - (time.time() - start))
+
+    async def _maybe_jitter(tag: str):
+        """Random human-like pause. Honors total timeout if set."""
+        if random.random() > _jit_prob:
+            return
+        # choose a duration, but don't exceed remaining total timeout
+        dur = random.uniform(_jit_ms_min / 1000.0, _jit_ms_max / 1000.0)
+        rem = _remaining_total_sec()
+        if dur > rem:
+            dur = max(0.0, rem * 0.5)  # be conservative if we're close to the cap
+        if dur > 0:
+            await asyncio.sleep(dur)
+
+        if _jit_debug:
+            evs = result.setdefault("events", [])
+            if len(evs) < _jit_max_debug:  # cap to prevent unbounded growth
+                evs.append({"jitter": {"tag": tag, "sleep_s": round(dur, 3)}})
+
     try:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
@@ -304,6 +363,10 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
             # Page + timeouts
             page = await context.new_page()
             page.set_default_timeout(nav_timeout)
+
+            # Optional human-like pause before first navigation
+            if _jit_between_steps:
+                await _maybe_jitter("pre_first_nav")
 
             # Capture downloads
             async def _on_download(d):
@@ -365,10 +428,19 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
             # Execute scripted steps
             for i, step in enumerate(flows):
+                # Per-step override: allow step["jitter"]=False to disable all jitter for this step
+                _step_jitter = step.get("jitter", True)
+
+                # optional jitter before the step begins
+                if _jit_between_steps and _step_jitter:
+                    await _maybe_jitter(f"pre_step_{i}")
+
                 evt = {"i": i}
                 try:
                     # goto
                     if "goto" in step:
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_goto_{i}")
                         url = step["goto"]
                         okp, whyp = host_port_allowed(url)
                         if not okp:
@@ -388,26 +460,54 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
                     # click
                     if sel := step.get("click"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_click_{i}")
                         await page.click(sel)
+                        # optional short dwell AFTER the click
+                        if (
+                            _jit_between_actions
+                            and _step_jitter
+                            and random.random() < _jit_post_prob
+                        ):
+                            await _maybe_jitter(f"post_click_{i}")
                         evt["click"] = sel
 
                     # fill
                     if fill := step.get("fill"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_fill_{i}")
                         await page.fill(fill["selector"], fill.get("value", ""))
                         evt["fill"] = fill
 
                     # type
                     if type_ := step.get("type"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_type_{i}")
                         await page.type(
                             type_["selector"],
                             type_.get("text", ""),
                             delay=type_.get("delay", 0),
                         )
+                        # optional short dwell AFTER typing
+                        if (
+                            _jit_between_actions
+                            and _step_jitter
+                            and random.random() < _jit_post_prob
+                        ):
+                            await _maybe_jitter(f"post_type_{i}")
                         evt["type"] = type_
 
+                    # wait_for
                     if wait := step.get("wait_for"):
+                        # avoid double-sleep if this step already has an explicit time_ms wait
+                        if (
+                            _jit_between_actions
+                            and _step_jitter
+                            and ("time_ms" not in wait)
+                        ):
+                            await _maybe_jitter(f"pre_wait_for_{i}")
+
                         if "selector" in wait:
-                            # Use step-specific timeout if provided, else a generous default
                             try:
                                 wf_timeout = int(
                                     wait.get("timeout_ms", max(nav_timeout, 45000))
@@ -427,6 +527,8 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
                     # screenshot
                     if shot := step.get("screenshot"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_screenshot_{i}")
                         sc_req = step["screenshot"]
                         path = _artifact_path(
                             save_dir, sc_req.get("path"), f"shot_{i}.png"
@@ -440,6 +542,8 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
                     # pdf
                     if pdf := step.get("pdf"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_pdf_{i}")
                         pdf_req = step["pdf"]
                         path = _artifact_path(
                             save_dir, pdf_req.get("path"), f"page_{i}.pdf"
@@ -450,9 +554,10 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
                     # evaluate
                     if ev := step.get("evaluate"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_evaluate_{i}")
                         js = ev.get("js")
                         js_args = ev.get("args", [])
-                        # _validate_steps already ensures js is string; still guard
                         if not isinstance(js, str) or not js:
                             raise ValueError(
                                 "steps[%d].evaluate must include js:string" % i
@@ -462,6 +567,8 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
                     # extract
                     if ex := step.get("extract"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_extract_{i}")
                         sel2 = ex["selector"]
                         inner_text = bool(ex.get("inner_text", True))
                         loc = page.locator(sel2)
@@ -472,13 +579,14 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
                     # set_files
                     if step.get("set_files"):
+                        if _jit_between_actions and _step_jitter:
+                            await _maybe_jitter(f"pre_set_files_{i}")
                         sf = step["set_files"]
                         files = sf.get("files") or []
                         selector = sf["selector"]
                         to_ms = int(sf.get("timeout_ms", 15000))
                         missing = [p for p in files if not os.path.exists(p)]
                         if missing:
-                            # EXACT phrase required by tests:
                             raise ValueError(
                                 f"missing local files: {', '.join(missing)}"
                             )
@@ -634,6 +742,74 @@ async def _runner_with_timeout(args: Dict[str, Any]):
                 "code": "Timeout",
                 "message": "browser.run timed out (timeout_total_ms)",
             },
+        }
+
+
+# --- Lightweight Playwright warmup (no network) ------------------------------
+def browser_warmup_adapter(args: dict, meta: dict) -> dict:
+    """
+    Launch Chromium headless, open a blank page with inline HTML, then close.
+    No external navigation (no DNS/HTTPS). Safe to call from sync or async contexts.
+    If running inside an asyncio loop, the Sync API work is offloaded to a worker thread.
+    Args:
+      - timeout_ms (int, default 2000): per-action timeout
+      - headless   (bool, default True)
+    """
+    import time
+    import asyncio
+    import concurrent.futures
+
+    timeout_ms = int(args.get("timeout_ms", 2000))
+    headless = bool(args.get("headless", True))
+
+    t0 = time.time()
+
+    def _do_sync_warmup():
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context()
+            page = context.new_page()
+            # keep everything local; small timeouts
+            page.set_default_timeout(timeout_ms)
+            page.set_default_navigation_timeout(timeout_ms)
+            page.set_content("<!doctype html><title>warmup</title>", wait_until="load")
+            context.close()
+            browser.close()
+
+    try:
+        # If we're inside an asyncio loop (e.g., called from an async route),
+        # run Playwright Sync API in a dedicated worker thread.
+        in_loop = False
+        try:
+            asyncio.get_running_loop()
+            in_loop = True
+        except RuntimeError:
+            in_loop = False
+
+        if in_loop:
+            # wall clock cap ~ timeout_ms/1000 + a small buffer
+            thread_timeout = max(3.0, (timeout_ms / 1000.0) + 2.0)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_do_sync_warmup)
+                fut.result(timeout=thread_timeout)
+        else:
+            _do_sync_warmup()
+
+        return {
+            "ok": True,
+            "status": 200,
+            "result": {"warmed": True},
+            "latency_ms": int((time.time() - t0) * 1000),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": 0,
+            "error": "WarmupFailed",
+            "message": str(e),
+            "latency_ms": int((time.time() - t0) * 1000),
         }
 
 

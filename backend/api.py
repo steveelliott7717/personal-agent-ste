@@ -5,6 +5,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+import asyncio
+import time
+from backend.registry.capability_registry import CapabilityRegistry
+
 
 from dotenv import load_dotenv
 from functools import lru_cache
@@ -131,6 +135,57 @@ class TraceMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(TraceMiddleware)
+
+
+@app.on_event("startup")
+async def _warmup_playwright() -> None:
+    """
+    Fire-and-forget warmup to reduce Playwright cold starts after deploys.
+    Disable via env: BROWSER_WARMUP_DISABLED=1
+    """
+    if os.getenv("BROWSER_WARMUP_DISABLED", "0") == "1":
+        logging.info("[warmup] Browser warmup disabled by env")
+        return
+
+    # ensure we only run once per process (guards duplicate startup events)
+    if getattr(app.state, "did_browser_warmup", False):
+        return
+    app.state.did_browser_warmup = True
+
+    async def _job():
+        try:
+            registry = getattr(app.state, "registry", None) or CapabilityRegistry()
+
+            # Local-only warmup: no network. Small per-action timeout.
+            args = {
+                "timeout_ms": 2000,
+                "headless": True,
+            }
+            meta = {
+                "correlation_id": f"warmup.browser.{int(time.time())}",
+                "idempotency_key": f"warmup-{int(time.time())}",
+            }
+
+            async def _dispatch():
+                # call the new lightweight verb
+                return await asyncio.to_thread(
+                    registry.dispatch, "browser.warmup", args, meta
+                )
+
+            try:
+                # OUTER wall-clock guard so startup never stalls (even if Playwright is grumpy)
+                result = await asyncio.wait_for(_dispatch(), timeout=4.0)
+                ok = isinstance(result, dict) and result.get("ok", True)
+                logging.info(
+                    "[warmup] browser.warmup %s", "ok" if ok else f"non-ok: {result}"
+                )
+            except asyncio.TimeoutError:
+                logging.info("[warmup] browser.warmup outer timeout; continuing")
+        except Exception as e:
+            logging.info("[warmup] skipped due to error: %s", e)
+
+    asyncio.create_task(_job())
+
 
 # ---------------------------
 # Static frontend mount (PWA)

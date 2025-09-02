@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, TypedDict
+from typing import Any, Callable, Dict, Optional, TypedDict, Tuple
 from datetime import datetime, timezone
 import traceback
 import uuid
@@ -22,7 +22,216 @@ from backend.registry.adapters.http_fetch import http_fetch_adapter
 from backend.registry.adapters.db_read import db_read_adapter
 from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
+from backend.registry.adapters.browser_adapter import browser_warmup_adapter
+
 from backend.registry.adapters.browser_adapter import browser_run_adapter
+
+
+# Heuristic: decide if we should escalate from http.fetch -> browser.run
+def _needs_browser(
+    status: int, body: bytes | str | None, headers: Dict[str, Any]
+) -> Tuple[bool, str]:
+    if body is None:
+        return True, "empty-body"
+    # Normalize to text for checks (limit to avoid big decode)
+    sample = (
+        body[:200000] if isinstance(body, (bytes, bytearray)) else (body or "")[:200000]
+    )
+    if isinstance(sample, (bytes, bytearray)):
+        try:
+            sample = sample.decode("utf-8", "ignore")
+        except Exception:
+            sample = ""
+
+    ct = (headers.get("content-type") or headers.get("Content-Type") or "").lower()
+
+    # Hard signals: HTTP throttle/forbid
+    if status in (401, 403, 407, 429):
+        return True, f"http-{status}"
+
+    # Suspicious content types or no content-type for HTML pages
+    if "text/html" in ct or ct == "":
+        # Common bot-wall / JS-wall phrases
+        wall_markers = (
+            "are you a robot",
+            "enable javascript",
+            "turn on javascript",
+            "access denied",
+            "attention required",
+            "sorry, you have been blocked",
+            "captcha",
+            "the page could not be loaded",
+            "verification required",
+            "please verify you are human",
+        )
+        low_signal = len(sample.strip()) < 512  # page likely rendered by JS or blocked
+        if low_signal:
+            return True, "low-signal-html"
+        if any(m in sample.lower() for m in wall_markers):
+            return True, "bot-wall-markers"
+
+    # Non-HTML, but tiny payloads from an HTML URL path may also be suspicious
+    if len(sample.strip()) < 64 and any(k in ct for k in ("html", "xml", "xhtml")):
+        return True, "tiny-html"
+
+    return False, "ok"
+
+
+def _to_text(x: Any) -> str:
+    if x is None:
+        return ""
+    if isinstance(x, (bytes, bytearray)):
+        try:
+            return x.decode("utf-8", "ignore")
+        except Exception:
+            return ""
+    return str(x)
+
+
+def _web_smart_get(
+    registry, args: Dict[str, Any], meta: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Try http.fetch first (fast). If blocked/empty/JS-only, escalate to browser.run.
+    Args:
+      {
+        "url": "...",
+        # optional shared knobs passed to both layers:
+        "timeout_ms": 15000,
+        "timeout_total_ms": 30000,         # honored by browser.run
+        "user_agent": "...",
+        "user_agent_pool": [...],
+        "accept_language_pool": [...],     # http.fetch only
+        "rate_limit": {"per_host": {...}}, # both
+        "jitter": {...},                   # browser.run only
+        "locale_pool": [...],              # browser.run only
+        "viewport": {...},                 # browser.run only
+        "ua_rotate_per": "run"|"host",     # browser.run only
+        # browser extras:
+        "wait_until": "domcontentloaded",
+        "save_dir": "downloads",
+        "return_html": True
+      }
+    Returns:
+      Same envelope style as adapters: {"ok": bool, "result": {...}, "error": {...}}
+    """
+    url = (args.get("url") or "").strip()
+    if not url:
+        return {
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "url is required"},
+        }
+
+    # ---------- First pass: http.fetch ----------
+    http_args = {
+        "url": url,
+        "method": "GET",
+        "timeout_ms": int(args.get("timeout_ms", 15000)),
+        "headers": args.get("headers") or {},
+        "user_agent_pool": args.get("user_agent_pool") or [],
+        "accept_language_pool": args.get("accept_language_pool") or [],
+        "rate_limit": args.get("rate_limit") or {},
+        "retry": args.get("retry")
+        or {
+            "max": 2,
+            "on": [429, 500, 502, 503, 504],
+            "backoff_ms": 300,
+            "jitter": True,
+        },
+        "redirect": args.get("redirect") or {"policy": "follow", "max": 5},
+    }
+
+    http_out = registry.dispatch("http.fetch", http_args, meta)
+    if not http_out.get("ok"):
+        # Hard fail on fetch → go straight to browser
+        reason = (
+            f"http.fetch.error:{(http_out.get('error') or {}).get('code','unknown')}"
+        )
+        return _smart_escalate_browser(registry, args, meta, reason, http_out)
+
+    status = int(http_out.get("result", {}).get("status", 0))
+    body = http_out.get("result", {}).get("body")
+    headers = http_out.get("result", {}).get("headers") or {}
+
+    need, why = _needs_browser(status, body, headers)
+    if not need:
+        # Return the http result but normalize a text body field for convenience
+        text_body = _to_text(body)
+        res = dict(http_out)
+        res["result"] = dict(http_out.get("result", {}))
+        res["result"]["text"] = text_body
+        res["result"]["source"] = "http.fetch"
+        return res
+
+    # ---------- Escalate: browser.run ----------
+    return _smart_escalate_browser(registry, args, meta, why, http_out)
+
+
+def _smart_escalate_browser(
+    registry,
+    args: Dict[str, Any],
+    meta: Dict[str, Any],
+    reason: str,
+    http_out: Dict[str, Any],
+) -> Dict[str, Any]:
+    # Minimal scripted flow: goto → (optional) wait → capture HTML + optional screenshot
+    steps = [
+        {"goto": args["url"], "wait_until": args.get("wait_until", "domcontentloaded")},
+        {"wait_for": {"state": "load"}},
+    ]
+    if args.get("screenshot"):
+        steps.append({"screenshot": {"path": args["screenshot"], "full_page": True}})
+
+    br_args = {
+        "url": args["url"],
+        "steps": steps,
+        "timeout_ms": int(args.get("timeout_ms", 30000)),
+        "timeout_total_ms": int(args.get("timeout_total_ms", 45000)),
+        "user_agent": args.get("user_agent"),
+        "user_agent_pool": args.get("user_agent_pool") or [],
+        "ua_rotate_per": args.get("ua_rotate_per", "run"),
+        "locale_pool": args.get("locale_pool") or ["en-US", "en-GB", "en"],
+        "viewport": args.get("viewport"),
+        "rate_limit": args.get("rate_limit") or {},
+        "jitter": args.get("jitter")
+        or {
+            "ms_min": 120,
+            "ms_max": 900,
+            "prob": 0.85,
+            "between_steps": True,
+            "between_actions": True,
+            "post_action_prob": 0.30,
+        },
+        "return_html": True,
+        "save_dir": args.get("save_dir", "downloads"),
+        "wait_until": args.get("wait_until", "domcontentloaded"),
+    }
+
+    br_out = registry.dispatch("browser.run", br_args, meta)
+    # Annotate result with provenance & reason
+    if br_out.get("ok"):
+        r = dict(br_out)
+        r["result"] = dict(br_out.get("result", {}))
+        r["result"]["source"] = "browser.run"
+        r["result"]["escalated_from"] = {
+            "verb": "http.fetch",
+            "reason": reason,
+            "http_status": (http_out.get("result") or {}).get("status"),
+        }
+        return r
+
+    # Both paths failed → return browser error, include http.fetch summary for debugging
+    return {
+        "ok": False,
+        "error": br_out.get("error")
+        or {"code": "BrowserError", "message": "browser.run failed"},
+        "result": {
+            "escalated_from": "http.fetch",
+            "escalation_reason": reason,
+            "http_status": (http_out.get("result") or {}).get("status"),
+        },
+    }
+
 
 # -----------------------------
 # Structured error helpers
@@ -499,7 +708,6 @@ class CapabilityRegistry:
             }
 
         # Execute handler
-        # Execute handler
         try:
             if verb == "http.fetch":
                 args = _apply_http_fetch_env_defaults(args or {})
@@ -612,3 +820,7 @@ class CapabilityRegistry:
         self.register("notify.push", notify_push_adapter)
         self.register("http.fetch", http_fetch_adapter)
         self.register("browser.run", browser_run_adapter)
+        self.register("browser.warmup", browser_warmup_adapter)
+        self.register(
+            "web.smart_get", lambda args, meta: _web_smart_get(self, args, meta)
+        )

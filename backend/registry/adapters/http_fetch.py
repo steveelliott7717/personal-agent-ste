@@ -129,6 +129,83 @@ def _enforce_host_policies(
     return True, None, None
 
 
+# --- redirect policy helpers -------------------------------------------------
+def _normalize_redirect_scope(val: str | None) -> str:
+    """
+    Normalize to one of: 'any' (default), 'same_host', 'same_site', 'allow_hosts_only'
+    """
+    v = (val or "").strip().lower()
+    mapping = {
+        "": "any",
+        "any": "any",
+        "all": "any",
+        "true": "any",
+        "same-host": "same_host",
+        "same_host": "same_host",
+        "samehost": "same_host",
+        "same-site": "same_site",
+        "same_site": "same_site",
+        "samesite": "same_site",
+        "allow-hosts-only": "allow_hosts_only",
+        "allow_hosts_only": "allow_hosts_only",
+        "allowhosts": "allow_hosts_only",
+    }
+    return mapping.get(v, "any")
+
+
+def _site_key(host: str) -> str:
+    """
+    Best-effort eTLD+1. Handles common multi-part TLDs; extend via env HTTP_FETCH_PSL_EXTRA.
+    """
+    h = (host or "").lower()
+    parts = [p for p in h.split(".") if p]
+    if len(parts) <= 2:
+        return h
+    common_multi = {
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "gov.uk",
+        "co.jp",
+        "com.au",
+        "com.br",
+        "com.cn",
+        "com.sg",
+        "com.hk",
+        "co.in",
+        "co.kr",
+        "com.mx",
+        "com.ar",
+    }
+    extra = os.getenv("HTTP_FETCH_PSL_EXTRA", "")
+    if extra.strip():
+        for s in extra.split(","):
+            s = s.strip().lower()
+            if s:
+                common_multi.add(s)
+    tail2 = ".".join(parts[-2:])
+    if tail2 in common_multi and len(parts) >= 3:
+        return ".".join(parts[-3:])
+    return tail2
+
+
+def _redirect_allowed(
+    origin_host: str, final_host: str, scope: str, allow_hosts
+) -> bool:
+    if scope == "any":
+        return True
+    if scope == "same_host":
+        return (final_host or "").lower() == (origin_host or "").lower()
+    if scope == "same_site":
+        return _site_key(final_host) == _site_key(origin_host)
+    if scope == "allow_hosts_only":
+        # If allow list empty, be permissive (treat like 'any')
+        return (not allow_hosts) or any(
+            _host_matches(final_host, p) for p in allow_hosts
+        )
+    return True
+
+
 def _upload_to_github(dest: Dict[str, Any], content_bytes: bytes) -> Dict[str, Any]:
     """
     dest: {
@@ -588,6 +665,15 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
 
     # default UA and Accept-Encoding; don't stomp caller's values
     headers.setdefault("User-Agent", "personal-agent/1.0 (+registry-http.fetch)")
+    import random
+
+    ua_pool = args.get("user_agent_pool") or []
+    if ua_pool:
+        headers["User-Agent"] = random.choice(ua_pool)
+    al_pool = args.get("accept_language_pool") or []
+    if al_pool and not any(k.lower() == "accept-language" for k in headers):
+        headers["Accept-Language"] = random.choice(al_pool)
+
     if not _has(headers, "Accept-Encoding"):
         headers["Accept-Encoding"] = "gzip, deflate"
 
@@ -614,6 +700,24 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
     args["headers"] = headers
     if payload is not None:
         args["body"] = payload
+
+    # --- redirect scope (args or env) ---
+    redirect_scope = _normalize_redirect_scope(
+        args.get("redirect_scope") or os.getenv("HTTP_FETCH_REDIRECT_SCOPE")
+    )
+
+    # --- early host policy preflight on initial URL ---
+    url0 = (args.get("url") or "").strip()
+    try:
+        host0 = (urlparse(url0).hostname or "").lower()
+    except Exception:
+        host0 = ""
+    if not host0:
+        return {"status": 0, "error": "BadRequest", "message": "invalid url host"}
+
+    okh, codeh, whyh = _enforce_host_policies(host0, allow_hosts, deny_hosts)
+    if not okh:
+        return {"status": 0, "error": codeh or "DeniedHost", "message": whyh}
 
     # ---- build request & safety checks (host/port/IP) ----
     req = http_request.build(args)
@@ -947,6 +1051,27 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
     body = clamp_bytes(decoded, max_bytes=args.get("max_bytes"))
     text, json_data = choose_parse_body(resp.headers, body)
 
+    # --- redirect policy (first response) ---
+    origin_host = (req.host or "").lower()
+    final_host = (
+        urlparse(getattr(resp, "final_url", "") or req.url).hostname or ""
+    ).lower()
+    if args.get("allow_redirects", True) and final_host and final_host != origin_host:
+        if not _redirect_allowed(origin_host, final_host, redirect_scope, allow_hosts):
+            return {
+                "status": 0,
+                "url": req.url,
+                "final_url": resp.final_url,
+                "headers": resp.headers,
+                "bytes_len": 0,
+                "elapsed_ms": resp.elapsed_ms,
+                "json": None,
+                "text": None,
+                "truncated": False,
+                "error": "RedirectOutOfScope",
+                "message": f"Redirect from {origin_host} to {final_host} blocked by redirect_scope={redirect_scope}",
+            }
+
     first = {
         "status": resp.status,
         "url": req.url,
@@ -966,7 +1091,7 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
     if paginate_cfg:
 
         def _fetch_next(next_url: str) -> Dict[str, Any]:
-            # safety: port/scheme + IP guard + allow/deny policy on *every* paginated hop
+            # port/scheme + IP guard
             okp, whyp = host_port_allowed(next_url)
             if not okp:
                 return {"status": 0, "error": "PortNotAllowed", "message": whyp}
@@ -979,6 +1104,7 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
                     "message": f"Disallowed IP for host: {h2}",
                 }
 
+            # allow/deny patterns for the next page
             okh, codeh, whyh = _enforce_host_policies(h2, allow_hosts, deny_hosts)
             if not okh:
                 return {"status": 0, "error": codeh or "DeniedHost", "message": whyh}
@@ -993,7 +1119,6 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
                 "max_bytes": args.get("max_bytes", 2_000_000),
             }
             next_req = http_request.build(next_args)
-            # set per-request timeout
             tsec = args.get("timeout")
             if isinstance(tsec, (int, float)) and tsec > 0:
                 setattr(next_req, "timeout", float(tsec))
@@ -1042,6 +1167,27 @@ def http_fetch_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, 
                         cap_seconds=60.0,
                     )
                 )
+
+            # Redirect policy on paginated hop
+            origin2 = (next_req.host or "").lower()
+            final2 = (
+                urlparse(getattr(next_resp, "final_url", "") or next_url).hostname or ""
+            ).lower()
+            if args.get("allow_redirects", True) and final2 and final2 != origin2:
+                if not _redirect_allowed(origin2, final2, redirect_scope, allow_hosts):
+                    return {
+                        "status": 0,
+                        "url": next_url,
+                        "final_url": next_resp.final_url,
+                        "headers": next_resp.headers,
+                        "bytes_len": 0,
+                        "elapsed_ms": next_resp.elapsed_ms,
+                        "json": None,
+                        "text": None,
+                        "truncated": False,
+                        "error": "RedirectOutOfScope",
+                        "message": f"Redirect from {origin2} to {final2} blocked by redirect_scope={redirect_scope}",
+                    }
 
             enc_n = (next_resp.headers.get("Content-Encoding") or "").lower()
             decoded_n = _decompress_if_needed(next_resp.body, enc_n)

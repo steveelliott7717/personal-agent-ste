@@ -45,6 +45,26 @@ class Orchestrator:
         self._idem_cache_hits: int = 0
         self._idem_cache_misses: int = 0
 
+    def smart_get(
+        self,
+        url: str,
+        *,
+        args: Dict[str, Any] | None = None,
+        meta: Dict[str, Any] | None = None,
+        correlation_id: str = "local",
+        idempotency_key: str = "local",
+    ) -> Dict[str, Any]:
+        payload = {"url": url}
+        if args:
+            payload.update(args)
+        return self.call_verb(
+            "web.smart_get",
+            payload,
+            meta or {},
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+
     # -------------------------
     # Env / policy helpers
     # -------------------------
