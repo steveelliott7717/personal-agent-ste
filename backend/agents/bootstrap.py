@@ -1,5 +1,7 @@
 # backend/agents/bootstrap.py
-import pkgutil, importlib, logging
+import pkgutil
+import importlib
+import logging
 from typing import Optional, Dict, Any
 from backend.utils.agent_registry import register_agent
 

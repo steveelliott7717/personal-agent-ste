@@ -171,7 +171,7 @@ def generate_artifact_from_task(
     if not isinstance(task, str) or not task.strip():
         raise ValueError("task must be a non-empty string")
     model = os.getenv(model_env, default_model)
-    ctx = _build_context(path_prefix)
+    _ = _build_context(path_prefix)
     header = f"PATH_PREFIX={path_prefix or ''}\nMODE={mode}\n\n"
     system = FILES_SYSTEM if mode == "files" else PATCH_SYSTEM
     text = _chat(model, system, header + "TASK\n" + task)

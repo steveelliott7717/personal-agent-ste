@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
-import os, requests
+import os
+import requests
 
 # Reads (metadata) via PostgREST RPCs we created in Supabase SQL editor:
 #   - public.list_tables(schema_name text default 'public')

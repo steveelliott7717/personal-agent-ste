@@ -248,7 +248,6 @@ def _fallback_apply_where(qh, where: Any):
             qh = qh.eq(k, v)
         return qh
     if isinstance(where, dict) and "op" in where and "conditions" in where:
-        op = str(where.get("op", "and")).lower()
         conds = where.get("conditions") or []
         # Safe approximation: apply all as AND if we don't have real .or_ serialization
         for c in conds:

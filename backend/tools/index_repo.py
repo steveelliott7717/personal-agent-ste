@@ -1,5 +1,6 @@
 # tools/index_repo.py
-import os, re
+import os
+import re
 from typing import List, Tuple
 from supabase import create_client
 from openai import OpenAI

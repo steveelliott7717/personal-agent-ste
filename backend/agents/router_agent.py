@@ -1,16 +1,16 @@
 # backend/agents/router_agent.py
 from __future__ import annotations
-from typing import Tuple, Dict, Any, Optional, Callable
-import json, logging, time, importlib
+from typing import Tuple, Dict, Any, Optional
+import json
+import logging
+import time
+import importlib
 
 # ✅ package-qualified imports
 from backend.services.supabase_service import supabase
 from backend.reasoner.policy import reason_with_memory
 from backend.utils.agent_protocol import make_response
 from backend.semantics.store import upsert as emb_upsert
-import time
-
-from backend.services.supabase_service import supabase
 
 
 def _log_decision(
@@ -93,7 +93,10 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
                 cls_name = callable_name.split(":", 1)[1]
                 Cls = getattr(mod, cls_name)
                 inst = Cls()
-                handle: Callable[[str], dict | str] = lambda q, _i=inst: _i.handle(q)
+
+                def handle(q: str, _i=inst) -> dict | str:
+                    return _i.handle(q)
+
             else:
                 handle = getattr(mod, callable_name)
             reg[slug] = {

@@ -10,6 +10,10 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+from openai import OpenAI
+
 
 # --- Optional dotenv (works locally, harmless in CI) ---
 try:
@@ -47,8 +51,6 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     sys.exit(1)
 
 # --------- HTTP helpers ----------
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
 
 
 def _rest(
@@ -81,7 +83,6 @@ def _rest(
 
 
 # --------- OpenAI client ----------
-from openai import OpenAI
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 

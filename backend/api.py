@@ -12,7 +12,9 @@ from backend.registry.capability_registry import CapabilityRegistry
 
 from dotenv import load_dotenv
 from functools import lru_cache
-import logging, json, sys
+import logging
+import json
+import sys
 
 from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -654,7 +656,8 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         if not ok:
             # best-effort PowerShell fixer if available
             from pathlib import Path as _Path
-            import subprocess, tempfile
+            import subprocess
+            import tempfile
 
             try:
                 with tempfile.NamedTemporaryFile(

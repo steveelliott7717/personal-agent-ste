@@ -203,11 +203,11 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
     order = args.get("order")
     limit = args.get("limit")
     offset = args.get("offset")
-    tiebreaker = args.get("tiebreaker")
-    distinct = args.get("distinct")  # bool | list[str] | None
+    # Unused here; keep for future extension without tripping lints
+    _ = args.get("tiebreaker")
+    # Don't keep an unused local; below we already use (args.get("debug") or {}) inline
 
     # debug.explain support
-    debug_cfg = args.get("debug") or {}
     # ---- debug flag (echo the final query parts) ----
     debug_explain = bool((args.get("debug") or {}).get("explain"))
     _debug_meta: dict = {
@@ -344,8 +344,8 @@ def db_read_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any
         sel = f"{sel},{','.join(agg_items)}" if sel else ",".join(agg_items)
 
     # Prefer header for count (PostgREST way)
+    prefer_headers: list[str] = []
     if count_mode:
-        prefer_headers = prefer_headers if "prefer_headers" in locals() else []
         prefer_headers.append(f"count={count_mode}")
 
     # --- PURE-AGG REGIME: if projection has ONLY aggregate outputs, disable ordering & force limit(0)

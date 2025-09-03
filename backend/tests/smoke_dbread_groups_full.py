@@ -6,7 +6,9 @@ Comprehensive grouped-combos smoke test for db.read.
 Run:  python smoke_dbread_groups_full.py
 """
 
-import json, time, urllib.request
+import json
+import time
+import urllib.request
 
 BASE = "http://localhost:8000/app/api/agents/verb"
 HEADERS = {"Content-Type": "application/json"}

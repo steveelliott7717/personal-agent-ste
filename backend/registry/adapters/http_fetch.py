@@ -40,7 +40,8 @@ def _save_stream_to_path(stream, dest_path: str) -> Dict[str, Any]:
     Streams to a temp file in the target directory, fsyncs, then atomically renames.
     Returns {"path": final_path, "bytes": n}
     """
-    import os, tempfile
+    import os
+    import tempfile
 
     dest_dir = os.path.dirname(dest_path) or "."
     os.makedirs(dest_dir, exist_ok=True)

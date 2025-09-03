@@ -1,7 +1,8 @@
 # backend/semantics/retriever.py
 from __future__ import annotations
 from typing import List, Dict, Any
-import json, math
+import json
+import math
 
 from backend.services.supabase_service import supabase
 from backend.semantics.store import embed_text

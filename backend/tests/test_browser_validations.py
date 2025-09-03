@@ -1,4 +1,5 @@
-import os, requests
+import os
+import requests
 
 BASE = os.getenv("AGENTS_BASE", "http://localhost:8000")
 URL = f"{BASE}/app/api/agents/verb"

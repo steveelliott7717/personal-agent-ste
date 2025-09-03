@@ -1,4 +1,7 @@
-import base64, hmac, hashlib, os
+import base64
+import hmac
+import hashlib
+import os
 
 
 def apply_auth_headers(req, auth: dict):

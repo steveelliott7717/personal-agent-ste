@@ -1,5 +1,6 @@
 # tools/fix_imports.py
-import re, pathlib
+import re
+import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]  # repo root
 BACKEND = ROOT / "backend"

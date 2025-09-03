@@ -1,26 +1,25 @@
 # backend/registry/http/client.py
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
-import urllib.request
-import urllib.parse
+from typing import Any, Dict, Optional, Tuple, Iterator
+
+import base64
+import json
+import mimetypes
+import random
 import ssl
 import time
-import json
+import urllib.parse
+import urllib.request
+import uuid
 import zlib
-import zlib
-from backend.registry.http.headers import detect_charset
-import random
+
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Optional, Dict
-import json
-import uuid
-import base64
-from typing import Any, Dict, Optional, Tuple, Iterator
-import uuid
-import mimetypes
 from pathlib import Path
+
+from backend.registry.http.headers import detect_charset
 
 
 def decode_response_bytes(

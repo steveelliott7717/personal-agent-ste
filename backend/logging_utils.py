@@ -95,7 +95,8 @@ def setup_logging(level: Optional[int] = None) -> None:
 
         class _JsonFormatter(logging.Formatter):
             def format(self, record: logging.LogRecord) -> str:
-                import json, time
+                import json
+                import time
 
                 payload = {
                     "ts": time.strftime(

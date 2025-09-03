@@ -4,7 +4,9 @@ Triple-nesting / deep-groups stress tests for db.read (stdlib only).
 Run:  python smoke_dbread_triples.py
 """
 
-import json, time, urllib.request
+import json
+import time
+import urllib.request
 
 BASE = "http://localhost:8000/app/api/agents/verb"
 HEADERS = {"Content-Type": "application/json"}

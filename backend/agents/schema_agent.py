@@ -1,5 +1,6 @@
 from __future__ import annotations
-import json, os
+import json
+import os
 from openai import OpenAI
 from backend.services import schema_service
 
