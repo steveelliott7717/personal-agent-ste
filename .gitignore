@@ -74,6 +74,9 @@ out/
 dist/
 build/
 frontend/.eslintcache
+frontend/.vite/
+frontend/coverage/
+frontend/.nyc_output/
 
 # =========================
 # EDITORS / IDEs
@@ -109,6 +112,8 @@ logs/
 *.log
 *.out
 *.err
+
+# Misc repo-specific
 prompt_director.py
 tools/ship.bat
-".github/*.zip"
+.github/*.zip
