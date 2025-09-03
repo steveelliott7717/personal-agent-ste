@@ -1,36 +1,32 @@
-import { initializeApp } from "firebase/app";
-import { getMessaging, getToken, onMessage } from "firebase/messaging";
+// src/firebase.js
+import { initializeApp } from 'firebase/app'
+
+let analytics = null
+
+async function maybeInitAnalytics(app) {
+  try {
+    const { isSupported, getAnalytics } = await import('firebase/analytics')
+    if (await isSupported()) {
+      analytics = getAnalytics(app)
+    }
+  } catch {
+    // Analytics not enabled or not supported — ignore
+  }
+}
 
 const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  ...(import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+    ? { measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID }
+    : {}),
+}
 
-  authDomain: "personal-agent-ste.firebaseapp.com",
+export const firebaseApp = initializeApp(firebaseConfig)
+maybeInitAnalytics(firebaseApp)
 
-  projectId: "personal-agent-ste",
-
-  storageBucket: "personal-agent-ste.firebasestorage.app",
-
-  messagingSenderId: "394449515613",
-
-  appId: "1:394449515613:web:5b078c6b9f47370818c9b4"
-
-};
-
-const app = initializeApp(firebaseConfig);
-const messaging = getMessaging(app);
-
-export const requestPermission = async () => {
-  try {
-    const token = await getToken(messaging, { vapidKey: "BEvz_DrfgLcvBuJgwSaY2imvz2QJ9fx5qLPJJ-ZW483lwYbLBdBUnfisj2-Sw7XzcuwmvNP8Ljk-I5Y17hqI_sg" });
-    console.log("Push token:", token);
-    return token;
-  } catch (err) {
-    console.error("Permission denied or error", err);
-  }
-};
-
-export const listenForMessages = () => {
-  onMessage(messaging, (payload) => {
-    console.log("Push message received", payload);
-  });
-};
+export { analytics }

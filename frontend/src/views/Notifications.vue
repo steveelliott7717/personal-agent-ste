@@ -10,14 +10,17 @@ import axios from 'axios'
 import { requestPermission, listenForMessages } from '../firebase'
 
 export default {
-  methods: {
-    async sendTest() {
-      await axios.post('/api/request', new URLSearchParams({ query: 'send test notification' }))
-    }
-  },
   mounted() {
     requestPermission()
     listenForMessages()
-  }
+  },
+  methods: {
+    async sendTest() {
+      await axios.post(
+        '/api/request',
+        new URLSearchParams({ query: 'send test notification' })
+      )
+    },
+  },
 }
 </script>

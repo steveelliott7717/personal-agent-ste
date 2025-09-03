@@ -26,11 +26,15 @@
       <!-- Messages -->
       <div class="p-4 h-[60vh] overflow-y-auto space-y-4">
         <div v-for="(m, i) in messages" :key="i" class="space-y-1">
-          <div class="text-xs text-gray-500">{{ m.role === 'user' ? 'You' : 'Repo Agent' }}</div>
+          <div class="text-xs text-gray-500">
+            {{ m.role === 'user' ? 'You' : 'Repo Agent' }}
+          </div>
           <div
             class="whitespace-pre-wrap break-words p-3 rounded"
             :class="m.role === 'user' ? 'bg-gray-100' : 'bg-white border'"
-          >{{ m.content }}</div>
+          >
+            {{ m.content }}
+          </div>
           <div v-if="m.citations?.length" class="text-xs text-gray-500">
             Sources: {{ m.citations.join('  ·  ') }}
           </div>
@@ -42,21 +46,31 @@
         <div class="flex-1 flex gap-2">
           <input
             v-model="input"
-            @keydown.enter.exact.prevent="send"
             class="flex-1 border rounded px-3 py-2"
             placeholder="Ask anything about your repo…"
+            @keydown.enter.exact.prevent="send"
           />
           <button
-            @click="send"
             :disabled="loading || !input.trim()"
             class="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+            @click="send"
           >
             {{ loading ? 'Thinking…' : 'Ask' }}
           </button>
         </div>
         <div class="flex gap-2 text-sm">
-          <input v-model="prefix" class="border rounded px-2 py-1 w-44" placeholder="path prefix (e.g. backend/)" />
-          <input v-model.number="k" type="number" min="4" max="24" class="border rounded px-2 py-1 w-20" />
+          <input
+            v-model="prefix"
+            class="border rounded px-2 py-1 w-44"
+            placeholder="path prefix (e.g. backend/)"
+          />
+          <input
+            v-model.number="k"
+            type="number"
+            min="4"
+            max="24"
+            class="border rounded px-2 py-1 w-20"
+          />
         </div>
       </div>
     </div>
@@ -67,11 +81,19 @@
 import { ref, onMounted, onErrorCaptured } from 'vue'
 
 const fatal = ref(null)
-onErrorCaptured((err) => { fatal.value = err; return false })
+onErrorCaptured((err) => {
+  fatal.value = err
+  return false
+})
 
 const input = ref('')
 const messages = ref([
-  { role: 'assistant', content: 'Hi! Ask me anything about your repository. I’ll answer using your RMS and cite files.', citations: [] }
+  {
+    role: 'assistant',
+    content:
+      'Hi! Ask me anything about your repository. I’ll answer using your RMS and cite files.',
+    citations: [],
+  },
 ])
 const loading = ref(false)
 
@@ -109,26 +131,35 @@ async function send() {
       path_prefix: prefix.value || null,
       k: k.value || 8,
       session: session.value || null,
-      thread_n: threadN.value || null
+      thread_n: threadN.value || null,
     }
     const res = await fetch('/app/api/repo/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(await res.text())
     const data = await res.json()
-    const cites = (data.hits || []).slice(0, 3).map((h, idx) =>
-      `[${idx+1}] ${h.path}:${h.start_line}–${h.end_line}@${(h.commit_sha||'').slice(0,7)}`
-    )
+    const cites = (data.hits || [])
+      .slice(0, 3)
+      .map(
+        (h, idx) =>
+          `[${idx + 1}] ${h.path}:${h.start_line}–${h.end_line}@${(h.commit_sha || '').slice(0, 7)}`
+      )
     messages.value.push({
       role: 'assistant',
-      content: (data.answer || '(no answer)') +
-        (data.session ? `\n\n— session: ${data.session} · N=${data.thread_n ?? ''}` : ''),
-      citations: cites
+      content:
+        (data.answer || '(no answer)') +
+        (data.session
+          ? `\n\n— session: ${data.session} · N=${data.thread_n ?? ''}`
+          : ''),
+      citations: cites,
     })
   } catch (e) {
-    messages.value.push({ role: 'assistant', content: `Error: ${e?.message || String(e)}` })
+    messages.value.push({
+      role: 'assistant',
+      content: `Error: ${e?.message || String(e)}`,
+    })
   } finally {
     loading.value = false
   }

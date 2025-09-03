@@ -73,6 +73,7 @@ yarn-error.log*
 out/
 dist/
 build/
+frontend/.eslintcache
 
 # =========================
 # EDITORS / IDEs

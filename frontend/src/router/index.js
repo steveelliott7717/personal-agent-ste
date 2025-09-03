@@ -17,10 +17,10 @@ const routes = [
   { path: '/grooming', component: Grooming },
   { path: '/notifications', component: Notifications },
   { path: '/audit', component: AuditLog },
-  { path: '/settings', component: Settings }
+  { path: '/settings', component: Settings },
 ]
 
 export default createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 })

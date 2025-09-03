@@ -32,8 +32,10 @@ export default {
     return { logs: [] }
   },
   async mounted() {
-    const res = await axios.get('https://YOUR-SUPABASE-REST-ENDPOINT/router_logs?select=*')
+    const res = await axios.get(
+      'https://YOUR-SUPABASE-REST-ENDPOINT/router_logs?select=*'
+    )
     this.logs = res.data
-  }
+  },
 }
 </script>

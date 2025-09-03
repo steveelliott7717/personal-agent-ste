@@ -15,11 +15,16 @@
 import axios from 'axios'
 
 export default {
-  data() { return { mode: 'demo' } },
+  data() {
+    return { mode: 'demo' }
+  },
   methods: {
     async updateMode() {
-      await axios.post('/api/request', new URLSearchParams({ query: `set mode ${this.mode}` }))
-    }
-  }
+      await axios.post(
+        '/api/request',
+        new URLSearchParams({ query: `set mode ${this.mode}` })
+      )
+    },
+  },
 }
 </script>

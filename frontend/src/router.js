@@ -10,7 +10,7 @@ const RepoChat = defineAsyncComponent({
   onError(err, _retry, _fail, attempts) {
     // After one attempt, bubble to the page error boundary
     if (attempts >= 1) throw err
-  }
+  },
 })
 
 export default createRouter({
