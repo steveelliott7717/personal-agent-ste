@@ -1,1 +1,0 @@
-{"verb":"web.smart_get","args":{"url":"https://example.org","allow_hosts":["example.org"],"deny_hosts":[],"timeout_ms":8000,"timeout_total_ms":15000}}  -sS -X POST "https://personal-agent-ste.fly.dev/app/api/agents/verb" -H "Content-Type: application/json" --data-binary "@payload-smart.json"

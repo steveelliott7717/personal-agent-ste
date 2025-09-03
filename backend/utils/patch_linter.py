@@ -1,7 +1,7 @@
 # backend/utils/patch_linter.py
 from __future__ import annotations
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 _DIFF_HEADER = re.compile(r"^diff --git a/(.+?) b/\1$", re.MULTILINE)
 _FILE_HEADER = re.compile(r"^(?:---|\+\+\+) (.+)$", re.MULTILINE)

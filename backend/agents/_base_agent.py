@@ -1,7 +1,7 @@
 # backend/agents/_base_agent.py
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
-import json, logging, inspect
+import json, logging
 from backend.services.supabase_service import supabase
 from backend.utils.agent_protocol import make_response, AgentResponse
 from backend.reasoner.policy import reason_with_memory

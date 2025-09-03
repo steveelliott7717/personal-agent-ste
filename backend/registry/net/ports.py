@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Iterable, Tuple
+from typing import Tuple
 from urllib.parse import urlparse
 
 # ENV knobs (same spirit as host allow/deny)

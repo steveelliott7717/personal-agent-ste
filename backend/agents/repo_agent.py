@@ -1,7 +1,7 @@
 # backend/agents/repo_agent.py (strict files/patch modes)
 from __future__ import annotations
 
-import os, json, re
+import os
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 

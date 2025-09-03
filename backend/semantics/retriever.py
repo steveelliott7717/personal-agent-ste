@@ -1,6 +1,6 @@
 # backend/semantics/retriever.py
 from __future__ import annotations
-from typing import List, Dict, Any, Iterable
+from typing import List, Dict, Any
 import json, math
 
 from backend.services.supabase_service import supabase

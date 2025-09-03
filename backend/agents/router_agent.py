@@ -1,6 +1,6 @@
 # backend/agents/router_agent.py
 from __future__ import annotations
-from typing import Tuple, Dict, Any, Optional, List, Callable
+from typing import Tuple, Dict, Any, Optional, Callable
 import json, logging, time, importlib
 
 # ✅ package-qualified imports

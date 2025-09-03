@@ -12,11 +12,11 @@ If both fail, starts a tiny fallback that surfaces the import error.
 try:
     # Primary: your app lives at backend/api.py
     from backend.api import app  # type: ignore
-except Exception as e_backend:
+except Exception:
     try:
         # Secondary: if you ever move app to top-level api.py
         from api import app  # type: ignore
-    except Exception as e_top:
+    except Exception:
         from fastapi import FastAPI
         from fastapi.responses import PlainTextResponse
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, urllib.request, time
+import json, urllib.request
 
 BASE = "http://localhost:8000/app/api/agents/verb"
 HEADERS = {"Content-Type": "application/json"}

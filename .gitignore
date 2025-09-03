@@ -68,15 +68,19 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+
 .cache/
 .next/
 out/
 dist/
 build/
+
+# Frontend artifacts and caches
 frontend/.eslintcache
 frontend/.vite/
 frontend/coverage/
 frontend/.nyc_output/
+frontend/dist/
 
 # =========================
 # EDITORS / IDEs
@@ -113,7 +117,13 @@ logs/
 *.out
 *.err
 
-# Misc repo-specific
+# =========================
+# MISC REPO-SPECIFIC
+# =========================
 prompt_director.py
 tools/ship.bat
 .github/*.zip
+
+
+# Old artifacts
+artifacts/

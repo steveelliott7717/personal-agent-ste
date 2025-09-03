@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict
 import json, os, time, urllib
-from urllib import request, error
 
 
 def notify_push_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:

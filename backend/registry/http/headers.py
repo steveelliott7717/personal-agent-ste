@@ -1,4 +1,4 @@
-import gzip, zlib, io
+import gzip, zlib
 import re
 
 _TEXT_CT_RE = re.compile(

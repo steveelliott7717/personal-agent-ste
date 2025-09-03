@@ -1,6 +1,6 @@
 # backend/utils/nl_formatter.py
 from __future__ import annotations
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, Tuple
 from datetime import datetime
 import json
 

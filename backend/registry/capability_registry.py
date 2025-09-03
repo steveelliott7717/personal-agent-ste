@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import traceback
 import uuid
 import time
-import os as os
+import os
 import typing as t
 import json
 
@@ -27,7 +27,7 @@ from backend.registry.adapters.browser_adapter import browser_warmup_adapter
 from backend.registry.adapters.browser_adapter import browser_run_adapter
 
 _EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
-_EMBED_COLUMN = "embedding_1536"
+_EMBED_COLUMN = os.getenv("EMBED_COLUMN", "embedding_1536")
 
 
 # Postgres DSN (use the pooler if available)
@@ -476,7 +476,6 @@ def _repo_map(args, meta):
 # -----------------------------
 # Structured error helpers
 # -----------------------------
-import traceback
 
 ERR_VERSION = 1
 

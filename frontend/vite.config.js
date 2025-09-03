@@ -1,18 +1,13 @@
-// frontend/vite.config.js
+// vite.config.js (already in most Vue setups)
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import path from 'path'
 
 export default defineConfig({
   plugins: [vue()],
-  base: '/app/',
-  server: {
-    proxy: {
-      // Dev only: proxy unified API to backend
-      '/app/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-      },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
     },
   },
-  build: { outDir: 'dist', emptyOutDir: true },
 })

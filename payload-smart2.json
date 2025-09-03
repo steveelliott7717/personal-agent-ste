@@ -1,1 +1,0 @@
-{"verb":"web.smart_get","args":{"url":"https://quotes.toscrape.com/js/","allow_hosts":["quotes.toscrape.com"],"deny_hosts":[],"timeout_ms":12000,"timeout_total_ms":30000}}

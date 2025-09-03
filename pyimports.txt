@@ -1,0 +1,614 @@
+backend\agents\bootstrap.py:2:import pkgutil, importlib, logging
+backend\agents\bootstrap.py:3:from typing import Optional, Dict, Any
+backend\agents\bootstrap.py:4:from backend.utils.agent_registry import register_agent
+backend\agents\bootstrap.py:10:    import backend.agents as agents_pkg  # package where your agents live
+backend\agents\meals_agent.py:2:from ._base_agent import BaseAgent
+backend\agents\orchestrator.py:2:from __future__ import annotations
+backend\agents\orchestrator.py:4:import os
+backend\agents\orchestrator.py:5:from typing import Any, Dict, Optional, Set
+backend\agents\orchestrator.py:7:from backend.registry.capability_registry import CapabilityRegistry
+backend\agents\orchestrator.py:8:from backend.services.supabase_service import supabase
+backend\agents\recurring_agent.py:1:from backend.services.supabase_service import supabase
+backend\agents\repo_agent.py:2:from __future__ import annotations
+backend\agents\repo_agent.py:4:import os
+backend\agents\repo_agent.py:5:from typing import Any, Dict, List, Optional, Tuple
+backend\agents\repo_agent.py:6:from pathlib import Path
+backend\agents\repo_agent.py:9:    from openai import OpenAI  # OpenAI SDK v1
+backend\agents\repo_agent.py:90:            "from backend.logging_utils import setup_logging, RequestLoggingMiddleware",
+backend\agents\router_agent.py:2:from __future__ import annotations
+backend\agents\router_agent.py:3:from typing import Tuple, Dict, Any, Optional, Callable
+backend\agents\router_agent.py:4:import json, logging, time, importlib
+backend\agents\router_agent.py:7:from backend.services.supabase_service import supabase
+backend\agents\router_agent.py:8:from backend.reasoner.policy import reason_with_memory
+backend\agents\router_agent.py:9:from backend.utils.agent_protocol import make_response
+backend\agents\router_agent.py:10:from backend.semantics.store import upsert as emb_upsert
+backend\agents\router_agent.py:11:import time
+backend\agents\router_agent.py:13:from backend.services.supabase_service import supabase
+backend\agents\router_agent.py:108:                f"[router] failed to import {module_path}.{callable_name} for slug={slug}"
+backend\agents\schema_agent.py:1:from __future__ import annotations
+backend\agents\schema_agent.py:2:import json, os
+backend\agents\schema_agent.py:3:from openai import OpenAI
+backend\agents\schema_agent.py:4:from backend.services import schema_service
+backend\agents\_base_agent.py:2:from __future__ import annotations
+backend\agents\_base_agent.py:3:from typing import Any, Dict, List, Optional
+backend\agents\_base_agent.py:4:import json, logging
+backend\agents\_base_agent.py:5:from backend.services.supabase_service import supabase
+backend\agents\_base_agent.py:6:from backend.utils.agent_protocol import make_response, AgentResponse
+backend\agents\_base_agent.py:7:from backend.reasoner.policy import reason_with_memory
+backend\agents\_base_agent.py:8:from ._op_engine import execute_ops, table_columns  # shared CRUD executor
+backend\agents\_base_agent.py:246:        from importlib import import_module
+backend\agents\_op_engine.py:2:from typing import Any, Dict, List
+backend\agents\_op_engine.py:3:import re
+backend\agents\_op_engine.py:4:from backend.services.supabase_service import supabase
+backend\api.py:1:from __future__ import annotations
+backend\api.py:3:import os
+backend\api.py:4:import uuid
+backend\api.py:5:from datetime import datetime, timezone
+backend\api.py:6:from pathlib import Path
+backend\api.py:7:from typing import Optional, List, Dict, Any
+backend\api.py:8:import asyncio
+backend\api.py:9:import time
+backend\api.py:10:from backend.registry.capability_registry import CapabilityRegistry
+backend\api.py:13:from dotenv import load_dotenv
+backend\api.py:14:from functools import lru_cache
+backend\api.py:15:import logging, json, sys
+backend\api.py:17:from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
+backend\api.py:18:from fastapi.middleware.cors import CORSMiddleware
+backend\api.py:19:from fastapi.responses import (
+backend\api.py:25:from fastapi.staticfiles import StaticFiles
+backend\api.py:27:from starlette.middleware.base import BaseHTTPMiddleware
+backend\api.py:28:from starlette.requests import Request as StarletteRequest
+backend\api.py:30:from pydantic_settings import BaseSettings, SettingsConfigDict
+backend\api.py:33:from backend.models.messages import (
+backend\api.py:42:from backend.agents.orchestrator import Orchestrator
+backend\api.py:45:from backend.routers import schema as schema_router
+backend\api.py:46:from backend.agents.repo_agent import generate_artifact_from_task, propose_changes
+backend\api.py:211:    from backend.agents.router_agent import route_request  # type: ignore
+backend\api.py:647:        from backend.utils.patch_sanitizer import (
+backend\api.py:656:            from pathlib import Path as _Path
+backend\api.py:657:            import subprocess, tempfile
+backend\logging_utils.py:1:from __future__ import annotations
+backend\logging_utils.py:2:import logging
+backend\logging_utils.py:3:import os
+backend\logging_utils.py:4:import time
+backend\logging_utils.py:5:import uuid
+backend\logging_utils.py:6:from contextvars import ContextVar
+backend\logging_utils.py:7:from typing import Optional
+backend\logging_utils.py:9:from starlette.middleware.base import BaseHTTPMiddleware
+backend\logging_utils.py:10:from starlette.requests import Request
+backend\logging_utils.py:11:from starlette.responses import Response
+backend\logging_utils.py:98:                import json, time
+backend\logging_utils.py:184:    import logging
+backend\main.py:2:from __future__ import annotations
+backend\main.py:9:If both fail, starts a tiny fallback that surfaces the import error.
+backend\main.py:14:    from backend.api import app  # type: ignore
+backend\main.py:18:        from api import app  # type: ignore
+backend\main.py:20:        from fastapi import FastAPI
+backend\main.py:21:        from fastapi.responses import PlainTextResponse
+backend\main.py:23:        app = FastAPI(title="Fallback App (import failed)")
+backend\main.py:32:                "fallback: failed to import FastAPI app\n"
+backend\models\messages.py:2:from __future__ import annotations
+backend\models\messages.py:4:from typing import Any, Dict, Optional, List
+backend\models\messages.py:5:from pydantic import BaseModel, Field
+backend\plugins\bus\publish.py:1:from __future__ import annotations
+backend\plugins\bus\publish.py:2:from typing import Any, List, Optional
+backend\plugins\bus\publish.py:3:from backend.services.supabase_service import supabase
+backend\reasoner\policy.py:1:from backend.semantics.retriever import search
+backend\reasoner\policy.py:2:import cohere
+backend\reasoner\policy.py:3:import os
+backend\registry\adapters\browser_adapter.py:2:from __future__ import annotations
+backend\registry\adapters\browser_adapter.py:4:import asyncio
+backend\registry\adapters\browser_adapter.py:5:import os
+backend\registry\adapters\browser_adapter.py:6:import threading
+backend\registry\adapters\browser_adapter.py:7:import time
+backend\registry\adapters\browser_adapter.py:8:import random
+backend\registry\adapters\browser_adapter.py:9:from pathlib import Path
+backend\registry\adapters\browser_adapter.py:10:from typing import Any, Dict, List, Optional, Tuple
+backend\registry\adapters\browser_adapter.py:12:from playwright.async_api import async_playwright
+backend\registry\adapters\browser_adapter.py:13:from urllib.parse import urlparse
+backend\registry\adapters\browser_adapter.py:14:from backend.registry.adapters.http_fetch import (
+backend\registry\adapters\browser_adapter.py:19:from backend.registry.adapters.http_fetch import (
+backend\registry\adapters\browser_adapter.py:625:        import traceback
+backend\registry\adapters\browser_adapter.py:757:    import time
+backend\registry\adapters\browser_adapter.py:758:    import asyncio
+backend\registry\adapters\browser_adapter.py:759:    import concurrent.futures
+backend\registry\adapters\browser_adapter.py:767:        from playwright.sync_api import sync_playwright
+backend\registry\adapters\db_read.py:1:from __future__ import annotations
+backend\registry\adapters\db_read.py:3:import os
+backend\registry\adapters\db_read.py:4:import re
+backend\registry\adapters\db_read.py:5:import json
+backend\registry\adapters\db_read.py:6:import base64
+backend\registry\adapters\db_read.py:7:import hashlib
+backend\registry\adapters\db_read.py:8:import hmac
+backend\registry\adapters\db_read.py:9:from typing import Any, Dict
+backend\registry\adapters\db_read.py:10:from urllib.parse import unquote
+backend\registry\adapters\db_read.py:13:import threading
+backend\registry\adapters\db_read.py:16:from backend.services.supabase_service import supabase
+backend\registry\adapters\db_read.py:934:        from datetime import datetime, timedelta, timezone
+backend\registry\adapters\db_read.py:944:        import re as _re
+backend\registry\adapters\db_write.py:1:from __future__ import annotations
+backend\registry\adapters\db_write.py:3:import os
+backend\registry\adapters\db_write.py:4:import time
+backend\registry\adapters\db_write.py:5:import logging
+backend\registry\adapters\db_write.py:6:import json
+backend\registry\adapters\db_write.py:7:from datetime import datetime, timezone
+backend\registry\adapters\db_write.py:8:from typing import Any, Dict, Tuple, List, Optional
+backend\registry\adapters\db_write.py:10:from backend.services.supabase_service import supabase
+backend\registry\adapters\db_write.py:22:    from backend.registry.adapters.db_read import (
+backend\registry\adapters\db_write.py:29:        from backend.registry.adapters.db_read import (
+backend\registry\adapters\db_write.py:258:        "complex where requires db.read serializer; import failed in db_write.py"
+backend\registry\adapters\db_write.py:361:    from postgrest.exceptions import APIError  # type: ignore
+backend\registry\adapters\http_fetch.py:2:import os
+backend\registry\adapters\http_fetch.py:3:import re
+backend\registry\adapters\http_fetch.py:4:import json
+backend\registry\adapters\http_fetch.py:5:import time
+backend\registry\adapters\http_fetch.py:6:import base64
+backend\registry\adapters\http_fetch.py:7:import hashlib
+backend\registry\adapters\http_fetch.py:8:import urllib.request
+backend\registry\adapters\http_fetch.py:9:import urllib.error
+backend\registry\adapters\http_fetch.py:10:from typing import Any, Dict
+backend\registry\adapters\http_fetch.py:11:from datetime import datetime, timezone
+backend\registry\adapters\http_fetch.py:12:from email.utils import parsedate_to_datetime
+backend\registry\adapters\http_fetch.py:14:from backend.services.supabase_service import supabase
+backend\registry\adapters\http_fetch.py:15:from backend.registry.http.client import (
+backend\registry\adapters\http_fetch.py:21:from backend.registry.http.auth import apply_auth_headers
+backend\registry\adapters\http_fetch.py:22:from backend.registry.http.caching import apply_cache_headers
+backend\registry\adapters\http_fetch.py:23:from backend.registry.http.pagination import paginate_response
+backend\registry\adapters\http_fetch.py:24:from backend.registry.http.headers import choose_parse_body
+backend\registry\adapters\http_fetch.py:25:from backend.registry.net.safety import is_disallowed_ip_host
+backend\registry\adapters\http_fetch.py:26:from backend.registry.net.ports import host_port_allowed
+backend\registry\adapters\http_fetch.py:27:from backend.registry.util.encode import clamp_bytes
+backend\registry\adapters\http_fetch.py:28:from urllib.parse import urlparse
+backend\registry\adapters\http_fetch.py:29:from typing import Iterable
+backend\registry\adapters\http_fetch.py:32:import threading
+backend\registry\adapters\http_fetch.py:43:    import os, tempfile
+backend\registry\adapters\http_fetch.py:668:    import random
+backend\registry\adapters\notify_push.py:1:from __future__ import annotations
+backend\registry\adapters\notify_push.py:2:from typing import Any, Dict
+backend\registry\adapters\notify_push.py:3:import json, os, time, urllib
+backend\registry\capability_registry.py:1:from __future__ import annotations
+backend\registry\capability_registry.py:3:from typing import Any, Callable, Dict, Optional, TypedDict, Tuple
+backend\registry\capability_registry.py:4:from datetime import datetime, timezone
+backend\registry\capability_registry.py:5:import traceback
+backend\registry\capability_registry.py:6:import uuid
+backend\registry\capability_registry.py:7:import time
+backend\registry\capability_registry.py:8:import os
+backend\registry\capability_registry.py:9:import typing as t
+backend\registry\capability_registry.py:10:import json
+backend\registry\capability_registry.py:13:import asyncio
+backend\registry\capability_registry.py:16:    import psycopg  # psycopg v3 (sync + async)
+backend\registry\capability_registry.py:21:# Import only adapter entrypoints here
+backend\registry\capability_registry.py:22:from backend.registry.adapters.http_fetch import http_fetch_adapter
+backend\registry\capability_registry.py:23:from backend.registry.adapters.db_read import db_read_adapter
+backend\registry\capability_registry.py:24:from backend.registry.adapters.db_write import db_write_adapter
+backend\registry\capability_registry.py:25:from backend.registry.adapters.notify_push import notify_push_adapter
+backend\registry\capability_registry.py:26:from backend.registry.adapters.browser_adapter import browser_warmup_adapter
+backend\registry\capability_registry.py:27:from backend.registry.adapters.browser_adapter import browser_run_adapter
+backend\registry\capability_registry.py:55:    from openai import OpenAI
+backend\registry\http\auth.py:1:import base64, hmac, hashlib, os
+backend\registry\http\auth.py:24:                import base64 as _b64
+backend\registry\http\client.py:2:from __future__ import annotations
+backend\registry\http\client.py:3:from dataclasses import dataclass
+backend\registry\http\client.py:4:from typing import Any, Dict, Optional, Tuple
+backend\registry\http\client.py:5:import urllib.request
+backend\registry\http\client.py:6:import urllib.parse
+backend\registry\http\client.py:7:import ssl
+backend\registry\http\client.py:8:import time
+backend\registry\http\client.py:9:import json
+backend\registry\http\client.py:10:import zlib
+backend\registry\http\client.py:11:import zlib
+backend\registry\http\client.py:12:from backend.registry.http.headers import detect_charset
+backend\registry\http\client.py:13:import random
+backend\registry\http\client.py:14:from datetime import datetime, timezone
+backend\registry\http\client.py:15:from email.utils import parsedate_to_datetime
+backend\registry\http\client.py:16:from typing import Optional, Dict
+backend\registry\http\client.py:17:import json
+backend\registry\http\client.py:18:import uuid
+backend\registry\http\client.py:19:import base64
+backend\registry\http\client.py:20:from typing import Any, Dict, Optional, Tuple, Iterator
+backend\registry\http\client.py:21:import uuid
+backend\registry\http\client.py:22:import mimetypes
+backend\registry\http\client.py:23:from pathlib import Path
+backend\registry\http\client.py:69:            import gzip
+backend\registry\http\client.py:509:        from urllib.parse import urlencode
+backend\registry\http\headers.py:1:import gzip, zlib
+backend\registry\http\headers.py:2:import re
+backend\registry\http\headers.py:108:                import json
+backend\registry\http\headers.py:123:                import json
+backend\registry\http\pagination.py:3:from __future__ import annotations
+backend\registry\http\pagination.py:5:from typing import Any, Dict, List, Callable, Optional
+backend\registry\http\pagination.py:6:from backend.registry.util.jsonptr import json_pointer_get
+backend\registry\http\pagination.py:7:from backend.registry.util.url import url_with_param, looks_like_url
+backend\registry\http\pagination.py:8:from backend.registry.http.headers import get_ci, parse_link_next
+backend\registry\http\pagination.py:9:import time
+backend\registry\http\pagination.py:10:import random
+backend\registry\net\ports.py:2:from __future__ import annotations
+backend\registry\net\ports.py:4:import os
+backend\registry\net\ports.py:5:from typing import Tuple
+backend\registry\net\ports.py:6:from urllib.parse import urlparse
+backend\registry\net\safety.py:2:from __future__ import annotations
+backend\registry\net\safety.py:4:import ipaddress
+backend\registry\net\safety.py:5:import socket
+backend\registry\net\safety.py:6:from typing import Iterable
+backend\registry\util\url.py:1:from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+backend\registry\__init__.py:1:from .capability_registry import CapabilityRegistry
+backend\rms.py:2:from __future__ import annotations
+backend\rms.py:3:from typing import Any, Dict, List
+backend\rms.py:4:from backend.services.supabase_service import supabase
+backend\routers\schema.py:1:from __future__ import annotations
+backend\routers\schema.py:2:from fastapi import APIRouter, Query
+backend\routers\schema.py:3:from pydantic import BaseModel
+backend\routers\schema.py:4:from backend.services import schema_service
+backend\routers\schema.py:5:from backend.agents.schema_agent import ask_schema
+backend\scripts\backfill_embeddings.py:1:import os
+backend\scripts\backfill_embeddings.py:2:from typing import Iterable, Dict, Any
+backend\scripts\backfill_embeddings.py:3:from backend.service.supabase_service import supabase
+backend\scripts\backfill_embeddings.py:4:from backend.semantic.store import upsert
+backend\semantics\backfill_capabilities.py:2:from __future__ import annotations
+backend\semantics\backfill_capabilities.py:3:from typing import List, Dict, Any
+backend\semantics\backfill_capabilities.py:5:from backend.services.supabase_service import supabase
+backend\semantics\backfill_capabilities.py:6:from backend.semantics.embeddings import embed_batch
+backend\semantics\embeddings.py:2:from __future__ import annotations
+backend\semantics\embeddings.py:3:import os
+backend\semantics\embeddings.py:4:from typing import List
+backend\semantics\embeddings.py:16:    from openai import OpenAI
+backend\semantics\embeddings.py:25:    import cohere
+backend\semantics\retriever.py:2:from __future__ import annotations
+backend\semantics\retriever.py:3:from typing import List, Dict, Any
+backend\semantics\retriever.py:4:import json, math
+backend\semantics\retriever.py:6:from backend.services.supabase_service import supabase
+backend\semantics\retriever.py:7:from backend.semantics.store import embed_text
+backend\semantics\store.py:2:from __future__ import annotations
+backend\semantics\store.py:3:from typing import Any, Dict, Optional
+backend\semantics\store.py:5:from backend.semantics.embeddings import embed_text
+backend\semantics\store.py:6:from backend.services.supabase_service import supabase
+backend\services\conversation.py:2:from __future__ import annotations
+backend\services\conversation.py:3:import os
+backend\services\conversation.py:4:from typing import List, Dict, Optional
+backend\services\conversation.py:6:from backend.services.supabase_service import supabase
+backend\services\demo_data_service.py:2:from typing import List, Dict
+backend\services\demo_data_service.py:3:from postgrest import APIError
+backend\services\demo_data_service.py:4:from backend.services.supabase_service import supabase
+backend\services\firebase_service.py:1:import os
+backend\services\firebase_service.py:2:import requests
+backend\services\rms.py:2:from __future__ import annotations
+backend\services\rms.py:3:from typing import Any, Dict, List, Optional
+backend\services\rms.py:4:import os
+backend\services\rms.py:8:from backend.services.supabase_service import supabase
+backend\services\rms.py:11:import re
+backend\services\schema_service.py:1:from __future__ import annotations
+backend\services\schema_service.py:2:from typing import List, Dict, Any, Optional
+backend\services\schema_service.py:3:import os, requests
+backend\services\supabase_service.py:2:from __future__ import annotations
+backend\services\supabase_service.py:4:import os
+backend\services\supabase_service.py:5:from typing import Any, Optional
+backend\services\supabase_service.py:7:from dotenv import load_dotenv, find_dotenv
+backend\services\supabase_service.py:39:    # Import here to avoid failing import of this module when keys are absent.
+backend\services\supabase_service.py:40:    from supabase import create_client  # type: ignore
+backend\services\supabase_service.py:49:        from backend.services.supabase_service import supabase
+backend\services\supabase_service.py:72:    Quick readiness check to fail fast at runtime (not import time).
+backend\services\whisper_service.py:1:import os
+backend\services\whisper_service.py:2:import tempfile
+backend\services\whisper_service.py:3:import subprocess
+backend\services\whisper_service.py:5:import openai
+backend\tests\smoke_dbread_edges.py:7:import json, time, urllib.request
+backend\tests\smoke_dbread_groups_full.py:9:import json, time, urllib.request
+backend\tests\smoke_dbread_triples.py:7:import json, time, urllib.request
+backend\tests\test_browser_validations.py:1:import os, requests
+backend\tests\test_dbread_count.py:2:import json, urllib.request
+backend\tests\test_dbread_edgecases.py:6:import json, time, urllib.request
+backend\tests\test_dbread_expand.py:2:import json, urllib.request
+backend\tests\test_dbread_expand_arg.py:2:import json, urllib.request
+backend\tests\test_dbread_groups.py:8:import json, time, urllib.request
+backend\tests\test_dbread_negations.py:6:import json, time, urllib.request
+backend\tests\test_dbread_operators.py:8:import json
+backend\tests\test_dbread_operators.py:9:import os
+backend\tests\test_dbread_operators.py:10:import sys
+backend\tests\test_dbread_operators.py:11:import time
+backend\tests\test_dbread_operators.py:12:import urllib.request
+backend\tests\test_dbread_operators.py:262:    import unittest
+backend\tests\test_dbread_suite.py:2:import json, sys, urllib.request
+backend\tests\test_http_fetch_validations.py:1:import os, requests
+backend\tools\fix_imports.py:2:import re, pathlib
+backend\tools\fix_imports.py:11:#   from services.x import y   -> from backend.services.x import y
+backend\tools\fix_imports.py:12:#   from semantics import z    -> from backend.semantics import z
+backend\tools\fix_imports.py:13:#   import utils               -> import backend.utils as utils
+backend\tools\fix_imports.py:25:    # import pkg  -> import backend.pkg as pkg
+backend\tools\fix_imports.py:28:        return f"{m.group(1)}import backend.{pkg} as {pkg}"
+backend\tools\index_repo.py:2:import os, re
+backend\tools\index_repo.py:3:from typing import List, Tuple
+backend\tools\index_repo.py:4:from supabase import create_client
+backend\tools\index_repo.py:5:from openai import OpenAI
+backend\tools\index_repo_ci.py:2:from __future__ import annotations
+backend\tools\index_repo_ci.py:4:import argparse
+backend\tools\index_repo_ci.py:5:import hashlib
+backend\tools\index_repo_ci.py:6:import json
+backend\tools\index_repo_ci.py:7:import math
+backend\tools\index_repo_ci.py:8:import os
+backend\tools\index_repo_ci.py:9:import sys
+backend\tools\index_repo_ci.py:10:import time
+backend\tools\index_repo_ci.py:11:from pathlib import Path
+backend\tools\index_repo_ci.py:12:from typing import Dict, Iterable, List, Optional, Tuple
+backend\tools\index_repo_ci.py:16:    from dotenv import load_dotenv  # type: ignore
+backend\tools\index_repo_ci.py:50:from urllib.request import Request, urlopen
+backend\tools\index_repo_ci.py:51:from urllib.error import HTTPError, URLError
+backend\tools\index_repo_ci.py:84:from openai import OpenAI
+backend\tools\patch_sanitizer.py:2:from __future__ import annotations
+backend\tools\patch_sanitizer.py:4:import re
+backend\tools\patch_sanitizer.py:5:from typing import Tuple, Optional
+backend\utils\agent_protocol.py:2:from __future__ import annotations
+backend\utils\agent_protocol.py:3:from typing import Any, Dict, List, Optional, TypedDict, Union
+backend\utils\nl_formatter.py:2:from __future__ import annotations
+backend\utils\nl_formatter.py:3:from typing import Any, Callable, Dict, Tuple
+backend\utils\nl_formatter.py:4:from datetime import datetime
+backend\utils\nl_formatter.py:5:import json
+backend\utils\nl_formatter.py:7:from .agent_protocol import AgentResponse
+backend\utils\patch_linter.py:2:from __future__ import annotations
+backend\utils\patch_linter.py:3:import re
+backend\utils\patch_linter.py:4:from typing import Dict, List, Optional
+backend\utils\patch_sanitizer.py:2:from __future__ import annotations
+backend\utils\patch_sanitizer.py:4:import re
+backend\utils\patch_sanitizer.py:5:from typing import Tuple, Optional
+backend\utils\prompt_director.py:2:from textwrap import dedent
+backend\workers\bus_consumer.py:1:from __future__ import annotations
+backend\workers\bus_consumer.py:2:from typing import Dict, Callable
+backend\workers\bus_consumer.py:3:from importlib import import_module
+backend\workers\bus_consumer.py:4:from backend.service.supabase_service import supabase
+backend\agents\bootstrap.py:3:from typing import Optional, Dict, Any
+backend\agents\bootstrap.py:4:from backend.utils.agent_registry import register_agent
+backend\agents\bootstrap.py:19:            logger.exception("bootstrap: failed registering from %s", m.name)
+backend\agents\meals_agent.py:2:from ._base_agent import BaseAgent
+backend\agents\meals_agent.py:17:  "thoughts": "List today's meals from meal_plan by freshness",
+backend\agents\orchestrator.py:2:from __future__ import annotations
+backend\agents\orchestrator.py:5:from typing import Any, Dict, Optional, Set
+backend\agents\orchestrator.py:7:from backend.registry.capability_registry import CapabilityRegistry
+backend\agents\orchestrator.py:8:from backend.services.supabase_service import supabase
+backend\agents\recurring_agent.py:1:from backend.services.supabase_service import supabase
+backend\agents\repo_agent.py:2:from __future__ import annotations
+backend\agents\repo_agent.py:5:from typing import Any, Dict, List, Optional, Tuple
+backend\agents\repo_agent.py:6:from pathlib import Path
+backend\agents\repo_agent.py:9:    from openai import OpenAI  # OpenAI SDK v1
+backend\agents\repo_agent.py:90:            "from backend.logging_utils import setup_logging, RequestLoggingMiddleware",
+backend\agents\router_agent.py:2:from __future__ import annotations
+backend\agents\router_agent.py:3:from typing import Tuple, Dict, Any, Optional, Callable
+backend\agents\router_agent.py:7:from backend.services.supabase_service import supabase
+backend\agents\router_agent.py:8:from backend.reasoner.policy import reason_with_memory
+backend\agents\router_agent.py:9:from backend.utils.agent_protocol import make_response
+backend\agents\router_agent.py:10:from backend.semantics.store import upsert as emb_upsert
+backend\agents\router_agent.py:13:from backend.services.supabase_service import supabase
+backend\agents\router_agent.py:128:You MUST choose an agent from AGENT_CATALOG when a user request is task-like or data-related
+backend\agents\schema_agent.py:1:from __future__ import annotations
+backend\agents\schema_agent.py:3:from openai import OpenAI
+backend\agents\schema_agent.py:4:from backend.services import schema_service
+backend\agents\_base_agent.py:2:from __future__ import annotations
+backend\agents\_base_agent.py:3:from typing import Any, Dict, List, Optional
+backend\agents\_base_agent.py:5:from backend.services.supabase_service import supabase
+backend\agents\_base_agent.py:6:from backend.utils.agent_protocol import make_response, AgentResponse
+backend\agents\_base_agent.py:7:from backend.reasoner.policy import reason_with_memory
+backend\agents\_base_agent.py:8:from ._op_engine import execute_ops, table_columns  # shared CRUD executor
+backend\agents\_base_agent.py:39:    # cached settings pulled from Supabase (agent_settings)
+backend\agents\_base_agent.py:244:        Run post hooks from AGENT_META['post_hooks'] and/or agent_settings('post_hooks').
+backend\agents\_base_agent.py:246:        from importlib import import_module
+backend\agents\_op_engine.py:2:from typing import Any, Dict, List
+backend\agents\_op_engine.py:4:from backend.services.supabase_service import supabase
+backend\api.py:1:from __future__ import annotations
+backend\api.py:5:from datetime import datetime, timezone
+backend\api.py:6:from pathlib import Path
+backend\api.py:7:from typing import Optional, List, Dict, Any
+backend\api.py:10:from backend.registry.capability_registry import CapabilityRegistry
+backend\api.py:13:from dotenv import load_dotenv
+backend\api.py:14:from functools import lru_cache
+backend\api.py:17:from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
+backend\api.py:18:from fastapi.middleware.cors import CORSMiddleware
+backend\api.py:19:from fastapi.responses import (
+backend\api.py:25:from fastapi.staticfiles import StaticFiles
+backend\api.py:27:from starlette.middleware.base import BaseHTTPMiddleware
+backend\api.py:28:from starlette.requests import Request as StarletteRequest
+backend\api.py:30:from pydantic_settings import BaseSettings, SettingsConfigDict
+backend\api.py:33:from backend.models.messages import (
+backend\api.py:42:from backend.agents.orchestrator import Orchestrator
+backend\api.py:44:# ⬇️ moved in from main.py so nothing is lost
+backend\api.py:45:from backend.routers import schema as schema_router
+backend\api.py:46:from backend.agents.repo_agent import generate_artifact_from_task, propose_changes
+backend\api.py:211:    from backend.agents.router_agent import route_request  # type: ignore
+backend\api.py:282:    """Verb discovery from the shared CapabilityRegistry."""
+backend\api.py:567:# ⬇️ REPO API (moved here from main.py)
+backend\api.py:647:        from backend.utils.patch_sanitizer import (
+backend\api.py:656:            from pathlib import Path as _Path
+backend\api.py:737:# Schema router (moved here from main.py)
+backend\logging_utils.py:1:from __future__ import annotations
+backend\logging_utils.py:6:from contextvars import ContextVar
+backend\logging_utils.py:7:from typing import Optional
+backend\logging_utils.py:9:from starlette.middleware.base import BaseHTTPMiddleware
+backend\logging_utils.py:10:from starlette.requests import Request
+backend\logging_utils.py:11:from starlette.responses import Response
+backend\main.py:2:from __future__ import annotations
+backend\main.py:8:Loads the real FastAPI app from backend/api.py (primary) or api.py (secondary).
+backend\main.py:14:    from backend.api import app  # type: ignore
+backend\main.py:18:        from api import app  # type: ignore
+backend\main.py:20:        from fastapi import FastAPI
+backend\main.py:21:        from fastapi.responses import PlainTextResponse
+backend\models\messages.py:2:from __future__ import annotations
+backend\models\messages.py:4:from typing import Any, Dict, Optional, List
+backend\models\messages.py:5:from pydantic import BaseModel, Field
+backend\plugins\bus\publish.py:1:from __future__ import annotations
+backend\plugins\bus\publish.py:2:from typing import Any, List, Optional
+backend\plugins\bus\publish.py:3:from backend.services.supabase_service import supabase
+backend\plugins\bus\publish.py:71:    Reads rules from agent_settings['bus.publish_rules'] and emits events.
+backend\reasoner\policy.py:1:from backend.semantics.retriever import search
+backend\reasoner\policy.py:11:    Use embeddings from Supabase + Cohere for reasoning.
+backend\registry\adapters\browser_adapter.py:2:from __future__ import annotations
+backend\registry\adapters\browser_adapter.py:9:from pathlib import Path
+backend\registry\adapters\browser_adapter.py:10:from typing import Any, Dict, List, Optional, Tuple
+backend\registry\adapters\browser_adapter.py:12:from playwright.async_api import async_playwright
+backend\registry\adapters\browser_adapter.py:13:from urllib.parse import urlparse
+backend\registry\adapters\browser_adapter.py:14:from backend.registry.adapters.http_fetch import (
+backend\registry\adapters\browser_adapter.py:19:from backend.registry.adapters.http_fetch import (
+backend\registry\adapters\browser_adapter.py:751:    No external navigation (no DNS/HTTPS). Safe to call from sync or async contexts.
+backend\registry\adapters\browser_adapter.py:767:        from playwright.sync_api import sync_playwright
+backend\registry\adapters\browser_adapter.py:781:        # If we're inside an asyncio loop (e.g., called from an async route),
+backend\registry\adapters\db_read.py:1:from __future__ import annotations
+backend\registry\adapters\db_read.py:9:from typing import Any, Dict
+backend\registry\adapters\db_read.py:10:from urllib.parse import unquote
+backend\registry\adapters\db_read.py:16:from backend.services.supabase_service import supabase
+backend\registry\adapters\db_read.py:158:            # parse alias/table/fk from key
+backend\registry\adapters\db_read.py:352:    # determine non-aggregate columns from the *original* caller select
+backend\registry\adapters\db_read.py:353:    # determine non-aggregate columns from the *original* caller select
+backend\registry\adapters\db_read.py:921:        # Build parent expr with JSON operator chain (->), starting from base column
+backend\registry\adapters\db_read.py:934:        from datetime import datetime, timedelta, timezone
+backend\registry\adapters\db_write.py:1:from __future__ import annotations
+backend\registry\adapters\db_write.py:7:from datetime import datetime, timezone
+backend\registry\adapters\db_write.py:8:from typing import Any, Dict, Tuple, List, Optional
+backend\registry\adapters\db_write.py:10:from backend.services.supabase_service import supabase
+backend\registry\adapters\db_write.py:22:    from backend.registry.adapters.db_read import (
+backend\registry\adapters\db_write.py:29:        from backend.registry.adapters.db_read import (
+backend\registry\adapters\db_write.py:361:    from postgrest.exceptions import APIError  # type: ignore
+backend\registry\adapters\db_write.py:584:        # Accept either patch (from rows) or args.values/patch alias
+backend\registry\adapters\http_fetch.py:10:from typing import Any, Dict
+backend\registry\adapters\http_fetch.py:11:from datetime import datetime, timezone
+backend\registry\adapters\http_fetch.py:12:from email.utils import parsedate_to_datetime
+backend\registry\adapters\http_fetch.py:14:from backend.services.supabase_service import supabase
+backend\registry\adapters\http_fetch.py:15:from backend.registry.http.client import (
+backend\registry\adapters\http_fetch.py:21:from backend.registry.http.auth import apply_auth_headers
+backend\registry\adapters\http_fetch.py:22:from backend.registry.http.caching import apply_cache_headers
+backend\registry\adapters\http_fetch.py:23:from backend.registry.http.pagination import paginate_response
+backend\registry\adapters\http_fetch.py:24:from backend.registry.http.headers import choose_parse_body
+backend\registry\adapters\http_fetch.py:25:from backend.registry.net.safety import is_disallowed_ip_host
+backend\registry\adapters\http_fetch.py:26:from backend.registry.net.ports import host_port_allowed
+backend\registry\adapters\http_fetch.py:27:from backend.registry.util.encode import clamp_bytes
+backend\registry\adapters\http_fetch.py:28:from urllib.parse import urlparse
+backend\registry\adapters\http_fetch.py:29:from typing import Iterable
+backend\registry\adapters\http_fetch.py:1072:                "message": f"Redirect from {origin_host} to {final_host} blocked by redirect_scope={redirect_scope}",
+backend\registry\adapters\http_fetch.py:1189:                        "message": f"Redirect from {origin2} to {final2} blocked by redirect_scope={redirect_scope}",
+backend\registry\adapters\notify_push.py:1:from __future__ import annotations
+backend\registry\adapters\notify_push.py:2:from typing import Any, Dict
+backend\registry\capability_registry.py:1:from __future__ import annotations
+backend\registry\capability_registry.py:3:from typing import Any, Callable, Dict, Optional, TypedDict, Tuple
+backend\registry\capability_registry.py:4:from datetime import datetime, timezone
+backend\registry\capability_registry.py:22:from backend.registry.adapters.http_fetch import http_fetch_adapter
+backend\registry\capability_registry.py:23:from backend.registry.adapters.db_read import db_read_adapter
+backend\registry\capability_registry.py:24:from backend.registry.adapters.db_write import db_write_adapter
+backend\registry\capability_registry.py:25:from backend.registry.adapters.notify_push import notify_push_adapter
+backend\registry\capability_registry.py:26:from backend.registry.adapters.browser_adapter import browser_warmup_adapter
+backend\registry\capability_registry.py:27:from backend.registry.adapters.browser_adapter import browser_run_adapter
+backend\registry\capability_registry.py:54:    # Reuse your existing OpenAI key from env
+backend\registry\capability_registry.py:55:    from openai import OpenAI
+backend\registry\capability_registry.py:62:# Heuristic: decide if we should escalate from http.fetch -> browser.run
+backend\registry\capability_registry.py:105:    # Non-HTML, but tiny payloads from an HTML URL path may also be suspicious
+backend\registry\capability_registry.py:302:      from public.repo_chunks
+backend\registry\capability_registry.py:354:        from public.repo_chunks
+backend\registry\capability_registry.py:358:      from base b
+backend\registry\capability_registry.py:384:    Reconstruct a file's content by concatenating its chunks from public.repo_chunks (or repo_memory).
+backend\registry\capability_registry.py:404:      from {source_table}
+backend\registry\capability_registry.py:441:    # LOC by summing (end_line - start_line + 1) per file from repo_chunks
+backend\registry\capability_registry.py:445:        from public.repo_chunks
+backend\registry\capability_registry.py:451:      from per_file
+backend\registry\capability_registry.py:458:      from public.repo_chunks
+backend\registry\capability_registry.py:485:    If caller didn't specify, inherit safe HTTP defaults from environment.
+backend\registry\capability_registry.py:862:    # Pull retry_after from response headers if present
+backend\registry\http\client.py:2:from __future__ import annotations
+backend\registry\http\client.py:3:from dataclasses import dataclass
+backend\registry\http\client.py:4:from typing import Any, Dict, Optional, Tuple
+backend\registry\http\client.py:12:from backend.registry.http.headers import detect_charset
+backend\registry\http\client.py:14:from datetime import datetime, timezone
+backend\registry\http\client.py:15:from email.utils import parsedate_to_datetime
+backend\registry\http\client.py:16:from typing import Optional, Dict
+backend\registry\http\client.py:20:from typing import Any, Dict, Optional, Tuple, Iterator
+backend\registry\http\client.py:23:from pathlib import Path
+backend\registry\http\client.py:171:    # classmethod used by the adapter to construct a request from args
+backend\registry\http\client.py:325:            body=b"",  # consumer reads from iterator
+backend\registry\http\client.py:509:        from urllib.parse import urlencode
+backend\registry\http\headers.py:12:    Best-effort charset detection from Content-Type header.
+backend\registry\http\pagination.py:3:from __future__ import annotations
+backend\registry\http\pagination.py:5:from typing import Any, Dict, List, Callable, Optional
+backend\registry\http\pagination.py:6:from backend.registry.util.jsonptr import json_pointer_get
+backend\registry\http\pagination.py:7:from backend.registry.util.url import url_with_param, looks_like_url
+backend\registry\http\pagination.py:8:from backend.registry.http.headers import get_ci, parse_link_next
+backend\registry\http\pagination.py:153:        # find first "next" from the initial page
+backend\registry\http\pagination.py:179:            # read next from this page
+backend\registry\net\ports.py:2:from __future__ import annotations
+backend\registry\net\ports.py:5:from typing import Tuple
+backend\registry\net\ports.py:6:from urllib.parse import urlparse
+backend\registry\net\ports.py:15:# - Port is derived from scheme when not provided (http->80, https->443).
+backend\registry\net\ports.py:53:    """Resolve effective port from a parsed URL (scheme default if missing)."""
+backend\registry\net\safety.py:2:from __future__ import annotations
+backend\registry\net\safety.py:6:from typing import Iterable
+backend\registry\util\url.py:1:from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+backend\registry\__init__.py:1:from .capability_registry import CapabilityRegistry
+backend\rms.py:2:from __future__ import annotations
+backend\rms.py:3:from typing import Any, Dict, List
+backend\rms.py:4:from backend.services.supabase_service import supabase
+backend\routers\schema.py:1:from __future__ import annotations
+backend\routers\schema.py:2:from fastapi import APIRouter, Query
+backend\routers\schema.py:3:from pydantic import BaseModel
+backend\routers\schema.py:4:from backend.services import schema_service
+backend\routers\schema.py:5:from backend.agents.schema_agent import ask_schema
+backend\scripts\backfill_embeddings.py:2:from typing import Iterable, Dict, Any
+backend\scripts\backfill_embeddings.py:3:from backend.service.supabase_service import supabase
+backend\scripts\backfill_embeddings.py:4:from backend.semantic.store import upsert
+backend\semantics\backfill_capabilities.py:2:from __future__ import annotations
+backend\semantics\backfill_capabilities.py:3:from typing import List, Dict, Any
+backend\semantics\backfill_capabilities.py:5:from backend.services.supabase_service import supabase
+backend\semantics\backfill_capabilities.py:6:from backend.semantics.embeddings import embed_batch
+backend\semantics\embeddings.py:2:from __future__ import annotations
+backend\semantics\embeddings.py:4:from typing import List
+backend\semantics\embeddings.py:16:    from openai import OpenAI
+backend\semantics\retriever.py:2:from __future__ import annotations
+backend\semantics\retriever.py:3:from typing import List, Dict, Any
+backend\semantics\retriever.py:6:from backend.services.supabase_service import supabase
+backend\semantics\retriever.py:7:from backend.semantics.store import embed_text
+backend\semantics\store.py:2:from __future__ import annotations
+backend\semantics\store.py:3:from typing import Any, Dict, Optional
+backend\semantics\store.py:5:from backend.semantics.embeddings import embed_text
+backend\semantics\store.py:6:from backend.services.supabase_service import supabase
+backend\services\conversation.py:2:from __future__ import annotations
+backend\services\conversation.py:4:from typing import List, Dict, Optional
+backend\services\conversation.py:6:from backend.services.supabase_service import supabase
+backend\services\demo_data_service.py:2:from typing import List, Dict
+backend\services\demo_data_service.py:3:from postgrest import APIError
+backend\services\demo_data_service.py:4:from backend.services.supabase_service import supabase
+backend\services\rms.py:2:from __future__ import annotations
+backend\services\rms.py:3:from typing import Any, Dict, List, Optional
+backend\services\rms.py:8:from backend.services.supabase_service import supabase
+backend\services\rms.py:61:    - Else infer from the vector length; default to 1536 if unknown.
+backend\services\schema_service.py:1:from __future__ import annotations
+backend\services\schema_service.py:2:from typing import List, Dict, Any, Optional
+backend\services\supabase_service.py:2:from __future__ import annotations
+backend\services\supabase_service.py:5:from typing import Any, Optional
+backend\services\supabase_service.py:7:from dotenv import load_dotenv, find_dotenv
+backend\services\supabase_service.py:10:# --- Load .env from repo root even when uvicorn cwd varies ---
+backend\services\supabase_service.py:40:    from supabase import create_client  # type: ignore
+backend\services\supabase_service.py:49:        from backend.services.supabase_service import supabase
+backend\services\supabase_service.py:73:    Call this from startup hooks or health checks if you want.
+backend\tests\test_dbread_suite.py:103:        # Fallback: derive cursor from last row (compatible with your registry)
+backend\tools\fix_imports.py:11:#   from services.x import y   -> from backend.services.x import y
+backend\tools\fix_imports.py:12:#   from semantics import z    -> from backend.semantics import z
+backend\tools\index_repo.py:3:from typing import List, Tuple
+backend\tools\index_repo.py:4:from supabase import create_client
+backend\tools\index_repo.py:5:from openai import OpenAI
+backend\tools\index_repo_ci.py:2:from __future__ import annotations
+backend\tools\index_repo_ci.py:11:from pathlib import Path
+backend\tools\index_repo_ci.py:12:from typing import Dict, Iterable, List, Optional, Tuple
+backend\tools\index_repo_ci.py:16:    from dotenv import load_dotenv  # type: ignore
+backend\tools\index_repo_ci.py:50:from urllib.request import Request, urlopen
+backend\tools\index_repo_ci.py:51:from urllib.error import HTTPError, URLError
+backend\tools\index_repo_ci.py:78:        raise RuntimeError(f"HTTP {e.code} {e.reason} at {url}\n{detail}") from None
+backend\tools\index_repo_ci.py:80:        raise RuntimeError(f"Network error contacting {url}: {e}") from None
+backend\tools\index_repo_ci.py:84:from openai import OpenAI
+backend\tools\patch_sanitizer.py:2:from __future__ import annotations
+backend\tools\patch_sanitizer.py:5:from typing import Tuple, Optional
+backend\utils\agent_protocol.py:2:from __future__ import annotations
+backend\utils\agent_protocol.py:3:from typing import Any, Dict, List, Optional, TypedDict, Union
+backend\utils\nl_formatter.py:2:from __future__ import annotations
+backend\utils\nl_formatter.py:3:from typing import Any, Callable, Dict, Tuple
+backend\utils\nl_formatter.py:4:from datetime import datetime
+backend\utils\nl_formatter.py:7:from .agent_protocol import AgentResponse
+backend\utils\patch_linter.py:2:from __future__ import annotations
+backend\utils\patch_linter.py:4:from typing import Dict, List, Optional
+backend\utils\patch_sanitizer.py:2:from __future__ import annotations
+backend\utils\patch_sanitizer.py:5:from typing import Tuple, Optional
+backend\utils\prompt_director.py:2:from textwrap import dedent
+backend\workers\bus_consumer.py:1:from __future__ import annotations
+backend\workers\bus_consumer.py:2:from typing import Dict, Callable
+backend\workers\bus_consumer.py:3:from importlib import import_module
+backend\workers\bus_consumer.py:4:from backend.service.supabase_service import supabase

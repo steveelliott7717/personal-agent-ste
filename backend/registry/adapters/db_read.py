@@ -10,7 +10,6 @@ from typing import Any, Dict
 from urllib.parse import unquote
 
 # --- add for timeout support ---
-import time
 import threading
 
 

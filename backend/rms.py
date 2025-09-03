@@ -1,6 +1,5 @@
 # backend/rms.py
 from __future__ import annotations
-import os
 from typing import Any, Dict, List
 from backend.services.supabase_service import supabase
 

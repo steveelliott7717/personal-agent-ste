@@ -8,21 +8,18 @@ import ssl
 import time
 import json
 import zlib
-import gzip, zlib, io
+import zlib
 from backend.registry.http.headers import detect_charset
 import random
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Optional, Dict
-import io
 import json
 import uuid
 import base64
-from urllib.parse import urlencode
 from typing import Any, Dict, Optional, Tuple, Iterator
 import uuid
 import mimetypes
-import os
 from pathlib import Path
 
 
