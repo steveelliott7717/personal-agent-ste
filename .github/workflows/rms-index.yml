@@ -20,6 +20,13 @@ on:
       - 'tools/**'
       - '.github/workflows/rms-index.yml'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: rms-index-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   index:
     runs-on: ubuntu-latest
@@ -32,36 +39,48 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('.github/workflows/rms-index.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install \
-            openai \
-            "supabase==2.4.0" \
-            "postgrest==0.10.8" \
-            "httpx==0.24.1" \
-            tiktoken
+            "openai>=1.35.0,<2.0.0" \
+            "supabase>=2.4.0,<3.0.0" \
+            "postgrest>=0.10.8,<1.0.0" \
+            "httpx>=0.24.1,<0.27" \
+            "tiktoken>=0.7.0,<0.8.0"
+
       - name: Show versions (debug)
         run: |
           python - <<'PY'
           import importlib.metadata as m
-          for pkg in ["supabase","postgrest","httpx"]:
+          for pkg in ["openai","supabase","postgrest","httpx","tiktoken"]:
               try: print(pkg, m.version(pkg))
-              except: print(pkg, "not installed")
+              except Exception as e: print(pkg, "not installed:", e)
           PY
-
-
 
       - name: Run indexer
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          # Indexer settings
           RMS_REPO: personal-agent-ste
           RMS_BRANCH: main
           RMS_PREFIX: ${{ github.event.inputs.prefix || '' }}
           RMS_RESET: ${{ github.event.inputs.reset && '1' || '' }}
           RMS_SKIP: "backend/static/assets/**,frontend/dist/**,**/node_modules/**"
           RMS_ROOT: ${{ github.workspace }}
+          RMS_INCREMENTAL: "1"
+          # Embedding config (keep consistent with your server-side search)
+          EMBED_MODEL: "text-embedding-3-small"
+          EMBED_COLUMN: "embedding"
         run: |
           python backend/tools/index_repo_ci.py
