@@ -1,23 +1,31 @@
+// frontend/src/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
 
-import Dashboard from '../views/Dashboard.vue'
-import Meals from '../views/Meals.vue'
-import Workouts from '../views/Workouts.vue'
-import Finance from '../views/Finance.vue'
-import Grooming from '../views/Grooming.vue'
-import Notifications from '../views/Notifications.vue'
-import AuditLog from '../views/AuditLog.vue'
-import Settings from '../views/Settings.vue'
-
 const routes = [
-  { path: '/', component: Dashboard },
-  { path: '/meals', component: Meals },
-  { path: '/workouts', component: Workouts },
-  { path: '/finance', component: Finance },
-  { path: '/grooming', component: Grooming },
-  { path: '/notifications', component: Notifications },
-  { path: '/audit', component: AuditLog },
-  { path: '/settings', component: Settings },
+  {
+    path: '/',
+    name: 'home',
+    component: () => import('../pages/Home.vue'),
+  },
+  {
+    path: '/dashboard',
+    name: 'dashboard',
+    component: () => import('../views/Dashboard.vue'),
+  },
+  {
+    path: '/repo-chat',
+    name: 'repo-chat',
+    component: () => import('../pages/RepoChat.vue'),
+  },
+  // 404 fallback: keep last
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'not-found',
+    component: {
+      template:
+        "<main style='padding:2rem;font:14px/1.4 system-ui'>404 — page not found</main>",
+    },
+  },
 ]
 
 export default createRouter({
