@@ -111,6 +111,13 @@ if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
 # ---------------------------
 app = FastAPI(title="Personal Agent API", version=VERSION)
 
+# Shared capability registry (used by /agents/verbs and /agents/verb)
+registry = CapabilityRegistry()
+app.state.registry = registry
+
+orchestrator = Orchestrator()
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_csv_env("CORS_ALLOW_ORIGINS", settings.CORS_ALLOW_ORIGINS),
@@ -273,14 +280,17 @@ agents_router = APIRouter(prefix=f"{BASE}/api/agents", tags=["agents"])
 
 @agents_router.get("/verbs")
 def list_verbs() -> dict:
-    """Optional verb discovery; returns [] if orchestrator can't enumerate."""
-    verbs = []
+    """Verb discovery from the shared CapabilityRegistry."""
+    reg = getattr(app.state, "registry", registry)
+    # Prefer a public list method if available; otherwise fall back to adapter keys
     try:
-        if hasattr(orchestrator, "list_verbs"):
-            verbs = sorted(orchestrator.list_verbs())  # type: ignore[attr-defined]
+        if hasattr(reg, "list_verbs"):
+            names = sorted(reg.list_verbs())  # type: ignore[attr-defined]
+        else:
+            names = sorted(list(getattr(reg, "_adapters", {}).keys()))
     except Exception:
-        verbs = []
-    return {"ok": True, "verbs": verbs}
+        names = []
+    return {"ok": True, "verbs": names}
 
 
 @agents_router.post("/verb")
@@ -303,18 +313,24 @@ async def call_agent_verb(
         or uuid.uuid4().hex
     )
     try:
-        out = orchestrator.call_verb(
-            req.verb,
-            req.args or {},
-            req.meta or {},
-            correlation_id=correlation_id,
-            idempotency_key=idempotency_key,
-            actor=(req.actor.dict() if req.actor else None),
-            policy_ctx=(req.policy_ctx.dict() if req.policy_ctx else None),
-        )
-        out.setdefault("correlation_id", correlation_id)
-        out.setdefault("idempotency_key", idempotency_key)
+        # Dispatch directly through the shared CapabilityRegistry.
+        reg = getattr(app.state, "registry", registry)
+        meta = {
+            **(req.meta or {}),
+            "correlation_id": correlation_id,
+            "idempotency_key": idempotency_key,
+            # (Optionally carry actor/policy_ctx through meta if your adapters use them)
+            "actor": (req.actor.dict() if req.actor else None),
+            "policy_ctx": (req.policy_ctx.dict() if req.policy_ctx else None),
+        }
+        out = reg.dispatch(req.verb, req.args or {}, meta)
+
+        # Ensure tracing keys are present for clients
+        if isinstance(out, dict):
+            out.setdefault("correlation_id", correlation_id)
+            out.setdefault("idempotency_key", idempotency_key)
         return out
+
     except Exception as e:
         return _structured_error(
             str(e), correlation_id=correlation_id, idempotency_key=idempotency_key

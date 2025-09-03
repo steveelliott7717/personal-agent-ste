@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 import traceback
 import uuid
 import time
-import os
+import os as os
+import typing as t
 import json
 
 # --- add: async + db client for audit logs ---
@@ -23,8 +24,39 @@ from backend.registry.adapters.db_read import db_read_adapter
 from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
 from backend.registry.adapters.browser_adapter import browser_warmup_adapter
-
 from backend.registry.adapters.browser_adapter import browser_run_adapter
+
+_EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+_EMBED_COLUMN = "embedding_1536"
+
+
+# Postgres DSN (use the pooler if available)
+_DB_DSN = (
+    os.getenv("SUPABASE_DB_POOLER_URL")
+    or os.getenv("DATABASE_URL")
+    or os.getenv("SUPABASE_DB_URL")
+)
+
+_AGENT_LOGS_TABLE = os.getenv("AGENT_LOGS_TABLE", "public.agent_logs")
+
+
+def _pg_conn():
+    if not _DB_DSN:
+        raise RuntimeError(
+            "Missing SUPABASE_DB_URL / SUPABASE_DB_POOLER_URL / DATABASE_URL"
+        )
+    if psycopg is None:
+        raise RuntimeError("psycopg (v3) not installed")
+    return psycopg.connect(_DB_DSN)
+
+
+def _embed_query(text: str) -> t.List[float]:
+    # Reuse your existing OpenAI key from env
+    from openai import OpenAI
+
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    out = client.embeddings.create(model=_EMBED_MODEL, input=text)
+    return out.data[0].embedding
 
 
 # Heuristic: decide if we should escalate from http.fetch -> browser.run
@@ -93,27 +125,6 @@ def _web_smart_get(
 ) -> Dict[str, Any]:
     """
     Try http.fetch first (fast). If blocked/empty/JS-only, escalate to browser.run.
-    Args:
-      {
-        "url": "...",
-        # optional shared knobs passed to both layers:
-        "timeout_ms": 15000,
-        "timeout_total_ms": 30000,         # honored by browser.run
-        "user_agent": "...",
-        "user_agent_pool": [...],
-        "accept_language_pool": [...],     # http.fetch only
-        "rate_limit": {"per_host": {...}}, # both
-        "jitter": {...},                   # browser.run only
-        "locale_pool": [...],              # browser.run only
-        "viewport": {...},                 # browser.run only
-        "ua_rotate_per": "run"|"host",     # browser.run only
-        # browser extras:
-        "wait_until": "domcontentloaded",
-        "save_dir": "downloads",
-        "return_html": True
-      }
-    Returns:
-      Same envelope style as adapters: {"ok": bool, "result": {...}, "error": {...}}
     """
     url = (args.get("url") or "").strip()
     if not url:
@@ -139,29 +150,36 @@ def _web_smart_get(
             "jitter": True,
         },
         "redirect": args.get("redirect") or {"policy": "follow", "max": 5},
+        # >>> IMPORTANT: respect allow/deny so your allowlist doesn't block <<<
+        "allow_hosts": args.get("allow_hosts"),
+        "deny_hosts": args.get("deny_hosts"),
     }
 
     http_out = registry.dispatch("http.fetch", http_args, meta)
     if not http_out.get("ok"):
-        # Hard fail on fetch → go straight to browser
         reason = (
             f"http.fetch.error:{(http_out.get('error') or {}).get('code','unknown')}"
         )
         return _smart_escalate_browser(registry, args, meta, reason, http_out)
 
-    status = int(http_out.get("result", {}).get("status", 0))
-    body = http_out.get("result", {}).get("body")
-    headers = http_out.get("result", {}).get("headers") or {}
+    hres = http_out.get("result") or {}
+    status = int(hres.get("status", 0))
+    # Some builds put body in 'body', others already decode to 'text'
+    body = hres.get("body", hres.get("text"))
+    headers = hres.get("headers") or {}
 
     need, why = _needs_browser(status, body, headers)
     if not need:
-        # Return the http result but normalize a text body field for convenience
-        text_body = _to_text(body)
-        res = dict(http_out)
-        res["result"] = dict(http_out.get("result", {}))
-        res["result"]["text"] = text_body
-        res["result"]["source"] = "http.fetch"
-        return res
+        return {
+            "ok": True,
+            "result": {
+                "source": "http.fetch",
+                "status": status,
+                "url": hres.get("final_url") or hres.get("url") or url,
+                "headers": headers,
+                "text": _to_text(body),
+            },
+        }
 
     # ---------- Escalate: browser.run ----------
     return _smart_escalate_browser(registry, args, meta, why, http_out)
@@ -174,7 +192,6 @@ def _smart_escalate_browser(
     reason: str,
     http_out: Dict[str, Any],
 ) -> Dict[str, Any]:
-    # Minimal scripted flow: goto → (optional) wait → capture HTML + optional screenshot
     steps = [
         {"goto": args["url"], "wait_until": args.get("wait_until", "domcontentloaded")},
         {"wait_for": {"state": "load"}},
@@ -208,19 +225,34 @@ def _smart_escalate_browser(
     }
 
     br_out = registry.dispatch("browser.run", br_args, meta)
-    # Annotate result with provenance & reason
     if br_out.get("ok"):
-        r = dict(br_out)
-        r["result"] = dict(br_out.get("result", {}))
-        r["result"]["source"] = "browser.run"
-        r["result"]["escalated_from"] = {
-            "verb": "http.fetch",
-            "reason": reason,
-            "http_status": (http_out.get("result") or {}).get("status"),
+        # Flatten: the browser adapter returns {"ok": True, "result": {...}}
+        brow = br_out.get("result") or {}
+        inner = brow.get("result") or brow  # support both shapes
+        return {
+            "ok": True,
+            "result": {
+                "source": "browser.run",
+                "escalated_from": {
+                    "verb": "http.fetch",
+                    "reason": reason,
+                    "http_status": (http_out.get("result") or {}).get("status"),
+                    "http_error": (
+                        (http_out.get("error") or {}).get("code")
+                        if not http_out.get("ok")
+                        else None
+                    ),
+                },
+                "status": inner.get("status"),
+                "url": inner.get("url"),
+                "title": inner.get("title"),
+                "html_len": inner.get("html_len"),
+                "html": inner.get("html"),
+                "events": inner.get("events"),
+                "downloads": inner.get("downloads"),
+            },
         }
-        return r
 
-    # Both paths failed → return browser error, include http.fetch summary for debugging
     return {
         "ok": False,
         "error": br_out.get("error")
@@ -231,6 +263,214 @@ def _smart_escalate_browser(
             "http_status": (http_out.get("result") or {}).get("status"),
         },
     }
+
+
+# =============================
+# Repo verbs (search / file / neighbors / map)
+# =============================
+
+
+def _repo_search(args, meta):
+    """
+    Args:
+      query: str (required)
+      k: int = 12
+      path_prefix: str | None
+      min_score: float | None  (cosine similarity 0..1)
+      embed_column: str | None (override env EMBED_COLUMN for this call)
+    Returns:
+      {chunks:[{id,path,start_line,end_line,content,score}], used_model, used_column, k}
+    """
+    q = (args.get("query") or "").strip()
+    if not q:
+        return {
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "query is required"},
+        }
+
+    k = int(args.get("k", 12))
+    path_prefix = args.get("path_prefix")
+    min_score = args.get("min_score")
+    embed_col = args.get("embed_column") or _EMBED_COLUMN
+
+    emb = _embed_query(q)
+
+    # psycopg3: use %s placeholders; escape literal % as %%
+    sql = f"""
+      select id, path, start_line, end_line, content,
+             1 - ({embed_col} <=> %s::vector) as score
+      from public.repo_chunks
+      where (%s::text is null or path like %s || '%%')
+        and {embed_col} is not null
+      order by {embed_col} <=> %s::vector
+      limit %s
+    """
+
+    rows = []
+    with _pg_conn() as conn, conn.cursor() as cur:
+        # emb used twice (SELECT and ORDER BY)
+        cur.execute(sql, (emb, path_prefix, path_prefix, emb, k))
+        for rid, path, s, e, content, score in cur.fetchall():
+            if min_score is not None and float(score) < float(min_score):
+                continue
+            rows.append(
+                {
+                    "id": int(rid),
+                    "path": path,
+                    "start_line": int(s),
+                    "end_line": int(e),
+                    "content": content,
+                    "score": float(score),
+                }
+            )
+
+    return {
+        "chunks": rows,
+        "used_model": _EMBED_MODEL,
+        "used_column": embed_col,
+        "k": k,
+    }
+
+
+def _repo_neighbors(args, meta):
+    """
+    Args:
+      id: int (chunk id)   (required)
+      pad: int = 120       (lines before/after)
+    Returns:
+      {neighbors:[{id,path,start_line,end_line,content}], pad}
+    """
+    cid = args.get("id")
+    if cid is None:
+        return {
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "id is required"},
+        }
+    pad = int(args.get("pad", 120))
+
+    sql = """
+      with base as (
+        select path, start_line, end_line
+        from public.repo_chunks
+        where id = %s
+      )
+      select c.id, c.path, c.start_line, c.end_line, c.content
+      from base b
+      join public.repo_chunks c on c.path = b.path
+      where c.start_line between greatest(1, b.start_line - %s)
+                             and (b.end_line + %s)
+      order by c.start_line
+    """
+
+    rows = []
+    with _pg_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (cid, pad, pad))
+        for rid, path, s, e, content in cur.fetchall():
+            rows.append(
+                {
+                    "id": int(rid),
+                    "path": path,
+                    "start_line": int(s),
+                    "end_line": int(e),
+                    "content": content,
+                }
+            )
+
+    return {"neighbors": rows, "pad": pad}
+
+
+def _repo_file(args, meta):
+    """
+    Reconstruct a file's content by concatenating its chunks from public.repo_chunks (or repo_memory).
+    Args:
+      path: str (required)
+      prefer_table: "repo_chunks" | "repo_memory"  (optional; default "repo_chunks")
+    Returns:
+      {path, content, line_count, source_table}
+    """
+    path = args.get("path")
+    if not path:
+        return {
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "path is required"},
+        }
+
+    source_table = "public.repo_chunks"
+    if args.get("prefer_table") == "repo_memory":
+        source_table = "public.repo_memory"
+
+    sql = f"""
+      select start_line, end_line, content
+      from {source_table}
+      where path = %s
+      order by start_line asc
+    """
+
+    parts = []
+    last_end = 0
+    with _pg_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, (path,))
+        rows = cur.fetchall()
+        if not rows:
+            return {
+                "ok": False,
+                "error": {"code": "NotFound", "message": f"no chunks for: {path}"},
+            }
+        for s, e, content in rows:
+            if last_end and s and (s > last_end + 1):
+                parts.append("\n" * (s - (last_end + 1)))
+            parts.append(content or "")
+            last_end = int(e) if e is not None else last_end
+
+    full = "".join(parts)
+    line_count = full.count("\n") + 1 if full else 0
+    return {
+        "path": path,
+        "content": full,
+        "line_count": line_count,
+        "source_table": source_table,
+    }
+
+
+def _repo_map(args, meta):
+    """
+    Fast TOC using chunk line ranges (since repo_files has no content).
+    Returns:
+      {dirs:[{top_dir, files, loc}], sample_entrypoints:[paths]}
+    """
+    # LOC by summing (end_line - start_line + 1) per file from repo_chunks
+    sql_dirs = """
+      with per_file as (
+        select path, sum((end_line - start_line + 1)) as loc
+        from public.repo_chunks
+        group by path
+      )
+      select split_part(path,'/',1) as top_dir,
+             count(*) as files,
+             sum(loc)::bigint as loc
+      from per_file
+      group by 1
+      order by loc desc;
+    """
+
+    sql_entry = """
+      select distinct path
+      from public.repo_chunks
+      where path ~ '(?i)(^|/)(main\\.py|api\\.py|app\\.py|wsgi\\.py|asgi\\.py|__init__\\.py|.*registry.*\\.py|.*adapter.*\\.py|.*orchestrator.*\\.py)'
+      order by path asc
+      limit 100;
+    """
+
+    with _pg_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql_dirs)
+        dirs = [
+            {"top_dir": r[0], "files": int(r[1]), "loc": int(r[2])}
+            for r in cur.fetchall()
+        ]
+        cur.execute(sql_entry)
+        entry = [r[0] for r in cur.fetchall()]
+
+    return {"dirs": dirs, "sample_entrypoints": entry}
 
 
 # -----------------------------
@@ -400,12 +640,6 @@ _AUDIT_ENABLED = os.getenv("REGISTRY_AUDIT_LOGS", "1").lower() not in {
     "false",
     "no",
 }
-_AGENT_LOGS_TABLE = os.getenv("AGENT_LOGS_TABLE", "public.agent_logs")
-_DB_DSN = (
-    os.getenv("SUPABASE_DB_POOLER_URL")
-    or os.getenv("DATABASE_URL")
-    or os.getenv("SUPABASE_DB_URL")
-)
 
 
 def _prepare_safe_json(obj):
@@ -824,3 +1058,8 @@ class CapabilityRegistry:
         self.register(
             "web.smart_get", lambda args, meta: _web_smart_get(self, args, meta)
         )
+        # Repo verbs
+        self.register("repo.search", _repo_search)
+        self.register("repo.file", _repo_file)
+        self.register("repo.neighbors", _repo_neighbors)
+        self.register("repo.map", _repo_map)
