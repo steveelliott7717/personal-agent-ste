@@ -463,7 +463,7 @@ def _repo_file(args, meta):
             parts.append(content or "")
             last_end = int(e) if e is not None else last_end
 
-    full = "".join(parts)
+    full = "\n".join(parts)
     line_count = full.count("\n") + 1 if full else 0
     # The adapter should return the raw payload. The dispatcher wraps it.
     return {
@@ -823,7 +823,6 @@ def _repo_patch_apply(args, meta):
     """
     import re
     import subprocess
-    import tempfile
     from pathlib import Path
 
     patch_text = args.get("patch_text")
@@ -890,7 +889,7 @@ def _repo_patch_apply(args, meta):
                 "ok": False,
                 "error": {
                     "code": "PathsNotAllowed",
-                    "message": f"Patch touches paths outside allowed_paths.",
+                    "message": "Patch touches paths outside allowed_paths.",
                     "details": {
                         "paths": disallowed,
                         "allowed_paths": sorted(allowed_paths),
@@ -906,7 +905,7 @@ def _repo_patch_apply(args, meta):
                     "ok": False,
                     "error": {
                         "code": "ForbiddenPattern",
-                        "message": f"Patch contains forbidden pattern.",
+                        "message": "Patch contains forbidden pattern.",
                         "details": {"pattern": pat},
                     },
                 }

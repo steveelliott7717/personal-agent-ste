@@ -557,12 +557,6 @@ def run_update_pipeline(change_spec: Dict[str, Any]) -> Dict[str, Any]:
             prompt_parts.append(
                 f"\nHere is the full original content of `{path}`:\n{file_text}"
             )
-            executor_input = {
-                "file_path": path,
-                "file_content": file_text,
-                "intent": span.get("intent"),
-                "context_snippets": context_snippets,
-            }
             executor_result = run_llm_agent(
                 agent_slug="repo_updater_executor",
                 user_text="\n".join(prompt_parts),
