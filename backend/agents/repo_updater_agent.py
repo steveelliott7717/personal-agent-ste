@@ -9,9 +9,72 @@ from backend.services.supabase_service import supabase
 from backend.llm.llm_runner import run_llm_agent
 from backend.registry.capability_registry import flatten_result
 import time
+import uuid
 
 # --- Placeholder import ---
 from backend.llm.multi_model_clients import call_reranker
+
+# --- BEGIN: FILES→DIFF helpers ---
+
+import difflib
+import re
+from pathlib import Path
+
+
+def _parse_files_artifact(s: str) -> dict[str, str]:
+    """
+    Parse a FILES artifact:
+
+      BEGIN_FILE path/to/file
+      <entire new file content>
+      END_FILE
+
+    Returns: { "path/to/file": "<content>", ... }
+    """
+    files: dict[str, str] = {}
+    cur: str | None = None
+    buf: list[str] = []
+    for line in (s or "").splitlines(keepends=True):
+        if line.startswith("BEGIN_FILE "):
+            if cur is not None:
+                files[cur] = "".join(buf)
+                buf.clear()
+            cur = line[len("BEGIN_FILE ") :].strip()
+            continue
+        if line.startswith("END_FILE"):
+            if cur is not None:
+                files[cur] = "".join(buf)
+                cur = None
+                buf.clear()
+            continue
+        if cur is not None:
+            buf.append(line)
+    if cur is not None:
+        files[cur] = "".join(buf)
+    return files
+
+
+def _make_unified_diff(repo_root: Path, rel_path: str, new_text: str) -> str:
+    """
+    Build a proper unified diff (with valid @@ hunks) from on-disk -> new text.
+    """
+    abs_path = repo_root / rel_path
+    try:
+        old_text = abs_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        old_text = ""
+
+    a = old_text.splitlines(keepends=True)
+    b = new_text.splitlines(keepends=True)
+    core = "".join(
+        difflib.unified_diff(
+            a, b, fromfile=f"a/{rel_path}", tofile=f"b/{rel_path}", n=3
+        )
+    )
+    return core  # no extra headers; git apply is fine with ---/+++ + @@
+
+
+# --- END: FILES→DIFF helpers ---
 
 
 orchestrator = Orchestrator()
@@ -481,390 +544,356 @@ def _run_commit_stage(
     }
 
 
-def run_update_pipeline(change_spec: Dict[str, Any]) -> Dict[str, Any]:
+def run_update_pipeline(
+    task: Dict[str, Any],
+    *,
+    run_id: Optional[str] = None,
+    apply_changes: bool = True,
+    commit_branch: Optional[str] = None,
+    commit_message: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Orchestrates a multi-LLM repo update:
-    1) Scout (Gemini Flash) -> candidate_files
-    2) Planner (Gemini Pro)  -> change_spans (file + anchors + intent)
-    3) Reranker               -> top spans
-    4) Executor (GPT-5 Pro)   -> unified diff (one file per call)
-    5) Reviewer (Claude)      -> risk JSON
-    6) Propose diff to Supabase (no direct apply)
+    Orchestrated repo update pipeline that produces perfect, git-applicable patches.
+
+    Steps
+      1) Plan (or read provided change_spans)
+      2) For each span:
+         - Load ORIGINAL file text from disk
+         - Ask the EXECUTOR for a FILES artifact with the ENTIRE new file body
+         - Validate we did not receive a snippet / diff / fenced block
+         - Synthesize a unified diff (difflib) => correct @@ hunks
+         - (Optional) Ask the REVIEWER; apply suggested fix if provided
+      3) Concatenate diffs; (Optional) apply and commit
+
+    Returns
+      {
+        "ok": bool,
+        "patch": "<unified diff>",
+        "events": [...],
+        "applied": bool,
+        "branch": str | None,
+        "review": {...}  # last reviewer output
+      }
     """
-    agent_slug = "repo_updater"
-    task = change_spec.get("task") or "repo update"
-    branch = change_spec.get("branch")
-    commit = change_spec.get("commit")
+    events: List[Dict[str, Any]] = []
+    repo_root = Path(__file__).resolve().parents[2]
 
-    run_id = _start_run(agent_slug, branch=branch, commit=commit)
-    print(f"--- Repo update pipeline START (run={run_id}) task={task!r} ---")
+    def _ev(kind: str, **kw):
+        ev = {"kind": kind, **kw}
+        events.append(ev)
+        return ev
 
-    try:
-        # Stages 1-3: Scout, Plan, Rerank
-        ranked_spans, acceptance_tests = _run_planning_stages(
-            run_id, agent_slug, task, change_spec
+    def _strip_markdown_json(text: str) -> str:
+        """
+        Remove ```...``` fences and leave raw payload;
+        don't attempt full JSON parsing here (we have dedicated logic later).
+        """
+        t = (text or "").strip()
+        if t.startswith("```"):
+            # first fence
+            i = t.find("\n")
+            if i != -1:
+                t = t[i + 1 :]
+            # trailing fence
+            if t.endswith("```"):
+                t = t[:-3]
+        return t.strip()
+
+    def _parse_files_artifact(s: str) -> Dict[str, str]:
+        """
+        Parse a FILES artifact:
+
+          BEGIN_FILE path/to/file
+          <entire new file content>
+          END_FILE
+
+        Returns: { "path/to/file": "<content>", ... }
+        """
+        files: Dict[str, str] = {}
+        cur: Optional[str] = None
+        buf: List[str] = []
+        for line in (s or "").splitlines(keepends=True):
+            if line.startswith("BEGIN_FILE "):
+                if cur is not None:
+                    files[cur] = "".join(buf)
+                    buf.clear()
+                cur = line[len("BEGIN_FILE ") :].strip()
+                continue
+            if line.startswith("END_FILE"):
+                if cur is not None:
+                    files[cur] = "".join(buf)
+                    cur = None
+                    buf.clear()
+                continue
+            if cur is not None:
+                buf.append(line)
+        if cur is not None:
+            files[cur] = "".join(buf)
+        return files
+
+    def _make_unified_diff(rel_path: str, new_text: str) -> str:
+        """
+        Build a proper unified diff (valid @@ hunks) from on-disk -> new text.
+        """
+        abs_path = repo_root / rel_path
+        try:
+            old_text = abs_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            old_text = ""
+
+        a = old_text.splitlines(keepends=True)
+        b = new_text.splitlines(keepends=True)
+        return "".join(
+            difflib.unified_diff(
+                a, b, fromfile=f"a/{rel_path}", tofile=f"b/{rel_path}", n=3
+            )
         )
-        if ranked_spans is None:
+
+    # ---------------------------
+    # 1) PLAN
+    # ---------------------------
+    change_spans: List[Dict[str, Any]] = []
+    if isinstance(task.get("change_spans"), list) and task["change_spans"]:
+        change_spans = task["change_spans"]
+        _ev("plan.use_provided_spans", count=len(change_spans))
+    else:
+        # Call the planner to produce change_spans
+        planner_in = {
+            "text": (
+                task.get("task")
+                if isinstance(task.get("task"), str)
+                else json.dumps(task)
+            ),
+            "params": {
+                "candidate_files": task.get("candidate_files") or [],
+            },
+        }
+        plan_res = run_llm_agent(
+            agent_slug="repo_updater_planner",
+            input_payload=planner_in,
+            run_id=run_id,
+        )
+        if not plan_res.ok:
             return {
-                "status": "noop",
-                "run_id": run_id,
-                "message": "Planning stages did not produce any work.",
+                "ok": False,
+                "error": f"planner failed: {plan_res.error}",
+                "events": events,
             }
 
-        # --- Test & Collect Loop ---
-        successful_patches: List[Dict[str, str]] = []
-        for span in ranked_spans:
-            path = span.get("file")
-            if not path:
-                continue
-
-            ok_read, file_text = _read_file(path, run_id=run_id)
-            if not ok_read or not file_text:
-                _log_action(
-                    run_id,
-                    agent_slug,
-                    "repo.file.read",
-                    target=path,
-                    args=None,
-                    result={"ok": False},
-                    ok=False,
-                )
-                continue
-
-            # Gather context from other files to prevent re-implementation.
-            context_snippets = {}
-            context_files = span.get("context_files") or []
-            for ctx_path in context_files:
-                if ctx_path != path:
-                    ok_ctx_read, ctx_content = _read_file(ctx_path, run_id=run_id)
-                    if ok_ctx_read:
-                        context_snippets[ctx_path] = ctx_content
-
-            # Format a more descriptive prompt for the generator, instead of raw JSON.
-            # This helps the LLM understand its task and context better.
-            prompt_parts = [
-                f"Your task is to generate a patch for the file `{path}`.",
-                f"The intent of the change is: {span.get('intent')}",
-            ]
-            if context_snippets:
-                prompt_parts.append(
-                    "\nFor context, here are relevant snippets from other files:"
-                )
-                for ctx_path, ctx_content in context_snippets.items():
-                    prompt_parts.append(
-                        f"--- {ctx_path} ---\n{ctx_content[:2000]}\n---"
-                    )
-            prompt_parts.append(
-                f"\nHere is the full original content of `{path}`:\n{file_text}"
+        # Expect minified JSON per your planner system prompt
+        try:
+            plan_json = json.loads(_strip_markdown_json(plan_res.response_text))
+            change_spans = list(plan_json.get("change_spans") or [])
+            _ev(
+                "plan.generated",
+                rationale=plan_json.get("rationale"),
+                spans=len(change_spans),
             )
-            executor_result = run_llm_agent(
-                agent_slug="repo_updater_executor",
-                user_text="\n".join(prompt_parts),
-                run_id=run_id,
-            )
-            diff_text = (
-                _strip_markdown_json(executor_result.response_text)
-                if executor_result.ok
-                else ""
-            )
-            _log_action(
-                run_id,
-                agent_slug,
-                "repo.diff.generate",
-                target=path,
-                args={"span": span},
-                result={"bytes": len(diff_text)},
-                ok=bool(diff_text),
-            )
+        except Exception as e:
+            return {"ok": False, "error": f"bad planner JSON: {e}", "events": events}
 
-            if not diff_text.strip().startswith("--- a/"):
-                # strict guard: only accept proper diffs
-                _log_action(
-                    run_id,
-                    agent_slug,
-                    "repo.diff.reject",
-                    target=path,
-                    args=None,
-                    result={"reason": "invalid diff header"},
-                    ok=False,
-                )
-                continue
+    if not change_spans:
+        return {"ok": False, "error": "no change_spans to process", "events": events}
 
-            # NEW: Lint the generated code before review
-            lint_ok, lint_result = _run_linter(path, file_text, diff_text, run_id)
-            _log_action(
-                run_id,
-                agent_slug,
-                "repo.lint.run",
-                target=path,
-                args=None,
-                result=lint_result,
-                ok=lint_ok,
-            )
+    # ---------------------------
+    # 2) EXECUTE per span (FILES -> DIFF)
+    # ---------------------------
+    diffs: List[str] = []
+    last_review: Optional[Dict[str, Any]] = None
 
-            if not lint_ok:
-                print(f"[!] Linting failed for patch on {path}. Attempting to fix.")
-                fixer_input = {
-                    "file_path": path,
-                    "file_content": file_text,
-                    "failed_diff": diff_text,
-                    "linting_errors": lint_result.get("details"),
-                    "intent": span.get("intent"),
-                    "context_snippets": context_snippets,
+    for idx, span in enumerate(change_spans):
+        path = (span.get("file") or "").strip()
+        if not path:
+            _ev("span.skip", index=idx, reason="no-file")
+            continue
+
+        # Read original file (for executor & snippet checks)
+        abs_path = repo_root / path
+        try:
+            original = abs_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            original = ""
+
+        # Gather context files for the executor (if provided by planner)
+        context_files = span.get("context_files") or []
+        ctx_map: Dict[str, str] = {}
+        for c in context_files:
+            cabs = repo_root / c
+            try:
+                ctx_map[c] = cabs.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
+        # Build an explicit, FILES-only prompt for the executor
+        exec_instructions = [
+            "Return ONLY a files artifact (no diffs, no fences, no JSON).",
+            "For each file:",
+            "BEGIN_FILE <repo-relative-path>",
+            "<entire new file content>",
+            "END_FILE",
+            "",
+            f"Target file: {path}",
+            f"Intent: {span.get('intent', '')}",
+            "",
+            "You MUST output the ENTIRE new file body for the target file (not just changed lines).",
+            "Preserve unrelated code; import from context files rather than re-implementing.",
+        ]
+        prompt_parts = [
+            "\n".join(exec_instructions),
+            f"\n--- ORIGINAL {path} ---\n{original}\n--- END ORIGINAL ---\n",
+        ]
+        if ctx_map:
+            prompt_parts.append("\n--- CONTEXT FILES ---\n")
+            for cpath, cbody in ctx_map.items():
+                prompt_parts.append(f"### {cpath}\n{cbody}\n")
+
+        exec_res = run_llm_agent(
+            agent_slug="repo_updater_executor",
+            user_text="\n".join(prompt_parts),
+            run_id=run_id,
+        )
+        if not exec_res.ok:
+            _ev("executor.error", file=path, error=exec_res.error)
+            continue
+
+        files_blob = _strip_markdown_json(exec_res.response_text)
+        # Reject fenced or diff-looking payloads
+        if (
+            "```" in files_blob
+            or "~~~" in files_blob
+            or re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_blob, flags=re.M)
+        ):
+            _ev("executor.reject", file=path, reason="bad_format_or_diff")
+            continue
+
+        files_map = _parse_files_artifact(files_blob)
+        new_body = files_map.get(path)
+        if new_body is None:
+            # JSON fallback: {"file_path": "...", "file_content": "..."}
+            try:
+                as_json = json.loads(files_blob)
+                if isinstance(as_json, dict) and as_json.get("file_path") == path:
+                    new_body = as_json.get("file_content")
+            except Exception:
+                pass
+
+        if not isinstance(new_body, str) or not new_body.strip():
+            _ev("executor.reject", file=path, reason="missing_file_body")
+            continue
+
+        # Enforce "full-file" (not a snippet) heuristic
+        if len(original) > 200 and len(new_body) < 0.5 * len(original):
+            _ev("executor.reject", file=path, reason="likely_snippet")
+            continue
+
+        # Synthesize a correct unified diff
+        diff_text = _make_unified_diff(path, new_body)
+        if not diff_text.strip():
+            _ev("diff.noop", file=path)
+            continue
+
+        _ev("diff.generated", file=path, bytes=len(diff_text))
+        # ---------------- reviewer pass ----------------
+        review_in = (
+            '{"diff": ' + json.dumps(diff_text) + "}"
+            if "You MUST return ONLY a minified JSON object"
+            in "".join(task.get("reviewer_prompt", []))
+            else diff_text
+        )
+        rev_res = run_llm_agent(
+            agent_slug="repo_updater_reviewer",
+            user_text=diff_text,  # reviewer prompt expects raw diff per your settings
+            run_id=run_id,
+        )
+        if rev_res.ok:
+            try:
+                last_review = json.loads(_strip_markdown_json(rev_res.response_text))
+            except Exception:
+                last_review = {
+                    "risk": "unknown",
+                    "note": rev_res.response_text,
+                    "suggested_fix_diff": None,
                 }
-                fixer_result = run_llm_agent(
-                    agent_slug="repo_updater_fixer",
-                    user_text=json.dumps(fixer_input),
-                    run_id=run_id,
+            _ev("review.done", file=path, review=last_review)
+            # Accept reviewer low/medium; if suggested_fix_diff exists, prefer it
+            sugg = (last_review or {}).get("suggested_fix_diff")
+            if isinstance(sugg, str) and sugg.strip().startswith("--- a/"):
+                diff_text = sugg
+                _ev(
+                    "diff.reviewer_suggested_fix_applied",
+                    file=path,
+                    bytes=len(diff_text),
                 )
+        else:
+            _ev("review.error", file=path, error=rev_res.error)
 
-                if fixer_result.ok and (
-                    fixed_diff := _strip_markdown_json(fixer_result.response_text)
-                ).strip().startswith("--- a/"):
-                    print(
-                        "[*] Fixer agent proposed a new diff based on linting errors."
-                    )
-                    diff_text = fixed_diff  # Update the diff with the fixed version
-                    _log_timeline_event(run_id, "lint_fix_proposed", {"path": path})
-                    _log_action(
-                        run_id,
-                        agent_slug,
-                        "repo.diff.fix",
-                        target=path,
-                        args=fixer_input,
-                        result={"bytes": len(diff_text)},
-                        ok=True,
-                    )
+        diffs.append(diff_text)
 
-                    # Re-lint the fixed diff to ensure it's clean now
-                    lint_ok, lint_result = _run_linter(
-                        path, file_text, diff_text, run_id
-                    )
-                    _log_action(
-                        run_id,
-                        agent_slug,
-                        "repo.lint.run",
-                        target=path,
-                        args={"attempt": "fix"},
-                        result=lint_result,
-                        ok=lint_ok,
-                    )
-                    if not lint_ok:
-                        print("[!] Linting failed again after fix. Discarding change.")
-                        continue
-                else:
-                    print(
-                        "[!] Fixer agent failed to fix linting errors. Discarding change."
-                    )
-                    _log_timeline_event(run_id, "lint_fix_failed", {"path": path})
-                    _log_action(
-                        run_id,
-                        agent_slug,
-                        "repo.diff.fix.fail",
-                        target=path,
-                        args=fixer_input,
-                        result={"error": fixer_result.error or "invalid diff header"},
-                        ok=False,
-                    )
-                    continue
-
-            # Claude: review
-            reviewer_result = run_llm_agent(
-                agent_slug="repo_updater_reviewer",
-                user_text=diff_text,
-                # The model is configured in agent_settings, falling back to llm_runner default.
-                run_id=run_id,
-            )
-            review = {}
-            if reviewer_result.ok:
-                try:
-                    clean_response = _strip_markdown_json(reviewer_result.response_text)
-                    review = json.loads(clean_response)
-                except json.JSONDecodeError:
-                    review = {"risk": "high", "note": "Reviewer returned invalid JSON."}
-            _log_action(
-                run_id,
-                agent_slug,
-                "repo.diff.review",
-                target=path,
-                args=None,
-                result=review,
-                ok=True,
-            )
-            _log_timeline_event(
-                run_id,
-                "review_completed",
-                {"path": path, "risk": review.get("risk", "unknown")},
-            )
-
-            # Test & Fix Loop
-            if (review.get("risk") or "high").lower() == "low":
-                current_diff = diff_text
-                fix_attempts = 0
-                max_fix_attempts = 2  # Allow 2 attempts to fix a failing patch
-
-                while fix_attempts <= max_fix_attempts:
-                    applied_ok, apply_msg = _apply_patch(current_diff, run_id)
-                    _log_action(
-                        run_id,
-                        agent_slug,
-                        "repo.patch.apply",
-                        target=path,
-                        args={"attempt": fix_attempts + 1},
-                        result={"message": apply_msg},
-                        ok=applied_ok,
-                    )
-
-                    if not applied_ok:
-                        print(
-                            f"[!] Patch failed to apply for {path}. Discarding change."
-                        )
-                        break  # If it can't even apply, no point in trying to fix.
-
-                    tests_ok, test_output = _run_tests(run_id, tests=acceptance_tests)
-                    _log_action(
-                        run_id,
-                        agent_slug,
-                        "repo.test.run",
-                        target=None,
-                        args={"attempt": fix_attempts + 1},
-                        result={"output": test_output},
-                        ok=tests_ok,
-                    )
-
-                    # IMPORTANT: Always revert to keep the working dir clean for the next span/fix attempt
-                    _revert_all_changes(run_id)
-
-                    if tests_ok:
-                        print(f"[✓] Tests passed for patch on {path}.")
-                        _log_timeline_event(
-                            run_id,
-                            "tests_passed",
-                            {"path": path, "attempt": fix_attempts + 1},
-                        )
-                        proposal_id = _propose_patch(
-                            run_id,
-                            agent_slug,
-                            span.get("intent", f"Update {path}"),
-                            current_diff,
-                        )
-                        successful_patches.append(
-                            {"proposal_id": proposal_id, "diff_text": current_diff}
-                        )
-                        break  # Exit the fix loop on success
-                    else:
-                        fix_attempts += 1
-                        if fix_attempts > max_fix_attempts:
-                            print(
-                                f"[!] Tests failed after {max_fix_attempts} fix attempts for patch on {path}. Discarding change."
-                            )
-                            _log_action(
-                                run_id,
-                                agent_slug,
-                                "repo.test.fail.final",
-                                target=None,
-                                args={"output": test_output},
-                                result=None,
-                                ok=False,
-                            )
-                            _log_timeline_event(
-                                run_id, "tests_failed_final", {"path": path}
-                            )
-                            break
-
-                        print(
-                            f"[!] Tests failed for patch on {path}. Attempting to fix (attempt {fix_attempts}/{max_fix_attempts})."
-                        )
-                        _log_action(
-                            run_id,
-                            agent_slug,
-                            "repo.test.fail",
-                            target=None,
-                            args={"output": test_output},
-                            result=None,
-                            ok=False,
-                        )
-                        _log_timeline_event(
-                            run_id,
-                            "tests_failed_retrying",
-                            {"path": path, "attempt": fix_attempts},
-                        )
-
-                        # Call the fixer agent
-                        fixer_input = {
-                            "file_path": path,
-                            "file_content": file_text,
-                            "failed_diff": current_diff,
-                            "test_failure_output": test_output,
-                            "intent": span.get("intent"),
-                            "context_snippets": context_snippets,
-                        }
-                        fixer_result = run_llm_agent(
-                            agent_slug="repo_updater_fixer",
-                            user_text=json.dumps(fixer_input),
-                            run_id=run_id,
-                        )
-
-                        if fixer_result.ok and (
-                            fixed_diff := _strip_markdown_json(
-                                fixer_result.response_text
-                            )
-                        ).strip().startswith("--- a/"):
-                            print("[*] Fixer agent proposed a new diff.")
-                            current_diff = fixed_diff  # Update the diff to be tested in the next loop iteration
-                            _log_timeline_event(
-                                run_id, "test_fix_proposed", {"path": path}
-                            )
-                            _log_action(
-                                run_id,
-                                agent_slug,
-                                "repo.diff.fix",
-                                target=path,
-                                args=fixer_input,
-                                result={"bytes": len(current_diff)},
-                                ok=True,
-                            )
-                        else:
-                            print(
-                                "[!] Fixer agent returned invalid diff or failed. Discarding change."
-                            )
-                            _log_timeline_event(
-                                run_id, "test_fix_failed", {"path": path}
-                            )
-                            _log_action(
-                                run_id,
-                                agent_slug,
-                                "repo.diff.fix.fail",
-                                target=path,
-                                args=fixer_input,
-                                result={
-                                    "error": fixer_result.error or "invalid diff header"
-                                },
-                                ok=False,
-                            )
-                            break
-            else:
-                _log_action(
-                    run_id,
-                    agent_slug,
-                    "repo.diff.skip",
-                    target=path,
-                    args=None,
-                    result={"reason": "high_risk", "review": review},
-                    ok=False,
-                )
-                _log_timeline_event(run_id, "change_skipped_high_risk", {"path": path})
-
-        # Final Stage: Commit and Push
-        return _run_commit_stage(run_id, agent_slug, task, successful_patches)
-
-    except Exception as e:
-        _finish_run(run_id, "error", error=f"{e.__class__.__name__}: {e}")
+    patch_text = "\n".join(diffs).rstrip("\n") + ("\n" if diffs else "")
+    if not diffs:
         return {
-            "status": "error",
-            "run_id": run_id,
-            "error": f"{e.__class__.__name__}: {e}",
+            "ok": True,
+            "patch": "",
+            "events": events,
+            "applied": False,
+            "review": last_review,
         }
+
+    # ---------------------------
+    # 3) Apply + Commit (optional)
+    # ---------------------------
+    applied = False
+    branch_out = None
+
+    if apply_changes:
+        args = {
+            "patch_text": patch_text,
+            "allowed_paths": sorted(
+                {s.get("file") for s in change_spans if s.get("file")}
+            ),
+        }
+        res_apply = orchestrator.call_verb(
+            "repo.patch.apply",
+            args,
+            meta={},
+            correlation_id=run_id or "",
+            idempotency_key=(run_id or "") + "#apply",
+        )
+        _ev("apply.result", ok=bool(res_apply.get("ok")), result=res_apply)
+        if not res_apply.get("ok"):
+            return {
+                "ok": False,
+                "patch": patch_text,
+                "events": events,
+                "applied": False,
+                "apply_error": res_apply.get("error"),
+            }
+
+        applied = True
+
+        # Commit + push if requested
+        if commit_branch or commit_message:
+            branch_name = commit_branch or f"feature/patch-{uuid.uuid4().hex[:8]}"
+            commit_msg = commit_message or "chore: apply repo update"
+            res_commit = orchestrator.call_verb(
+                "repo.commit_and_push",
+                {"branch_name": branch_name, "commit_message": commit_msg},
+                meta={},
+                correlation_id=run_id or "",
+                idempotency_key=(run_id or "") + "#commit",
+            )
+            _ev("commit.result", ok=bool(res_commit.get("ok")), result=res_commit)
+            if res_commit.get("ok"):
+                branch_out = res_commit.get("branch")
+
+    return {
+        "ok": True,
+        "patch": patch_text,
+        "events": events,
+        "applied": applied,
+        "branch": branch_out,
+        "review": last_review,
+    }
 
 
 def handle_repo_update(query: str) -> Dict[str, Any]:

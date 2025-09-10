@@ -1,9 +1,0 @@
-{
-    "task": "Import RequestLoggingMiddleware from backend.logging_utils and add it to the FastAPI app in backend/api.py.",
-    "candidate_files": [
-        "backend/api.py",
-        "backend/logging_utils.py"
-    ],
-    "branch": "feature/add-request-logging",
-    "commit": "HEAD"
-}

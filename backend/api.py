@@ -804,6 +804,9 @@ def repo_plan(payload: Dict[str, Any], request: Request):
     # ---------------------------
     # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
     # ---------------------------
+    # ---------------------------
+    # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
+    # ---------------------------
     if fmt == "patch":
         # Always ask generator for FILES, then synthesize a correct diff here
         files_art = generate_artifact_from_task(
@@ -815,28 +818,27 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             mode="files",
         )
 
-        # Normalize the reply: many generators set ok:false but still fill 'content'
-        files_text = ""
-        if isinstance(files_art, dict):
-            files_text = files_art.get("content") or ""  # prefer content when present
-            if not files_text and files_art.get("ok") is False:
-                # truly an error: bubble up error text if any
-                err = str(files_art.get("error") or files_art)
-                return PlainTextResponse(
-                    err, status_code=422, media_type="text/plain; charset=utf-8"
-                )
-        else:
-            # unexpected shape; treat as error
+        # Normalize reply: some pipelines set ok:false but still fill 'content'
+        if not isinstance(files_art, dict):
             return PlainTextResponse(
                 str(files_art), status_code=422, media_type="text/plain; charset=utf-8"
             )
 
-        # If the model unexpectedly sent a diff/fenced output, reject clearly
+        files_text = files_art.get("content") or ""
+        if not files_text:
+            # truly an error
+            err = str(files_art.get("error") or files_art)
+            return PlainTextResponse(
+                err, status_code=422, media_type="text/plain; charset=utf-8"
+            )
+
         files_text = (
             _enforce_trailing_lf_per_file(files_text)
             .replace("\r\n", "\n")
             .replace("\r", "\n")
         )
+
+        # Defensive: reject any diff/fenced output from the model
         if (
             re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_text, flags=re.M)
             or "```" in files_text
@@ -863,6 +865,24 @@ def repo_plan(payload: Dict[str, Any], request: Request):
 
         if not files:
             raise HTTPException(status_code=422, detail="No FILES artifacts found.")
+
+        # Reject likely *snippets*: if old file exists and the "new" body is much shorter,
+        # force the generator to resend full-file content instead of just the changed lines.
+        for rel, new_text in files.items():
+            p = Path(rel)
+            if p.exists():
+                try:
+                    old_text = p.read_text(encoding="utf-8")
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500, detail=f"Read failed for {rel}: {e}"
+                    )
+                # Heuristic: if old file is > 200 bytes and new_text is < 50% of it, it's probably a snippet.
+                if len(old_text) > 200 and len(new_text) < 0.5 * len(old_text):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"FILES artifact for {rel} appears truncated. The generator must return the ENTIRE new file content, not a snippet.",
+                    )
 
         # Build a proper unified diff from disk -> new file bodies
         chunks: list[str] = []

@@ -1,1 +1,0 @@
-"diff --git a/backend/api.py b/backend/api.py\nindex 0000000..0000000 100644\n--- a/backend/api.py\n+++ b/backend/api.py\n@@\n-from fastapi import FastAPI\n+from fastapi import FastAPI\n+from backend.logging_utils import RequestLoggingMiddleware\n@@\n-app = FastAPI()\n+app = FastAPI()\n+app.add_middleware(RequestLoggingMiddleware)\n"
