@@ -14,7 +14,6 @@ from backend.registry.capability_registry import CapabilityRegistry
 from dotenv import load_dotenv
 from functools import lru_cache
 import logging
-import json
 
 
 from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
@@ -45,7 +44,8 @@ from backend.models.messages import (
 # orchestrator (meta-agent)
 from backend.agents.orchestrator import Orchestrator
 from backend.agents.article_summarizer_agent import handle_article_summary
-from pydantic import BaseModel
+from backend.logging_utils import RequestLoggingMiddleware
+
 import json
 
 
@@ -150,6 +150,7 @@ class TraceMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(TraceMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 
 @app.on_event("startup")

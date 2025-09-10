@@ -1,0 +1,5 @@
+{
+  "branch_name": "feature/add-request-logging",
+  "commit_message": "feat: add RequestLoggingMiddleware to FastAPI app",
+  "patch_text": "{\"detail\":\"Not Found\"}"
+}

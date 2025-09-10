@@ -810,12 +810,22 @@ def _repo_deps_check(args, meta):
 
 def _repo_patch_apply(args, meta):
     """
-    Applies a unified diff patch to the local git repository.
+    Applies a unified diff patch to the local git repository with safety guards.
+
     Args:
       patch_text: str (required)
+      allowed_paths: list[str] (optional) - if provided, all headers must be within this set
+      forbidden_patterns: list[str] (optional) - regex patterns that must NOT appear in the diff
+
     Returns:
-      {ok: bool, message: str}
+      {ok: bool, message?: str, result?: {...}} on success
+      {ok: False, error: {code, message, details?}} on failure
     """
+    import re
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
     patch_text = args.get("patch_text")
     if not patch_text or not isinstance(patch_text, str):
         return {
@@ -823,59 +833,154 @@ def _repo_patch_apply(args, meta):
             "error": {"code": "BadRequest", "message": "patch_text is required"},
         }
 
+    # Optional constraints
+    allowed_paths = set(args.get("allowed_paths") or [])
+    forbidden_patterns = list(args.get("forbidden_patterns") or [])
+
+    # ---------- Format guards ----------
+    # Reject Markdown/code fences outright (prefer fail-fast over silent sanitation)
+    if (
+        patch_text.lstrip().startswith("```")
+        or "```" in patch_text
+        or "~~~" in patch_text
+    ):
+        return {
+            "ok": False,
+            "error": {
+                "code": "FencedOutput",
+                "message": "Patch contains Markdown/code fences. Provide a raw unified diff.",
+            },
+        }
+
+    # Diff must start with '--- a/<path>' as the very first non-whitespace chars
+    if not patch_text.startswith("--- a/"):
+        # Allow a single leading BOM or stray newline and retry the check
+        stripped = patch_text.lstrip("\ufeff\r\n\t ")
+        if not stripped.startswith("--- a/"):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "BadFormat",
+                    "message": "Diff must begin with unified-diff header '--- a/<path>' on the first line.",
+                },
+            }
+        patch_text = stripped
+
+    # ---------- Header / path validation ----------
+    def _diff_paths(diff: str) -> set[str]:
+        paths = set()
+        for line in diff.splitlines():
+            if line.startswith("--- a/"):
+                paths.add(line[6:].strip())
+            elif line.startswith("+++ b/"):
+                paths.add(line[6:].strip())
+        return paths
+
+    header_paths = _diff_paths(patch_text)
+    if not header_paths:
+        return {
+            "ok": False,
+            "error": {"code": "BadFormat", "message": "No unified-diff headers found."},
+        }
+
+    if allowed_paths:
+        disallowed = sorted(p for p in header_paths if p not in allowed_paths)
+        if disallowed:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "PathsNotAllowed",
+                    "message": f"Patch touches paths outside allowed_paths.",
+                    "details": {
+                        "paths": disallowed,
+                        "allowed_paths": sorted(allowed_paths),
+                    },
+                },
+            }
+
+    # ---------- Content policy checks ----------
+    for pat in forbidden_patterns:
+        try:
+            if re.search(pat, patch_text):
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "ForbiddenPattern",
+                        "message": f"Patch contains forbidden pattern.",
+                        "details": {"pattern": pat},
+                    },
+                }
+        except re.error as e:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "RegexError",
+                    "message": f"Invalid forbidden_patterns regex: {pat}",
+                    "details": str(e),
+                },
+            }
+
+    # ---------- Dry-run with git apply --check (p=1 then p=0) ----------
     project_root = Path(__file__).resolve().parents[2]
 
+    def _git_apply_check_stdin(patch: str) -> tuple[bool, str, int]:
+        last_err = ""
+        for p in (1, 0):
+            try:
+                subprocess.run(
+                    ["git", "apply", f"-p{p}", "--check", "-"],
+                    input=patch.encode("utf-8"),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=project_root,
+                    check=True,
+                )
+                return True, "ok", p
+            except subprocess.CalledProcessError as e:
+                last_err = e.stderr.decode("utf-8", errors="ignore") or str(e)
+        return False, last_err, -1
+
     try:
-        # Use a temporary file to hold the patch content
-        with tempfile.NamedTemporaryFile(
-            mode="w+", delete=False, suffix=".patch", cwd=project_root, encoding="utf-8"
-        ) as patch_file:
-            patch_file.write(patch_text)
-            patch_path = patch_file.name
-
-        # First, check if the patch can be applied cleanly without actually applying it
-        check_proc = subprocess.run(
-            ["git", "apply", "--check", patch_path],
-            capture_output=True,
-            text=True,
-            cwd=project_root,
-            check=False,
-        )
-
-        if check_proc.returncode != 0:
-            os.remove(patch_path)
+        ok, msg, strip_p = _git_apply_check_stdin(patch_text)
+        if not ok:
             return {
                 "ok": False,
                 "error": {
-                    "code": "PatchApplyCheckFailed",
-                    "message": "Patch does not apply cleanly.",
-                    "details": check_proc.stderr,
+                    "code": "GitApplyCheckFailed",
+                    "message": "git apply --check failed",
+                    "details": msg,
                 },
             }
 
-        # If the check passes, apply the patch for real
-        apply_proc = subprocess.run(
-            ["git", "apply", patch_path],
-            capture_output=True,
-            text=True,
+        # ---------- Apply for real ----------
+        subprocess.run(
+            ["git", "apply", f"-p{strip_p}", "-"],
+            input=patch_text.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             cwd=project_root,
-            check=False,
+            check=True,
         )
 
-        os.remove(patch_path)  # Clean up the temp file
+        return {
+            "ok": True,
+            "message": "Patch applied successfully.",
+            "result": {
+                "applied": True,
+                "strip_level": strip_p,
+                "paths": sorted(header_paths),
+            },
+        }
 
-        if apply_proc.returncode != 0:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "PatchApplyFailed",
-                    "message": "Failed to apply patch.",
-                    "details": apply_proc.stderr,
-                },
-            }
-
-        return {"ok": True, "message": "Patch applied successfully."}
-
+    except subprocess.CalledProcessError as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "GitApplyFailed",
+                "message": "git apply failed",
+                "details": e.stderr.decode("utf-8", errors="ignore") or str(e),
+            },
+        }
     except Exception as e:
         return {
             "ok": False,

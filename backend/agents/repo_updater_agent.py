@@ -531,15 +531,41 @@ def run_update_pipeline(change_spec: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 continue
 
-            # GPT-5 Pro: generate unified diff
+            # Gather context from other files to prevent re-implementation.
+            context_snippets = {}
+            context_files = span.get("context_files") or []
+            for ctx_path in context_files:
+                if ctx_path != path:
+                    ok_ctx_read, ctx_content = _read_file(ctx_path, run_id=run_id)
+                    if ok_ctx_read:
+                        context_snippets[ctx_path] = ctx_content
+
+            # Format a more descriptive prompt for the generator, instead of raw JSON.
+            # This helps the LLM understand its task and context better.
+            prompt_parts = [
+                f"Your task is to generate a patch for the file `{path}`.",
+                f"The intent of the change is: {span.get('intent')}",
+            ]
+            if context_snippets:
+                prompt_parts.append(
+                    "\nFor context, here are relevant snippets from other files:"
+                )
+                for ctx_path, ctx_content in context_snippets.items():
+                    prompt_parts.append(
+                        f"--- {ctx_path} ---\n{ctx_content[:2000]}\n---"
+                    )
+            prompt_parts.append(
+                f"\nHere is the full original content of `{path}`:\n{file_text}"
+            )
             executor_input = {
                 "file_path": path,
                 "file_content": file_text,
                 "intent": span.get("intent"),
+                "context_snippets": context_snippets,
             }
             executor_result = run_llm_agent(
                 agent_slug="repo_updater_executor",
-                user_text=json.dumps(executor_input),
+                user_text="\n".join(prompt_parts),
                 run_id=run_id,
             )
             diff_text = (
@@ -590,6 +616,7 @@ def run_update_pipeline(change_spec: Dict[str, Any]) -> Dict[str, Any]:
                     "failed_diff": diff_text,
                     "linting_errors": lint_result.get("details"),
                     "intent": span.get("intent"),
+                    "context_snippets": context_snippets,
                 }
                 fixer_result = run_llm_agent(
                     agent_slug="repo_updater_fixer",
@@ -776,6 +803,7 @@ def run_update_pipeline(change_spec: Dict[str, Any]) -> Dict[str, Any]:
                             "failed_diff": current_diff,
                             "test_failure_output": test_output,
                             "intent": span.get("intent"),
+                            "context_snippets": context_snippets,
                         }
                         fixer_result = run_llm_agent(
                             agent_slug="repo_updater_fixer",
