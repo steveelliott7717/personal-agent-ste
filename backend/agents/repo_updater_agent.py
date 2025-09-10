@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from backend.agents.orchestrator import Orchestrator
 from backend.services.supabase_service import supabase
 from backend.llm.llm_runner import run_llm_agent
+from backend.registry.capability_registry import flatten_result
 import time
 
 # --- Placeholder import ---
@@ -277,7 +278,8 @@ def _read_file(path: str, run_id: str) -> Tuple[bool, str]:
             idempotency_key=idempotency_key,
         )
         if isinstance(res, dict) and res.get("ok"):
-            return True, (res.get("result") or {}).get("content") or ""
+            flat_res = flatten_result(res)
+            return True, flat_res.get("content") or ""
     except Exception as e:
         print(f"[_read_file] Error reading file {path}: {e}")
         pass

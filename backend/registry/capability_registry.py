@@ -1433,6 +1433,17 @@ class Envelope(TypedDict, total=False):
     idempotency_key: str
 
 
+def flatten_result(envelope: Dict[str, Any] | None) -> Dict[str, Any]:
+    """
+    Safely unwraps nested 'result' keys from dispatcher/adapter envelopes.
+    Handles `None`, `{result: {...}}`, and `{result: {result: {...}}}`.
+    """
+    if not isinstance(envelope, dict):
+        return {}
+    outer = envelope.get("result") or {}
+    return outer.get("result") if isinstance(outer, dict) else outer
+
+
 MetaDict = Dict[str, Any]
 
 

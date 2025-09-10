@@ -217,30 +217,6 @@ try:
 except Exception:
     route_request = None
 
-if route_request:
-
-    class RouteRequestBody(BaseModel):
-        query: str
-        user_id: str = "local-user"
-
-    # This is the new endpoint for the router agent.
-    # It's placed at the root of the API for easy access.
-    @app.post("/route", tags=["router"])
-    async def handle_route_request(body: RouteRequestBody):
-        """
-        Main entry point for the intelligent router agent.
-        It receives a query and uses an LLM to dispatch it to the
-        best-suited agent, like your new repo_updater_agent.
-        """
-        try:
-            agent, result = route_request(query=body.query, user_id=body.user_id)
-            # The router_agent returns a tuple (agent_name, result_payload)
-            # We wrap this in a consistent response.
-            return {"ok": True, "agent": agent, "response": result}
-        except Exception as e:
-            logging.exception("Router agent failed")
-            raise HTTPException(status_code=500, detail=str(e))
-
 
 # ---------------------------
 # Health / version (keep both plain /health and BASE health)
@@ -304,6 +280,28 @@ def _structured_error(
 # Agents API
 # ---------------------------
 agents_router = APIRouter(prefix=f"{BASE}/api/agents", tags=["agents"])
+
+if route_request:
+
+    class RouteRequestBody(BaseModel):
+        query: str
+        user_id: str = "local-user"
+
+    @agents_router.post("/route")
+    async def handle_route_request(body: RouteRequestBody):
+        """
+        Main entry point for the intelligent router agent.
+        It receives a query and uses an LLM to dispatch it to the
+        best-suited agent.
+        """
+        try:
+            agent, result = route_request(query=body.query, user_id=body.user_id)
+            # The router_agent returns a tuple (agent_name, result_payload)
+            # We wrap this in a consistent response.
+            return {"ok": True, "agent": agent, "response": result}
+        except Exception as e:
+            logging.exception("Router agent failed")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @agents_router.get("/verbs")

@@ -59,6 +59,7 @@ def handle_article_summary(query: str) -> Dict[str, Any]:
             "details": "Please provide a URL to summarize.",
         }
 
+    # Use the capability registry to fetch and parse the article content
     logger.info(f"[article_summarizer] Fetching content from {url}")
     fetch_result = registry.dispatch("web.smart_get", {"url": url}, {})
 
@@ -73,11 +74,14 @@ def handle_article_summary(query: str) -> Dict[str, Any]:
             "details": error_details,
         }
 
-    content_result = fetch_result.get("result") or {}
-    article_text = content_result.get("text") or ""
+    # >>> Flatten the nested shape: { ok, result: { ok?, result: {...} } }
+    outer = fetch_result.get("result") or {}
+    content_result = outer.get("result") or outer  # handle both shapes
+
+    article_text = (content_result.get("text") or "").strip()
     article_title = content_result.get("title")
 
-    if not article_text.strip():
+    if not article_text:
         logger.warning(f"[article_summarizer] Could not extract text from {url}")
         return {
             "ok": False,

@@ -347,7 +347,17 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
             _start = time.time()
             # Use the rewritten query if the LLM provided one, otherwise use the original.
             # This allows the router to pass more structured input to agents.
+            # Use the rewritten query if provided; otherwise use the original.
             query_for_agent = decision.get("rewrite") or query
+            print(f"[router] passing to {agent}: {query_for_agent!r}")
+
+            # Preserve URLs from the original if the rewrite dropped them.
+            def _has_url(s: str) -> bool:
+                return isinstance(s, str) and ("http://" in s or "https://" in s)
+
+            if _has_url(query) and not _has_url(query_for_agent):
+                query_for_agent = query  # keep the user’s original text with the URL
+
             result = reg[agent]["handle"](query_for_agent)
             _latency_ms = int((time.time() - _start) * 1000)
 
