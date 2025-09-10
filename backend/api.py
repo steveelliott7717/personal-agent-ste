@@ -749,6 +749,59 @@ def _synthesize_unified_patch(files: dict[str, str]) -> str:
     return "".join(chunks)
 
 
+# --- BEGIN: anti-destructive synthesis helpers ---
+def _deletion_ratio(unified: str) -> float:
+    removed = kept = 0
+    for ln in unified.splitlines():
+        if ln.startswith(("--- ", "+++ ", "@@ ")):
+            continue
+        if ln.startswith("-") and not ln.startswith("---"):
+            removed += 1
+        elif ln.startswith((" ", "+")):
+            kept += 1
+    denom = (removed + kept) or 1
+    return removed / denom
+
+
+def _merge_preserving(original: str, model_new: str) -> str:
+    """
+    Build a 'safe' merged text that preserves original and ONLY inserts
+    additions present in model_new. This yields a minimal, non-destructive update.
+    """
+    merged: list[str] = []
+    a = original.splitlines(keepends=True)
+    b = model_new.splitlines(keepends=True)
+    for tag in difflib.ndiff(a, b):
+        if tag.startswith("  "):  # unchanged
+            merged.append(tag[2:])
+        elif tag.startswith("+ "):  # addition from model
+            merged.append(tag[2:])
+        # ignore all '- ' deletions
+    if merged and not merged[-1].endswith("\n"):
+        merged[-1] = merged[-1] + "\n"
+    return "".join(merged)
+
+
+def _synthesize_diff_from_disk(rel: str, new_text: str) -> str:
+    p = Path(rel)
+    try:
+        old_text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        old_text = ""
+    return "".join(
+        difflib.unified_diff(
+            old_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=f"a/{rel}",
+            tofile=f"b/{rel}",
+            n=3,
+        )
+    )
+
+
+# --- END: anti-destructive synthesis helpers ---
+
+
 repo_router = APIRouter(prefix=f"{BASE}/api/repo", tags=["repo"])
 
 
@@ -882,7 +935,32 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         )
         patch = empty or f"--- a/{first}\n+++ b/{first}\n"
 
-    # Return as a patch; use text/x-patch to make it clear to clients
+    # ---- auto-repair if destructive (>20% deletions overall) ----
+    if _deletion_ratio(patch) > 0.20:
+        repaired_chunks: list[str] = []
+        for rel in sorted(files.keys()):
+            new_text = files[rel]
+            p = Path(rel)
+            try:
+                original = p.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                original = ""
+            # preserve-only merge: original + additions
+            merged = _merge_preserving(original, new_text)
+            repaired = _synthesize_diff_from_disk(rel, merged)
+            if repaired.strip():
+                repaired_chunks.append(repaired)
+        repaired_patch = "".join(repaired_chunks)
+        if not repaired_patch.strip() or _deletion_ratio(repaired_patch) > 0.20:
+            raise HTTPException(
+                status_code=422,
+                detail="Destructive patch detected; executor must preserve content and only insert anchors.",
+            )
+        return PlainTextResponse(
+            repaired_patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
+        )
+
+    # Non-destructive: return synthesized patch
     return PlainTextResponse(
         patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
     )

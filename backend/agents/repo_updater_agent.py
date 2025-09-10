@@ -649,6 +649,32 @@ def run_update_pipeline(
             )
         )
 
+    def _is_destructive(diff_text: str, thr: float = 0.20) -> bool:
+        removed = kept = 0
+        for ln in diff_text.splitlines():
+            if ln.startswith(("--- ", "+++ ", "@@ ")):
+                continue
+            if ln.startswith("-") and not ln.startswith("---"):
+                removed += 1
+            elif ln.startswith((" ", "+")):
+                kept += 1
+        denom = (removed + kept) or 1
+        return (removed / denom) > thr
+
+    def _merge_preserving_only_additions(original: str, model_new: str) -> str:
+        # identical logic to api.py -> _merge_preserving
+        merged: list[str] = []
+        a = original.splitlines(keepends=True)
+        b = model_new.splitlines(keepends=True)
+        for tag in difflib.ndiff(a, b):
+            if tag.startswith("  "):
+                merged.append(tag[2:])
+            elif tag.startswith("+ "):
+                merged.append(tag[2:])
+        if merged and not merged[-1].endswith("\n"):
+            merged[-1] = merged[-1] + "\n"
+        return "".join(merged)
+
     # ---------------------------
     # 1) PLAN
     # ---------------------------
@@ -799,6 +825,16 @@ def run_update_pipeline(
         if not diff_text.strip():
             _ev("diff.noop", file=path)
             continue
+
+            # Auto-repair if destructive: keep original and insert only model additions, then re-diff
+        if _is_destructive(diff_text, 0.20):
+            merged_body = _merge_preserving_only_additions(original, new_body)
+            repaired_diff = _make_unified_diff(path, merged_body)
+            if repaired_diff.strip() and not _is_destructive(repaired_diff, 0.20):
+                _ev("diff.repaired", file=path, note="converted to insert-only")
+                diff_text = repaired_diff
+            else:
+                _ev("diff.repair_failed", file=path)
 
         _ev("diff.generated", file=path, bytes=len(diff_text))
         # ---------------- reviewer pass ----------------
