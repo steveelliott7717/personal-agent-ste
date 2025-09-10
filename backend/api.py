@@ -686,6 +686,39 @@ def _parse_files_artifact(s: str) -> dict[str, str]:
     return files
 
 
+def _parse_files_artifact(s: str) -> dict[str, str]:
+    """
+    Parse a FILES artifact:
+
+      BEGIN_FILE path/to/file
+      <entire new file content>
+      END_FILE
+
+    Returns: { "path/to/file": "<content>", ... }
+    """
+    files: dict[str, str] = {}
+    cur: str | None = None
+    buf: list[str] = []
+    for line in s.splitlines(keepends=True):
+        if line.startswith("BEGIN_FILE "):
+            if cur is not None:
+                files[cur] = "".join(buf)
+                buf.clear()
+            cur = line[len("BEGIN_FILE ") :].strip()
+            continue
+        if line.startswith("END_FILE"):
+            if cur is not None:
+                files[cur] = "".join(buf)
+                cur = None
+                buf.clear()
+            continue
+        if cur is not None:
+            buf.append(line)
+    if cur is not None:
+        files[cur] = "".join(buf)
+    return files
+
+
 def _synthesize_unified_patch(files: dict[str, str]) -> str:
     """
     Build a proper unified diff with valid @@ hunk ranges from on-disk content -> new file bodies.
@@ -767,7 +800,7 @@ def repo_plan(payload: Dict[str, Any], request: Request):
     # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
     # ---------------------------
     if fmt == "patch":
-        # Always ask the generator for FILES, then build a correct diff here.
+        # Always ask generator for FILES, then synthesize a correct diff here
         files_art = generate_artifact_from_task(
             task,
             repo=repo,
@@ -782,9 +815,11 @@ def repo_plan(payload: Dict[str, Any], request: Request):
                 status_code=422,
                 media_type="text/plain; charset=utf-8",
             )
-        files_text = files_art.get("content", "") or ""
+
+        files_text = files_art.get("content") or ""
         files_text = _enforce_trailing_lf_per_file(files_text)
-        # Reject any diff-looking output defensively
+
+        # Defensive: reject any diff/fenced output from the model
         if (
             re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_text, flags=re.M)
             or "```" in files_text
@@ -795,26 +830,45 @@ def repo_plan(payload: Dict[str, Any], request: Request):
                 detail="Generator returned a diff/fenced output. Expected FILES artifact (BEGIN_FILE/END_FILE).",
             )
 
+        # Parse FILES artifact; accept a minimal JSON fallback too
         files = _parse_files_artifact(files_text)
         if not files:
-            # Minimal JSON fallback: {"file_path": "...", "file_content": "..."}
             try:
-                as_json = json.loads(files_text)
+                obj = json.loads(files_text)
                 if (
-                    isinstance(as_json, dict)
-                    and "file_path" in as_json
-                    and "file_content" in as_json
+                    isinstance(obj, dict)
+                    and "file_path" in obj
+                    and "file_content" in obj
                 ):
-                    files = {as_json["file_path"]: as_json["file_content"]}
+                    files = {obj["file_path"]: obj["file_content"]}
             except Exception:
                 pass
 
         if not files:
             raise HTTPException(status_code=422, detail="No FILES artifacts found.")
 
-        patch = _synthesize_unified_patch(files)
+        # Build a proper unified diff from disk -> new file bodies
+        chunks: list[str] = []
+        for rel, new_text in files.items():
+            p = Path(rel)
+            try:
+                old_text = p.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                old_text = ""
+            diff = difflib.unified_diff(
+                old_text.splitlines(keepends=True),
+                new_text.splitlines(keepends=True),
+                fromfile=f"a/{rel}",
+                tofile=f"b/{rel}",
+                n=3,
+            )
+            chunk = "".join(diff)
+            if chunk:
+                chunks.append(chunk)
+
+        patch = "".join(chunks)
         if not patch.strip():
-            # no-op vs disk; return empty but valid header for first file
+            # no-op vs disk; emit a harmless diff header for the first file
             first = next(iter(files))
             empty = "".join(
                 difflib.unified_diff(
