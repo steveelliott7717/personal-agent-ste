@@ -16,7 +16,7 @@ from functools import lru_cache
 import logging
 
 
-from fastapi import FastAPI, HTTPException, Header, APIRouter, Request, Query
+from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     HTMLResponse,
@@ -771,7 +771,9 @@ def repo_plan(payload: Dict[str, Any], request: Request):
     session = payload.get("session")
     thread_n = payload.get("thread_n")
 
-    fmt = request.query_params.get("format") or request.headers.get("X-RMS-Format")
+    fmt = (request.query_params.get("format") or "files").strip().lower()
+    if fmt not in {"files", "patch"}:
+        raise HTTPException(status_code=400, detail="format must be 'files' or 'patch'")
 
     # ---------------------------
     # 1) Return raw FILES artifact (unchanged)
@@ -895,22 +897,135 @@ def repo_plan(payload: Dict[str, Any], request: Request):
     return out
 
 
-@repo_router.post("/update")
-def repo_update_direct(payload: Dict[str, Any]):
+@repo_router.post("/plan")
+def repo_plan(payload: Dict[str, Any], request: Request):
     """
-    Directly invoke the repo_updater_agent pipeline, bypassing the main router.
-    This is useful for CI/CD or direct calls when the intent is already known.
-    The payload should be the ChangeSpec JSON object.
+    Plan a repo change and return either:
+      - format=files  -> FILES artifact (BEGIN_FILE/END_FILE)
+      - format=patch  -> a unified diff synthesized on the server from FILES
+    This avoids model-made diffs (which often have malformed @@ hunks).
     """
-    try:
-        # The handler expects a JSON string, so we'll dump the payload.
-        query_string = json.dumps(payload)
-        result = handle_repo_update(query_string)  # This was correct, re-affirming
-        return {"ok": True, **result}
-    except Exception as e:
-        # Use the existing logger
-        logging.exception("Direct repo_update failed")
-        raise HTTPException(status_code=500, detail=str(e))
+    # ---- inputs / defaults ----
+    task = (payload or {}).get("task")
+    if not task:
+        raise HTTPException(status_code=400, detail="Missing 'task'")
+
+    repo = payload.get("repo", "personal-agent-ste")
+    branch = payload.get("branch", "main")
+    prefix = payload.get("path_prefix", "backend/")
+    k = int(payload.get("k", 12))
+    session = payload.get("session")
+    thread_n = payload.get("thread_n")
+
+    fmt = (request.query_params.get("format") or "files").strip().lower()
+    if fmt not in {"files", "patch"}:
+        raise HTTPException(status_code=400, detail="format must be 'files' or 'patch'")
+
+    # ---- common: always ask the generator for FILES first ----
+    def _get_files_artifact_text() -> str:
+        """
+        Call your artifact generator in 'files' mode and return the raw FILES text.
+        """
+        files_art = generate_artifact_from_task(
+            task,
+            repo=repo,
+            branch=branch,
+            path_prefix=prefix,
+            session=session,
+            mode="files",
+        )
+        if not files_art.get("ok"):
+            return str(files_art.get("content", ""))  # error text for client
+        txt = files_art.get("content", "") or ""
+        txt = _enforce_trailing_lf_per_file(txt)
+        # normalize EOL
+        txt = txt.replace("\r\n", "\n").replace("\r", "\n")
+        return txt
+
+    # ---------------------------
+    # 1) Return raw FILES artifact (unchanged)
+    # ---------------------------
+    if fmt == "files":
+        files_text = _get_files_artifact_text()
+        # If the model returned a diff/fenced output by mistake, surface a clear 422
+        if (
+            re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_text, flags=re.M)
+            or "```" in files_text
+            or "~~~" in files_text
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Generator returned a diff/fenced output. Expected FILES artifact (BEGIN_FILE/END_FILE).",
+            )
+        return PlainTextResponse(
+            files_text.rstrip("\n") + "\n", media_type="text/plain; charset=utf-8"
+        )
+
+    # ---------------------------
+    # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
+    # ---------------------------
+    # fmt == "patch"
+    files_text = _get_files_artifact_text()
+    if (
+        re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_text, flags=re.M)
+        or "```" in files_text
+        or "~~~" in files_text
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Generator returned a diff/fenced output. Expected FILES artifact (BEGIN_FILE/END_FILE).",
+        )
+
+    # Parse FILES artifact; accept a minimal JSON fallback too
+    files = _parse_files_artifact(files_text)
+    if not files:
+        try:
+            obj = json.loads(files_text)
+            if isinstance(obj, dict) and "file_path" in obj and "file_content" in obj:
+                files = {obj["file_path"]: obj["file_content"]}
+        except Exception:
+            pass
+
+    if not files:
+        raise HTTPException(status_code=422, detail="No FILES artifacts found.")
+
+    # Build a proper unified diff from disk -> new file bodies
+    chunks: list[str] = []
+    # deterministic ordering (useful for tests)
+    for rel in sorted(files.keys()):
+        new_text = files[rel]
+        p = Path(rel)
+        try:
+            old_text = p.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            old_text = ""
+        # Use difflib for correct @@ hunk ranges
+        diff = difflib.unified_diff(
+            old_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=f"a/{rel}",
+            tofile=f"b/{rel}",
+            n=3,
+        )
+        chunk = "".join(diff)
+        if chunk:
+            chunks.append(chunk)
+
+    patch = "".join(chunks)
+    if not patch.strip():
+        # no-op vs disk; emit a harmless diff header for the first file
+        first = next(iter(sorted(files.keys())))
+        empty = "".join(
+            difflib.unified_diff(
+                [], [], fromfile=f"a/{first}", tofile=f"b/{first}", n=3
+            )
+        )
+        patch = empty or f"--- a/{first}\n+++ b/{first}\n"
+
+    # Return as a patch; use text/x-patch to make it clear to clients
+    return PlainTextResponse(
+        patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
+    )
 
 
 @repo_router.get("/runs/{run_id}/timeline")
