@@ -16,7 +16,7 @@ from functools import lru_cache
 import logging
 
 
-from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
+from fastapi import FastAPI, HTTPException, Header, APIRouter, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     HTMLResponse,
@@ -47,6 +47,8 @@ from backend.agents.article_summarizer_agent import handle_article_summary
 from backend.logging_utils import RequestLoggingMiddleware
 
 import json
+import difflib
+import re
 
 
 # ⬇️ moved in from main.py so nothing is lost
@@ -651,6 +653,64 @@ def _enforce_trailing_lf_per_file(artifact: str) -> str:
     return ("".join(out)).rstrip("\n") + "\n"
 
 
+def _parse_files_artifact(s: str) -> dict[str, str]:
+    """
+    Parse a FILES artifact:
+
+      BEGIN_FILE path/to/file
+      <entire new file content>
+      END_FILE
+
+    Returns: { "path/to/file": "<content>", ... }
+    """
+    files: dict[str, str] = {}
+    cur: str | None = None
+    buf: list[str] = []
+    for line in s.splitlines(keepends=True):
+        if line.startswith("BEGIN_FILE "):
+            if cur is not None:
+                files[cur] = "".join(buf)
+                buf.clear()
+            cur = line[len("BEGIN_FILE ") :].strip()
+            continue
+        if line.startswith("END_FILE"):
+            if cur is not None:
+                files[cur] = "".join(buf)
+                cur = None
+                buf.clear()
+            continue
+        if cur is not None:
+            buf.append(line)
+    if cur is not None:
+        files[cur] = "".join(buf)
+    return files
+
+
+def _synthesize_unified_patch(files: dict[str, str]) -> str:
+    """
+    Build a proper unified diff with valid @@ hunk ranges from on-disk content -> new file bodies.
+    Uses difflib.unified_diff so `git apply --check` will pass.
+    """
+    chunks: list[str] = []
+    for rel, new_text in files.items():
+        p = Path(rel)
+        try:
+            old_text = p.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            old_text = ""
+        diff = difflib.unified_diff(
+            old_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=f"a/{rel}",
+            tofile=f"b/{rel}",
+            n=3,
+        )
+        chunk = "".join(diff)
+        if chunk:
+            chunks.append(chunk)
+    return "".join(chunks)
+
+
 repo_router = APIRouter(prefix=f"{BASE}/api/repo", tags=["repo"])
 
 
@@ -661,6 +721,12 @@ def repo_health():
 
 @repo_router.post("/plan")
 def repo_plan(payload: Dict[str, Any], request: Request):
+    """
+    Plan a repo change and return either:
+      - format=files  -> FILES artifact (BEGIN_FILE/END_FILE)
+      - format=patch  -> a unified diff synthesized on the server from FILES
+    This avoids model-made diffs (which often have malformed @@ hunks).
+    """
     task = (payload or {}).get("task")
     if not task:
         raise HTTPException(status_code=400, detail="Missing 'task'")
@@ -674,6 +740,9 @@ def repo_plan(payload: Dict[str, Any], request: Request):
 
     fmt = request.query_params.get("format") or request.headers.get("X-RMS-Format")
 
+    # ---------------------------
+    # 1) Return raw FILES artifact (unchanged)
+    # ---------------------------
     if fmt == "files":
         art = generate_artifact_from_task(
             task,
@@ -694,70 +763,71 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
         return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
+    # ---------------------------
+    # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
+    # ---------------------------
     if fmt == "patch":
-        art = generate_artifact_from_task(
+        # Always ask the generator for FILES, then build a correct diff here.
+        files_art = generate_artifact_from_task(
             task,
             repo=repo,
             branch=branch,
             path_prefix=prefix,
             session=session,
-            mode="patch",
+            mode="files",
         )
-        patch = art.get("patch") or art.get("content") or ""
-        # The patch sanitizer was moved to backend.services.rms
-        from backend.services.rms import _extract_patch_from_text
+        if not files_art.get("ok"):
+            return PlainTextResponse(
+                str(files_art.get("content", "")),
+                status_code=422,
+                media_type="text/plain; charset=utf-8",
+            )
+        files_text = files_art.get("content", "") or ""
+        files_text = _enforce_trailing_lf_per_file(files_text)
+        # Reject any diff-looking output defensively
+        if (
+            re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_text, flags=re.M)
+            or "```" in files_text
+            or "~~~" in files_text
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Generator returned a diff/fenced output. Expected FILES artifact (BEGIN_FILE/END_FILE).",
+            )
 
-        sanitized_patch = _extract_patch_from_text(patch)
-        msg = "Invalid patch structure"
-
-        if not sanitized_patch:
-            # best-effort PowerShell fixer if available
-            from pathlib import Path as _Path  # noqa: F811
-            import subprocess
-            import tempfile
-
+        files = _parse_files_artifact(files_text)
+        if not files:
+            # Minimal JSON fallback: {"file_path": "...", "file_content": "..."}
             try:
-                with tempfile.NamedTemporaryFile(
-                    "w", encoding="utf-8", delete=False
-                ) as f_in:
-                    f_in.write(patch)  # use original patch for fixing
-                    in_path = f_in.name
-                out_path = in_path + ".out.patch"
-                script = (
-                    _Path(__file__).resolve().parents[1] / "tools" / "fix-patch.ps1"
-                )
-                if script.exists():
-                    proc = subprocess.run(
-                        [
-                            "pwsh",
-                            "-NoProfile",
-                            "-ExecutionPolicy",
-                            "Bypass",
-                            "-File",
-                            str(script),
-                            "-InPath",
-                            in_path,
-                            "-OutPath",
-                            out_path,
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=20,
-                    )
-                    if proc.returncode == 0 and _Path(out_path).exists():
-                        fixed_patch = _Path(out_path).read_text(encoding="utf-8")
-                        sanitized_patch = _extract_patch_from_text(fixed_patch)
-                        if not sanitized_patch:
-                            msg = "Invalid patch structure after fix attempt"
+                as_json = json.loads(files_text)
+                if (
+                    isinstance(as_json, dict)
+                    and "file_path" in as_json
+                    and "file_content" in as_json
+                ):
+                    files = {as_json["file_path"]: as_json["file_content"]}
             except Exception:
                 pass
 
-        if not sanitized_patch:
-            raise HTTPException(status_code=422, detail=f"Invalid patch: {msg}")
-        return PlainTextResponse(
-            sanitized_patch, media_type="text/x-patch; charset=utf-8"
-        )
+        if not files:
+            raise HTTPException(status_code=422, detail="No FILES artifacts found.")
 
+        patch = _synthesize_unified_patch(files)
+        if not patch.strip():
+            # no-op vs disk; return empty but valid header for first file
+            first = next(iter(files))
+            empty = "".join(
+                difflib.unified_diff(
+                    [], [], fromfile=f"a/{first}", tofile=f"b/{first}", n=3
+                )
+            )
+            patch = empty or f"--- a/{first}\n+++ b/{first}\n"
+
+        return PlainTextResponse(patch, media_type="text/plain; charset=utf-8")
+
+    # ---------------------------
+    # 3) Fallback: propose changes (unchanged)
+    # ---------------------------
     out = propose_changes(
         task,
         repo=repo,
