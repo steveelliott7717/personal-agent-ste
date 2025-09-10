@@ -1010,15 +1010,34 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             if repaired.strip():
                 repaired_chunks.append(repaired)
 
-        repaired_patch = "".join(repaired_chunks)
-        if not repaired_patch.strip() or _deletion_ratio(repaired_patch) > 0.20:
-            raise HTTPException(
-                status_code=422,
-                detail="Destructive patch detected; executor must preserve content and only insert anchors.",
+            repaired_patch = "".join(repaired_chunks)
+
+            # If the repo is already up-to-date (repair produced no textual change),
+            # return a harmless no-op diff header instead of 422.
+            if not repaired_patch.strip():
+                first = next(iter(sorted(files.keys())))
+                empty = "".join(
+                    difflib.unified_diff(
+                        [], [], fromfile=f"a/{first}", tofile=f"b/{first}", n=3
+                    )
+                )
+                return PlainTextResponse(
+                    (empty or f"--- a/{first}\n+++ b/{first}\n").rstrip("\n") + "\n",
+                    media_type="text/x-patch; charset=utf-8",
+                )
+
+            # If the repaired patch still looks destructive, block it.
+            if _deletion_ratio(repaired_patch) > 0.20:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Destructive patch detected; executor must preserve content and only insert anchors.",
+                )
+
+            # Otherwise, return the repaired, non-destructive patch.
+            return PlainTextResponse(
+                repaired_patch.rstrip("\n") + "\n",
+                media_type="text/x-patch; charset=utf-8",
             )
-        return PlainTextResponse(
-            repaired_patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
-        )
 
         # Non-destructive path: return the patch as-is
     return PlainTextResponse(
