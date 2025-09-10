@@ -851,19 +851,39 @@ def _repo_patch_apply(args, meta):
             },
         }
 
-    # Diff must start with '--- a/<path>' as the very first non-whitespace chars
-    if not patch_text.startswith("--- a/"):
-        # Allow a single leading BOM or stray newline and retry the check
-        stripped = patch_text.lstrip("\ufeff\r\n\t ")
-        if not stripped.startswith("--- a/"):
+    # Allow a git-style preamble; find the first unified header
+    lines = patch_text.splitlines()
+    start_idx = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("--- a/"):
+            start_idx = i
+            break
+
+    if start_idx is None:
+        # still fenced?
+        if (
+            patch_text.lstrip().startswith("```")
+            or "```" in patch_text
+            or "~~~" in patch_text
+        ):
             return {
                 "ok": False,
                 "error": {
-                    "code": "BadFormat",
-                    "message": "Diff must begin with unified-diff header '--- a/<path>' on the first line.",
+                    "code": "FencedOutput",
+                    "message": "Patch contains Markdown/code fences",
                 },
             }
-        patch_text = stripped
+        return {
+            "ok": False,
+            "error": {
+                "code": "BadFormat",
+                "message": "No unified-diff headers (--- a/...) found",
+            },
+        }
+
+    # Keep preamble (git apply is fine) OR slice to unified part only:
+    # unified_only = "\n".join(lines[start_idx:]) + "\n"
+    # patch_text = unified_only
 
     # ---------- Header / path validation ----------
     def _diff_paths(diff: str) -> set[str]:
