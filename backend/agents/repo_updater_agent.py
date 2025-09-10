@@ -726,18 +726,26 @@ def run_update_pipeline(
 
         # Build an explicit, FILES-only prompt for the executor
         exec_instructions = [
+            # Output contract
             "Return ONLY a files artifact (no diffs, no fences, no JSON).",
             "For each file:",
             "BEGIN_FILE <repo-relative-path>",
             "<entire new file content>",
             "END_FILE",
             "",
+            # Preservation + anchors
+            "PRESERVE ALL EXISTING CONTENT unless explicitly instructed to remove it.",
+            "Make minimal edits ONLY at these anchors:",
+            "- Insert the import 'from backend.logging_utils import RequestLoggingMiddleware' immediately AFTER the line 'from fastapi import FastAPI'.",
+            "- Insert 'app.add_middleware(RequestLoggingMiddleware)' immediately AFTER the first occurrence of the line 'app = FastAPI()'.",
+            "",
+            "Do NOT restructure, reformat, or delete unrelated code.",
+            "Do NOT drop existing imports, routes, routers, or config.",
+            "",
             f"Target file: {path}",
             f"Intent: {span.get('intent', '')}",
-            "",
-            "You MUST output the ENTIRE new file body for the target file (not just changed lines).",
-            "Preserve unrelated code; import from context files rather than re-implementing.",
         ]
+
         prompt_parts = [
             "\n".join(exec_instructions),
             f"\n--- ORIGINAL {path} ---\n{original}\n--- END ORIGINAL ---\n",
@@ -802,7 +810,7 @@ def run_update_pipeline(
         )
         rev_res = run_llm_agent(
             agent_slug="repo_updater_reviewer",
-            user_text=diff_text,  # reviewer prompt expects raw diff per your settings
+            user_text=review_in,  # reviewer prompt expects raw diff per your settings
             run_id=run_id,
         )
         if rev_res.ok:

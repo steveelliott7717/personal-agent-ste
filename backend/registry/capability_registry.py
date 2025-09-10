@@ -920,6 +920,50 @@ def _repo_patch_apply(args, meta):
         )
         return f"diff --git a/{path_rel} b/{path_rel}\n{core}"
 
+    def _deletion_ratio(unified: str) -> float:
+        """
+        Roughly estimate how destructive a unified diff is by counting removed vs kept/added lines.
+        """
+        removed = 0
+        kept = 0
+        for ln in unified.splitlines():
+            # skip headers / hunk markers
+            if ln.startswith("--- ") or ln.startswith("+++ ") or ln.startswith("@@ "):
+                continue
+            if ln.startswith("-") and not ln.startswith("---"):
+                removed += 1
+            elif ln.startswith(" ") or ln.startswith("+"):
+                kept += 1
+        denom = (removed + kept) or 1
+        return removed / denom
+
+    def _offenders_by_file(unified: str, threshold: float = 0.20) -> list[str]:
+        """
+        Return list of files whose individual diffs delete more than `threshold` of touched lines.
+        Splits the patch at '--- a/<path>' boundaries and computes a ratio per file.
+        """
+        offenders: list[str] = []
+        current = None
+        buf: list[str] = []
+
+        def flush():
+            nonlocal current, buf
+            if current and buf:
+                r = _deletion_ratio("\n".join(buf))
+                if r > threshold:
+                    offenders.append(f"{current} ({r:.0%} deletions)")
+            current, buf = None, []
+
+        for ln in unified.splitlines():
+            if ln.startswith("--- a/"):
+                flush()
+                current = ln[6:].strip()
+                buf = [ln]
+            else:
+                buf.append(ln)
+        flush()
+        return offenders
+
     # -------- args --------
     patch_text = args.get("patch_text")
     files_payload = args.get("files")  # [{"path": "...", "content": "..."}]
@@ -969,6 +1013,15 @@ def _repo_patch_apply(args, meta):
             return {"ok": True, "result": {"status": "no-op", "touched": []}}
 
         patch = "\n".join(synthesized)
+
+        # Reject destructive patches (per-file >20% deletions) before applying
+        bad = _offenders_by_file(patch, threshold=0.20)
+        if bad:
+            return _err(
+                "DestructivePatch",
+                "Patch deletes too much content in one or more files.",
+                {"offenders": bad, "threshold": "20%"},
+            )
 
         # Check then apply
         chk = subprocess.run(
@@ -1058,6 +1111,15 @@ def _repo_patch_apply(args, meta):
                     f"Invalid forbidden_patterns regex: {pat}",
                     {"details": str(e)},
                 )
+
+        # Reject destructive patches (per-file >20% deletions) before applying
+        bad = _offenders_by_file(unified, threshold=0.20)
+        if bad:
+            return _err(
+                "DestructivePatch",
+                "Patch deletes too much content in one or more files.",
+                {"offenders": bad, "threshold": "20%"},
+            )
 
         # Check then apply
         chk = subprocess.run(
