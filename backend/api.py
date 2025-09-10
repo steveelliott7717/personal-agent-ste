@@ -801,6 +801,9 @@ def repo_plan(payload: Dict[str, Any], request: Request):
     # ---------------------------
     # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
     # ---------------------------
+    # ---------------------------
+    # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
+    # ---------------------------
     if fmt == "patch":
         # Always ask generator for FILES, then synthesize a correct diff here
         files_art = generate_artifact_from_task(
@@ -811,17 +814,29 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             session=session,
             mode="files",
         )
-        if not files_art.get("ok"):
+
+        # Normalize the reply: many generators set ok:false but still fill 'content'
+        files_text = ""
+        if isinstance(files_art, dict):
+            files_text = files_art.get("content") or ""  # prefer content when present
+            if not files_text and files_art.get("ok") is False:
+                # truly an error: bubble up error text if any
+                err = str(files_art.get("error") or files_art)
+                return PlainTextResponse(
+                    err, status_code=422, media_type="text/plain; charset=utf-8"
+                )
+        else:
+            # unexpected shape; treat as error
             return PlainTextResponse(
-                str(files_art.get("content", "")),
-                status_code=422,
-                media_type="text/plain; charset=utf-8",
+                str(files_art), status_code=422, media_type="text/plain; charset=utf-8"
             )
 
-        files_text = files_art.get("content") or ""
-        files_text = _enforce_trailing_lf_per_file(files_text)
-
-        # Defensive: reject any diff/fenced output from the model
+        # If the model unexpectedly sent a diff/fenced output, reject clearly
+        files_text = (
+            _enforce_trailing_lf_per_file(files_text)
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
         if (
             re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_text, flags=re.M)
             or "```" in files_text
@@ -851,7 +866,7 @@ def repo_plan(payload: Dict[str, Any], request: Request):
 
         # Build a proper unified diff from disk -> new file bodies
         chunks: list[str] = []
-        for rel, new_text in files.items():
+        for rel, new_text in sorted(files.items()):  # deterministic order
             p = Path(rel)
             try:
                 old_text = p.read_text(encoding="utf-8")
@@ -871,7 +886,7 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         patch = "".join(chunks)
         if not patch.strip():
             # no-op vs disk; emit a harmless diff header for the first file
-            first = next(iter(files))
+            first = next(iter(sorted(files.keys())))
             empty = "".join(
                 difflib.unified_diff(
                     [], [], fromfile=f"a/{first}", tofile=f"b/{first}", n=3
@@ -879,7 +894,9 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             )
             patch = empty or f"--- a/{first}\n+++ b/{first}\n"
 
-        return PlainTextResponse(patch, media_type="text/plain; charset=utf-8")
+        return PlainTextResponse(
+            patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
+        )
 
     # ---------------------------
     # 3) Fallback: propose changes (unchanged)
