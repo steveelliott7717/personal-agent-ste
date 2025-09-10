@@ -54,7 +54,6 @@ import re
 # ⬇️ moved in from main.py so nothing is lost
 from backend.routers import schema as schema_router
 from backend.agents.repo_agent import generate_artifact_from_task, propose_changes
-from backend.agents.repo_updater_agent import handle_repo_update
 
 # Load .env (Supabase keys, allowlists, etc.)
 load_dotenv()
@@ -663,34 +662,6 @@ app.include_router(debug_router)
 app.include_router(debug_router_nobase)
 
 
-# ---------------------------
-# ⬇️ REPO API (moved here from main.py)
-# ---------------------------
-def _enforce_trailing_lf_per_file(artifact: str) -> str:
-    t = artifact.replace("\r\n", "\n").replace("\r", "\n")
-    lines = t.split("\n")
-    out: list[str] = []
-    i = 0
-    L = len(lines)
-    while i < L:
-        if not lines[i].startswith("BEGIN_FILE "):
-            i += 1
-            continue
-        path = lines[i][len("BEGIN_FILE ") :].strip()
-        i += 1
-        body_lines: list[str] = []
-        while i < L and lines[i].strip() != "END_FILE":
-            body_lines.append(lines[i])
-            i += 1
-        if i >= L:
-            raise ValueError(f"Missing END_FILE for {path}")
-        i += 1
-        body = "\n".join(body_lines).replace("\r\n", "\n").replace("\r", "\n")
-        body = body.rstrip("\n") + "\n"
-        out.append(f"BEGIN_FILE {path}\n{body}END_FILE\n")
-    return ("".join(out)).rstrip("\n") + "\n"
-
-
 def _parse_files_artifact(s: str) -> dict[str, str]:
     """
     Parse a FILES artifact:
@@ -803,7 +774,10 @@ def _apply_request_logging_anchors(original: str, model_new: str) -> str | None:
     # 1) insert import after 'from fastapi import FastAPI'
     for ln in lines:
         out.append(ln)
-        if (not inserted_import) and ln.strip() == "from fastapi import FastAPI":
+        # Match combined import lines like: from fastapi import FastAPI, HTTPException, ...
+        if (not inserted_import) and re.match(
+            r"^from fastapi import .*FastAPI.*$", ln.strip()
+        ):
             out.append(import_line + "\n")
             inserted_import = True
 
@@ -816,10 +790,11 @@ def _apply_request_logging_anchors(original: str, model_new: str) -> str | None:
     seen_app = False
     for ln in updated.splitlines(keepends=True):
         out2.append(ln)
+        # Match app initializers with args, e.g. app = FastAPI(title="...", version=VERSION)
         if (
             (not inserted_mw)
             and (not seen_app)
-            and ln.strip().startswith("app = FastAPI()")
+            and ln.strip().startswith("app = FastAPI(")
         ):
             out2.append(mw_line + "\n")
             inserted_mw = True
@@ -851,6 +826,34 @@ def _synthesize_diff_from_disk(rel: str, new_text: str) -> str:
 # --- END: anti-destructive synthesis helpers ---
 
 
+# ---------------------------
+# ⬇️ REPO API (moved here from main.py)
+# ---------------------------
+def _enforce_trailing_lf_per_file(artifact: str) -> str:
+    t = artifact.replace("\r\n", "\n").replace("\r", "\n")
+    lines = t.split("\n")
+    out: list[str] = []
+    i = 0
+    L = len(lines)
+    while i < L:
+        if not lines[i].startswith("BEGIN_FILE "):
+            i += 1
+            continue
+        path = lines[i][len("BEGIN_FILE ") :].strip()
+        i += 1
+        body_lines: list[str] = []
+        while i < L and lines[i].strip() != "END_FILE":
+            body_lines.append(lines[i])
+            i += 1
+        if i >= L:
+            raise ValueError(f"Missing END_FILE for {path}")
+        i += 1
+        body = "\n".join(body_lines).replace("\r\n", "\n").replace("\r", "\n")
+        body = body.rstrip("\n") + "\n"
+        out.append(f"BEGIN_FILE {path}\n{body}END_FILE\n")
+    return ("".join(out)).rstrip("\n") + "\n"
+
+
 repo_router = APIRouter(prefix=f"{BASE}/api/repo", tags=["repo"])
 
 
@@ -874,10 +877,6 @@ def repo_plan(payload: Dict[str, Any], request: Request):
 
     repo = payload.get("repo", "personal-agent-ste")
     branch = payload.get("branch", "main")
-    prefix = payload.get("path_prefix", "backend/")
-    k = int(payload.get("k", 12))
-    session = payload.get("session")
-    thread_n = payload.get("thread_n")
 
     fmt = (request.query_params.get("format") or "files").strip().lower()
     if fmt not in {"files", "patch"}:
@@ -888,6 +887,9 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         """
         Call your artifact generator in 'files' mode and return the raw FILES text.
         """
+        prefix = payload.get("path_prefix", "backend/")
+        session = payload.get("session")
+
         files_art = generate_artifact_from_task(
             task,
             repo=repo,
@@ -1017,6 +1019,11 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         return PlainTextResponse(
             repaired_patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
         )
+
+        # Non-destructive path: return the patch as-is
+    return PlainTextResponse(
+        patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
+    )
 
 
 @repo_router.get("/runs/{run_id}/timeline")

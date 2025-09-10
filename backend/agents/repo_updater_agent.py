@@ -821,8 +821,43 @@ def run_update_pipeline(
 
         # Enforce "full-file" (not a snippet) heuristic
         if len(original) > 200 and len(new_body) < 0.5 * len(original):
-            _ev("executor.reject", file=path, reason="likely_snippet")
-            continue
+            # Try anchor-based synthesis instead of rejecting
+            anchor_merged = None
+            import_line = "from backend.logging_utils import RequestLoggingMiddleware"
+            mw_line = "app.add_middleware(RequestLoggingMiddleware)"
+            if path == "backend/api.py" and (
+                import_line in new_body or mw_line in new_body
+            ):
+                lines = original.splitlines(keepends=True)
+                out = []
+                inserted_import = import_line in original
+                for ln in lines:
+                    out.append(ln)
+                    if (not inserted_import) and re.match(
+                        r"^from fastapi import .*FastAPI.*$", ln.strip()
+                    ):
+                        out.append(import_line + "\n")
+                        inserted_import = True
+                updated = "".join(out)
+                out2 = []
+                seen_app = False
+                inserted_mw = mw_line in updated
+                for ln in updated.splitlines(keepends=True):
+                    out2.append(ln)
+                    if (
+                        (not inserted_mw)
+                        and (not seen_app)
+                        and ln.strip().startswith("app = FastAPI(")
+                    ):
+                        out2.append(mw_line + "\n")
+                        inserted_mw = True
+                        seen_app = True
+                anchor_merged = "".join(out2)
+            if anchor_merged:
+                new_body = anchor_merged
+            else:
+                _ev("executor.reject", file=path, reason="likely_snippet")
+                continue
 
         # Synthesize a correct unified diff
         diff_text = _make_unified_diff(path, new_body)
@@ -843,18 +878,18 @@ def run_update_pipeline(
                 out = []
                 inserted_import = import_line in original
                 inserted_mw = mw_line in original
-                # insert import after FastAPI import
+                # insert import after combined FastAPI import line
                 for ln in lines:
                     out.append(ln)
-                    if (
-                        not inserted_import
-                    ) and ln.strip() == "from fastapi import FastAPI":
+                    if (not inserted_import) and re.match(
+                        r"^from fastapi import .*FastAPI.*$", ln.strip()
+                    ):
                         out.append(import_line + "\n")
                         inserted_import = True
                 updated = "".join(out)
                 if not updated.endswith("\n"):
                     updated += "\n"
-                # insert middleware after first app = FastAPI()
+                # insert middleware after first app initializer with args
                 out2 = []
                 seen_app = False
                 for ln in updated.splitlines(keepends=True):
@@ -862,7 +897,7 @@ def run_update_pipeline(
                     if (
                         (not inserted_mw)
                         and (not seen_app)
-                        and ln.strip().startswith("app = FastAPI()")
+                        and ln.strip().startswith("app = FastAPI(")
                     ):
                         out2.append(mw_line + "\n")
                         inserted_mw = True
