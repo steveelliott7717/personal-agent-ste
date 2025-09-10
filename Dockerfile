@@ -46,8 +46,9 @@ WORKDIR /app
 # - curl             -> used by HEALTHCHECK
 # - libpq5           -> runtime lib for psycopg if non-binary wheel is used
 # - Chromium deps & fonts -> for Playwright
+# in the runtime stage:
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates curl libpq5 \
+    git jq ca-certificates curl libpq5 \
     libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
     libxrandr2 libxshmfence1 libxkbcommon0 libdrm2 libgbm1 libgtk-3-0 \
     libatspi2.0-0 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -56,6 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libu2f-udev libvulkan1 \
     fonts-liberation fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Copy backend before installing Python deps
 COPY backend/ /app/backend/

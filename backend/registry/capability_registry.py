@@ -11,6 +11,10 @@ import tempfile
 from pathlib import Path
 import json
 
+import re
+import difflib
+import shutil
+
 # --- add: trafilatura for article extraction ---
 try:
     import trafilatura
@@ -810,204 +814,297 @@ def _repo_deps_check(args, meta):
 
 def _repo_patch_apply(args, meta):
     """
-    Applies a unified diff patch to the local git repository with safety guards.
+    Apply a repo change in one of two forms:
 
-    Args:
-      patch_text: str (required)
-      allowed_paths: list[str] (optional) - if provided, all headers must be within this set
-      forbidden_patterns: list[str] (optional) - regex patterns that must NOT appear in the diff
+    1) patch_text: str  (raw unified diff; may include git preamble like `diff --git`)
+    2) files: List[{"path": str, "content": str}]  (server synthesizes a valid diff)
+
+    Optional:
+      allowed_paths: List[str]  (restrict paths the patch/files may touch)
+      forbidden_patterns: List[str] (regex patterns disallowed in patch_text)
+      tests: List[str] (shell commands to run after apply; fail if any non-zero)
 
     Returns:
-      {ok: bool, message?: str, result?: {...}} on success
-      {ok: False, error: {code, message, details?}} on failure
+      {"ok": true, "result": {...}}  or  {"ok": false, "error": {...}}
     """
-    import re
-    import subprocess
-    from pathlib import Path
 
-    patch_text = args.get("patch_text")
-    if not patch_text or not isinstance(patch_text, str):
-        return {
-            "ok": False,
-            "error": {"code": "BadRequest", "message": "patch_text is required"},
-        }
+    def _err(code, message, details=None):
+        out = {"ok": False, "error": {"code": code, "message": message}}
+        if details is not None:
+            out["error"]["details"] = details
+        return out
 
-    # Optional constraints
-    allowed_paths = set(args.get("allowed_paths") or [])
-    forbidden_patterns = list(args.get("forbidden_patterns") or [])
+    # -------- repo / env checks --------
+    repo_root = Path(__file__).resolve().parents[2]
+    if not repo_root.exists():
+        return _err("InternalError", f"Repo root not found at {repo_root}")
 
-    # ---------- Format guards ----------
-    # Reject Markdown/code fences outright (prefer fail-fast over silent sanitation)
-    if (
-        patch_text.lstrip().startswith("```")
-        or "```" in patch_text
-        or "~~~" in patch_text
-    ):
-        return {
-            "ok": False,
-            "error": {
-                "code": "FencedOutput",
-                "message": "Patch contains Markdown/code fences. Provide a raw unified diff.",
-            },
-        }
-
-    # Allow a git-style preamble; find the first unified header
-    lines = patch_text.splitlines()
-    start_idx = None
-    for i, ln in enumerate(lines):
-        if ln.startswith("--- a/"):
-            start_idx = i
-            break
-
-    if start_idx is None:
-        # still fenced?
-        if (
-            patch_text.lstrip().startswith("```")
-            or "```" in patch_text
-            or "~~~" in patch_text
-        ):
-            return {
-                "ok": False,
-                "error": {
-                    "code": "FencedOutput",
-                    "message": "Patch contains Markdown/code fences",
-                },
-            }
-        return {
-            "ok": False,
-            "error": {
-                "code": "BadFormat",
-                "message": "No unified-diff headers (--- a/...) found",
-            },
-        }
-
-    # Keep preamble (git apply is fine) OR slice to unified part only:
-    # unified_only = "\n".join(lines[start_idx:]) + "\n"
-    # patch_text = unified_only
-
-    # ---------- Header / path validation ----------
-    def _diff_paths(diff: str) -> set[str]:
-        paths = set()
-        for line in diff.splitlines():
-            if line.startswith("--- a/"):
-                paths.add(line[6:].strip())
-            elif line.startswith("+++ b/"):
-                paths.add(line[6:].strip())
-        return paths
-
-    header_paths = _diff_paths(patch_text)
-    if not header_paths:
-        return {
-            "ok": False,
-            "error": {"code": "BadFormat", "message": "No unified-diff headers found."},
-        }
-
-    if allowed_paths:
-        disallowed = sorted(p for p in header_paths if p not in allowed_paths)
-        if disallowed:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "PathsNotAllowed",
-                    "message": "Patch touches paths outside allowed_paths.",
-                    "details": {
-                        "paths": disallowed,
-                        "allowed_paths": sorted(allowed_paths),
-                    },
-                },
-            }
-
-    # ---------- Content policy checks ----------
-    for pat in forbidden_patterns:
-        try:
-            if re.search(pat, patch_text):
-                return {
-                    "ok": False,
-                    "error": {
-                        "code": "ForbiddenPattern",
-                        "message": "Patch contains forbidden pattern.",
-                        "details": {"pattern": pat},
-                    },
-                }
-        except re.error as e:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "RegexError",
-                    "message": f"Invalid forbidden_patterns regex: {pat}",
-                    "details": str(e),
-                },
-            }
-
-    # ---------- Dry-run with git apply --check (p=1 then p=0) ----------
-    project_root = Path(__file__).resolve().parents[2]
-
-    def _git_apply_check_stdin(patch: str) -> tuple[bool, str, int]:
-        last_err = ""
-        for p in (1, 0):
-            try:
-                subprocess.run(
-                    ["git", "apply", f"-p{p}", "--check", "-"],
-                    input=patch.encode("utf-8"),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd=project_root,
-                    check=True,
-                )
-                return True, "ok", p
-            except subprocess.CalledProcessError as e:
-                last_err = e.stderr.decode("utf-8", errors="ignore") or str(e)
-        return False, last_err, -1
-
-    try:
-        ok, msg, strip_p = _git_apply_check_stdin(patch_text)
-        if not ok:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "GitApplyCheckFailed",
-                    "message": "git apply --check failed",
-                    "details": msg,
-                },
-            }
-
-        # ---------- Apply for real ----------
-        subprocess.run(
-            ["git", "apply", f"-p{strip_p}", "-"],
-            input=patch_text.encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=project_root,
-            check=True,
+    if not shutil.which("git"):
+        return _err(
+            "GitNotFound", "The 'git' binary is not available in the container image"
         )
 
-        return {
-            "ok": True,
-            "message": "Patch applied successfully.",
-            "result": {
-                "applied": True,
-                "strip_level": strip_p,
-                "paths": sorted(header_paths),
-            },
-        }
+    # Confirm we're in a git work tree (commit/push later will need this anyway)
+    chk = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    if chk.returncode != 0 or chk.stdout.strip() != "true":
+        return _err("NotAGitRepo", f"Directory is not a git repo: {repo_root}")
 
-    except subprocess.CalledProcessError as e:
-        return {
-            "ok": False,
-            "error": {
-                "code": "GitApplyFailed",
-                "message": "git apply failed",
-                "details": e.stderr.decode("utf-8", errors="ignore") or str(e),
-            },
-        }
-    except Exception as e:
-        return {
-            "ok": False,
-            "error": {
-                "code": "InternalError",
-                "message": f"An exception occurred: {e}",
-            },
-        }
+    # -------- helpers --------
+    def _normalize_newlines(text: str) -> str:
+        return (text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    def _strip_fences(text: str) -> str:
+        t = (text or "").strip()
+        # ```diff ... ```  /  ```patch ... ```  /  ``` ... ```
+        m = re.match(r"^```(?:diff|patch)?\n(.*?)\n```$", t, flags=re.S)
+        if m:
+            return m.group(1).strip()
+        m = re.match(r"^```\n(.*?)\n```$", t, flags=re.S)
+        if m:
+            return m.group(1).strip()
+        return t
+
+    def _slice_to_unified(diff_text: str) -> str:
+        """
+        Keep the unified section (starting at the first '--- a/...').
+        Accepts git preamble ('diff --git', 'index', etc.).
+        """
+        s = diff_text
+        m = re.search(r"^---\s+a/", s, flags=re.M)
+        if not m:
+            # last resort: allow '--- ' if no 'a/' prefix is present
+            m = re.search(r"^---\s+", s, flags=re.M)
+        if not m:
+            raise ValueError("No unified-diff headers (--- a/...) found")
+        return s[m.start() :].rstrip() + "\n"
+
+    def _validate_hunks(unified: str):
+        """
+        Require proper hunk headers: @@ -<start>[,<len>] +<start>[,<len>] @@
+        """
+        rx = re.compile(r"^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@", re.M)
+        for i, ln in enumerate(unified.splitlines(), 1):
+            if ln.startswith("@@") and not rx.match(ln):
+                raise ValueError(f"Invalid hunk header at line {i}: {ln}")
+
+    def _touched_paths(unified: str) -> list[str]:
+        paths = set()
+        for line in unified.splitlines():
+            if line.startswith("--- "):
+                # header like:  --- a/backend/api.py
+                p = line.split(None, 1)[1]
+                if p.startswith("a/"):
+                    p = p[2:]
+                paths.add(p.strip())
+        return sorted(paths)
+
+    def _within_allowed(path_rel: str, allowed: list[str]) -> bool:
+        if not allowed:
+            return True
+        rp = path_rel.strip("/").replace("\\", "/")
+        return any(rp == ap or rp.startswith(ap.rstrip("/") + "/") for ap in allowed)
+
+    def _build_unified_from_files(path_rel: str, old_text: str, new_text: str) -> str:
+        a = old_text.splitlines(keepends=True)
+        b = new_text.splitlines(keepends=True)
+        # difflib emits valid '---/+++' + '@@' hunks with ranges
+        core = "".join(
+            difflib.unified_diff(
+                a, b, fromfile=f"a/{path_rel}", tofile=f"b/{path_rel}", n=3
+            )
+        )
+        return f"diff --git a/{path_rel} b/{path_rel}\n{core}"
+
+    # -------- args --------
+    patch_text = args.get("patch_text")
+    files_payload = args.get("files")  # [{"path": "...", "content": "..."}]
+    allowed_paths = [
+        p.strip("/").rstrip("/") for p in (args.get("allowed_paths") or [])
+    ]
+    forbidden_patterns = list(args.get("forbidden_patterns") or [])
+    tests = list(args.get("tests") or [])
+
+    # -------- path: files -> synthesize a correct diff --------
+    if files_payload and isinstance(files_payload, list):
+        synthesized = []
+        touched = []
+        for item in files_payload:
+            if not isinstance(item, dict):
+                return _err(
+                    "BadRequest", "files[] must contain objects {path, content}"
+                )
+            path_rel = str(item.get("path", "")).strip("/")
+            new_text = item.get("content")
+            if not path_rel or not isinstance(new_text, str):
+                return _err(
+                    "BadRequest",
+                    "Each files[] item requires 'path' (str) and 'content' (str)",
+                )
+
+            if not _within_allowed(path_rel, allowed_paths):
+                return _err(
+                    "PathsNotAllowed", "File outside allowed_paths", {"path": path_rel}
+                )
+
+            abs_path = repo_root / path_rel
+            old_text = ""
+            if abs_path.exists():
+                try:
+                    old_text = abs_path.read_text(encoding="utf-8", errors="replace")
+                except Exception as e:
+                    return _err("ReadFailed", f"Failed reading {path_rel}: {e}")
+
+            if old_text == new_text:
+                continue  # no changes for this file
+
+            synthesized.append(_build_unified_from_files(path_rel, old_text, new_text))
+            touched.append(path_rel)
+
+        if not synthesized:
+            return {"ok": True, "result": {"status": "no-op", "touched": []}}
+
+        patch = "\n".join(synthesized)
+
+        # Check then apply
+        chk = subprocess.run(
+            ["git", "apply", "--check", "-p1", "--whitespace=nowarn"],
+            cwd=repo_root,
+            input=patch,
+            text=True,
+            capture_output=True,
+        )
+        if chk.returncode != 0:
+            return _err(
+                "GitApplyCheckFailed",
+                "git apply --check failed on synthesized patch",
+                chk.stderr,
+            )
+
+        ap = subprocess.run(
+            ["git", "apply", "-p1", "--whitespace=nowarn"],
+            cwd=repo_root,
+            input=patch,
+            text=True,
+            capture_output=True,
+        )
+        if ap.returncode != 0:
+            return _err(
+                "PatchApplyFailed", "Failed to apply synthesized patch.", ap.stderr
+            )
+
+        # Write final content to disk (ensures new files exist post-apply)
+        for item in files_payload:
+            p = str(item.get("path", "")).strip("/")
+            c = item.get("content")
+            if not p or not isinstance(c, str):
+                continue
+            fp = repo_root / p
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(c, encoding="utf-8")
+
+        result = {"status": "applied", "touched": touched}
+
+    # -------- path: patch_text -> validate & apply --------
+    elif isinstance(patch_text, str) and patch_text.strip():
+        raw = _normalize_newlines(_strip_fences(patch_text))
+
+        # Accept git preamble; slice to unified headers (--- a/…)
+        try:
+            unified = _slice_to_unified(raw)
+        except ValueError as e:
+            return _err("BadFormat", str(e))
+
+        # Basic sanity
+        if "\x00" in unified:
+            return _err("BadFormat", "Patch contains NUL byte(s)")
+        if not unified.endswith("\n"):
+            unified += "\n"
+
+        # Validate hunk headers (reject bare '@@')
+        try:
+            _validate_hunks(unified)
+        except ValueError as e:
+            return _err("BadHunkHeader", str(e))
+
+        # Enforce allowed paths
+        touched = _touched_paths(unified)
+        if not touched:
+            return _err("BadFormat", "No file headers found in patch")
+        disallowed = [p for p in touched if not _within_allowed(p, allowed_paths)]
+        if disallowed:
+            return _err(
+                "PathsNotAllowed",
+                "Patch touches paths outside allowed_paths.",
+                {"paths": disallowed},
+            )
+
+        # Forbidden patterns
+        for pat in forbidden_patterns:
+            try:
+                if re.search(pat, unified):
+                    return _err(
+                        "ForbiddenPattern",
+                        "Patch contains a forbidden pattern.",
+                        {"pattern": pat},
+                    )
+            except re.error as e:
+                return _err(
+                    "RegexError",
+                    f"Invalid forbidden_patterns regex: {pat}",
+                    {"details": str(e)},
+                )
+
+        # Check then apply
+        chk = subprocess.run(
+            ["git", "apply", "--check", "-p1", "--whitespace=nowarn"],
+            cwd=repo_root,
+            input=unified,
+            text=True,
+            capture_output=True,
+        )
+        if chk.returncode != 0:
+            return _err("GitApplyCheckFailed", (chk.stderr or chk.stdout or "").strip())
+
+        ap = subprocess.run(
+            ["git", "apply", "-p1", "--whitespace=nowarn"],
+            cwd=repo_root,
+            input=unified,
+            text=True,
+            capture_output=True,
+        )
+        if ap.returncode != 0:
+            return _err("PatchApplyFailed", (ap.stderr or ap.stdout or "").strip())
+
+        result = {"status": "applied", "touched": touched}
+
+    else:
+        return _err(
+            "BadRequest", "Provide either `patch_text` (string) or `files` (list)"
+        )
+
+    # -------- optional acceptance tests after apply --------
+    if result and tests:
+        full_out, full_err = "", ""
+        for cmd in tests:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=repo_root, text=True, capture_output=True
+            )
+            full_out += proc.stdout
+            full_err += proc.stderr
+            if proc.returncode != 0:
+                return _err(
+                    "AcceptanceTestFailed",
+                    "A post-apply test failed.",
+                    {"cmd": cmd, "stderr": full_err.strip()},
+                )
+        result["tests_stdout"] = full_out.strip()
+
+    return {"ok": True, "result": result}
 
 
 def _repo_test_run(args, meta):
