@@ -31,7 +31,7 @@ def handle_article_summary(query: str) -> Dict[str, Any]:
     url: str | None = None
     payload: Dict[str, Any] | None = None
 
-    # If router already passed a dict, use it
+    # Allow dict input (router may pass structured payloads)
     if isinstance(query, dict):
         payload = query
     else:
@@ -48,7 +48,7 @@ def handle_article_summary(query: str) -> Dict[str, Any]:
         if not url and isinstance(payload.get("task"), str):
             url = _extract_url_from_text(payload["task"])
 
-    # Fallback: extract URL directly from raw string
+    # Fallback: extract URL from raw text
     if not url:
         url = _extract_url_from_text(query if isinstance(query, str) else "")
 
@@ -59,7 +59,7 @@ def handle_article_summary(query: str) -> Dict[str, Any]:
             "details": "Please provide a URL to summarize.",
         }
 
-    # Use the capability registry to fetch and parse the article content
+    # Fetch (via capability registry)
     logger.info(f"[article_summarizer] Fetching content from {url}")
     fetch_result = registry.dispatch("web.smart_get", {"url": url}, {})
 
@@ -74,9 +74,12 @@ def handle_article_summary(query: str) -> Dict[str, Any]:
             "details": error_details,
         }
 
-    # >>> Flatten the nested shape: { ok, result: { ok?, result: {...} } }
+    # ---------- IMPORTANT: flatten nested envelope ----------
+    # registry.dispatch(...) returns { ok, result: {...} }
+    # web.smart_get returns { ok, result: {... text/title ...} }
+    # So actual payload may be at result.result.*
     outer = fetch_result.get("result") or {}
-    content_result = outer.get("result") or outer  # handle both shapes
+    content_result = outer.get("result") or outer
 
     article_text = (content_result.get("text") or "").strip()
     article_title = content_result.get("title")
@@ -89,6 +92,7 @@ def handle_article_summary(query: str) -> Dict[str, Any]:
             "details": "The page might be empty or require JavaScript.",
         }
 
+    # Summarize
     logger.info(f"[article_summarizer] Summarizing content for {url}")
     summary_result = run_llm_agent(
         agent_slug="article_summarizer",

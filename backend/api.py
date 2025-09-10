@@ -44,6 +44,10 @@ from backend.models.messages import (
 
 # orchestrator (meta-agent)
 from backend.agents.orchestrator import Orchestrator
+from backend.agents.article_summarizer_agent import handle_article_summary
+from pydantic import BaseModel
+import json
+
 
 # ⬇️ moved in from main.py so nothing is lost
 from backend.routers import schema as schema_router
@@ -219,19 +223,19 @@ except Exception:
 
 
 # ---------------------------
-# Health / version (keep both plain /health and BASE health)
+# Health / version
 # ---------------------------
 @app.get("/health", response_class=PlainTextResponse)
 async def health_plain() -> str:
     return "ok"
 
 
-@app.get(f"{BASE}/api/health", response_class=PlainTextResponse)
+@app.get("/api/health", response_class=PlainTextResponse)
 async def health() -> str:
     return "ok"
 
 
-@app.get(f"{BASE}/api/version", response_class=PlainTextResponse)
+@app.get("/api/version", response_class=PlainTextResponse)
 async def version() -> str:
     return VERSION
 
@@ -277,17 +281,17 @@ def _structured_error(
 
 
 # ---------------------------
-# Agents API
+# Agents API (prefix-free; mounted at /api/agents)
 # ---------------------------
-agents_router = APIRouter(prefix=f"{BASE}/api/agents", tags=["agents"])
+agents_router = APIRouter(tags=["agents"])
 
 if route_request:
-
+    # NOTE: router lives at ROOT (/route), not inside /api/agents
     class RouteRequestBody(BaseModel):
         query: str
         user_id: str = "local-user"
 
-    @agents_router.post("/route")
+    @app.post("/route", tags=["router"])
     async def handle_route_request(body: RouteRequestBody):
         """
         Main entry point for the intelligent router agent.
@@ -296,8 +300,6 @@ if route_request:
         """
         try:
             agent, result = route_request(query=body.query, user_id=body.user_id)
-            # The router_agent returns a tuple (agent_name, result_payload)
-            # We wrap this in a consistent response.
             return {"ok": True, "agent": agent, "response": result}
         except Exception as e:
             logging.exception("Router agent failed")
@@ -308,7 +310,6 @@ if route_request:
 def list_verbs() -> dict:
     """Verb discovery from the shared CapabilityRegistry."""
     reg = getattr(app.state, "registry", registry)
-    # Prefer a public list method if available; otherwise fall back to adapter keys
     try:
         if hasattr(reg, "list_verbs"):
             names = sorted(reg.list_verbs())  # type: ignore[attr-defined]
@@ -339,19 +340,16 @@ async def call_agent_verb(
         or uuid.uuid4().hex
     )
     try:
-        # Dispatch directly through the shared CapabilityRegistry.
         reg = getattr(app.state, "registry", registry)
         meta = {
             **(req.meta or {}),
             "correlation_id": correlation_id,
             "idempotency_key": idempotency_key,
-            # (Optionally carry actor/policy_ctx through meta if your adapters use them)
             "actor": (req.actor.dict() if req.actor else None),
             "policy_ctx": (req.policy_ctx.dict() if req.policy_ctx else None),
         }
         out = reg.dispatch(req.verb, req.args or {}, meta)
 
-        # Ensure tracing keys are present for clients
         if isinstance(out, dict):
             out.setdefault("correlation_id", correlation_id)
             out.setdefault("idempotency_key", idempotency_key)
@@ -543,7 +541,36 @@ async def call_agent_plan(
         )
 
 
-app.include_router(agents_router)
+# Mount the agents router canonically at /api/agents
+app.include_router(agents_router, prefix="/api/agents")
+
+# Optional back-compat: also mount under {BASE}/api/agents if BASE is set
+if BASE and BASE.strip("/") and BASE.strip() != "/":
+    app.include_router(agents_router, prefix=f"{BASE}/api/agents")
+
+
+class ArticleSummarizeBody(BaseModel):
+    url: str | None = None
+    query: str | None = None
+
+
+@app.post("/api/article/summarize", tags=["article"])
+def api_article_summarize(body: ArticleSummarizeBody):
+    """
+    Direct entry to the article summarizer.
+    Accepts either {"url": "..."} or {"query": "..."} (query may contain a URL).
+    """
+    if body.url:
+        # pass as JSON string that the handler understands
+        return handle_article_summary(json.dumps({"url": body.url}))
+    if body.query:
+        return handle_article_summary(body.query)
+    raise HTTPException(status_code=400, detail="Provide 'url' or 'query'")
+
+
+@app.post(f"{BASE}/api/article/summarize", tags=["article"])
+def api_article_summarize_base(body: ArticleSummarizeBody):
+    return api_article_summarize(body)
 
 
 # ---------------------------
