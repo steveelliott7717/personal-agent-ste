@@ -286,26 +286,6 @@ def _structured_error(
 # ---------------------------
 agents_router = APIRouter(tags=["agents"])
 
-if route_request:
-    # NOTE: router lives at ROOT (/route), not inside /api/agents
-    class RouteRequestBody(BaseModel):
-        query: str
-        user_id: str = "local-user"
-
-    @app.post("/route", tags=["router"])
-    async def handle_route_request(body: RouteRequestBody):
-        """
-        Main entry point for the intelligent router agent.
-        It receives a query and uses an LLM to dispatch it to the
-        best-suited agent.
-        """
-        try:
-            agent, result = route_request(query=body.query, user_id=body.user_id)
-            return {"ok": True, "agent": agent, "response": result}
-        except Exception as e:
-            logging.exception("Router agent failed")
-            raise HTTPException(status_code=500, detail=str(e))
-
 
 @agents_router.get("/verbs")
 def list_verbs() -> dict:
@@ -319,6 +299,31 @@ def list_verbs() -> dict:
     except Exception:
         names = []
     return {"ok": True, "verbs": names}
+
+
+if route_request:
+
+    class RouteRequestBody(BaseModel):
+        query: str | dict
+        user_id: str = "local-user"
+
+    @agents_router.post("/route", tags=["router"])
+    async def handle_route_request(body: RouteRequestBody):
+        """
+        Main entry point for the intelligent router agent.
+        It receives a query and uses an LLM to dispatch it to the
+        best-suited agent.
+        """
+        try:
+            # The handler expects a JSON string for complex queries, so we dump it.
+            query_input = (
+                json.dumps(body.query) if isinstance(body.query, dict) else body.query
+            )
+            agent, result = route_request(query=query_input, user_id=body.user_id)
+            return {"ok": True, "agent": agent, "response": result}
+        except Exception as e:
+            logging.exception("Router agent failed")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @agents_router.post("/verb")
