@@ -126,15 +126,37 @@ def _to_text(x: Any) -> str:
 
 
 def _extract_article_text(html: str) -> str:
-    """Use trafilatura to extract main text content from HTML."""
-    if not trafilatura:
-        # Fallback to returning raw text if library is not installed
+    """
+    Prefer trafilatura for structured article text; if it returns empty/None,
+    fall back to BeautifulSoup text scrape so we never return "".
+    """
+    if not html:
+        return ""
+
+    if trafilatura:
+        try:
+            txt = (
+                trafilatura.extract(
+                    html,
+                    include_comments=False,
+                    include_tables=False,
+                )
+                or ""
+            )
+            if txt.strip():
+                return txt
+        except Exception:
+            pass  # fall through to soup
+
+    try:
         from bs4 import BeautifulSoup
 
         soup = BeautifulSoup(html, "html.parser")
-        return soup.get_text(separator="\n", strip=True)
-
-    return trafilatura.extract(html, include_comments=False, include_tables=False) or ""
+        text = soup.get_text(separator="\n", strip=True)
+        lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+        return "\n".join(lines)
+    except Exception:
+        return html  # last resort
 
 
 def _web_smart_get(

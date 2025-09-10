@@ -129,5 +129,5 @@ tools/ship.bat
 artifacts/
 backend.zip
 settings.json
-payload.json
+backend/payload.json
 curl
