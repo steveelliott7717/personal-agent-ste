@@ -1,5 +1,11 @@
 # backend/agents/router_agent.py
 from __future__ import annotations
+
+# ✅ package-qualified imports
+from backend.services.supabase_service import supabase
+from backend.reasoner.policy import reason_with_memory
+from backend.utils.agent_protocol import make_response
+from backend.semantics.store import upsert as emb_upsert
 from typing import Tuple, Dict, Any, Optional
 import json
 import logging
@@ -12,12 +18,6 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-
-# ✅ package-qualified imports
-from backend.services.supabase_service import supabase
-from backend.reasoner.policy import reason_with_memory
-from backend.utils.agent_protocol import make_response
-from backend.semantics.store import upsert as emb_upsert
 
 
 def _log_decision(

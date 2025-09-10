@@ -9,7 +9,6 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-import typing as t
 import json
 
 # --- add: trafilatura for article extraction ---

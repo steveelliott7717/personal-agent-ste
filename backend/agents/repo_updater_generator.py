@@ -1,7 +1,7 @@
 # backend/agents/repo_updater_generator.py
 from __future__ import annotations
 
-import json
+
 from typing import Any, Dict
 
 from backend.llm.llm_runner import run_llm_agent

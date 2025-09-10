@@ -627,7 +627,7 @@ def run_update_pipeline(change_spec: Dict[str, Any]) -> Dict[str, Any]:
                         ok=lint_ok,
                     )
                     if not lint_ok:
-                        print(f"[!] Linting failed again after fix. Discarding change.")
+                        print("[!] Linting failed again after fix. Discarding change.")
                         continue
                 else:
                     print(
