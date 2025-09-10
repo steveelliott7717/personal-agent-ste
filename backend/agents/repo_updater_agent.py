@@ -662,14 +662,18 @@ def run_update_pipeline(
         return (removed / denom) > thr
 
     def _merge_preserving_only_additions(original: str, model_new: str) -> str:
-        # identical logic to api.py -> _merge_preserving
+        """
+        Keep ALL original lines and insert model additions. Never delete lines.
+        """
         merged: list[str] = []
         a = original.splitlines(keepends=True)
         b = model_new.splitlines(keepends=True)
         for tag in difflib.ndiff(a, b):
-            if tag.startswith("  "):
+            if tag.startswith("  "):  # unchanged
                 merged.append(tag[2:])
-            elif tag.startswith("+ "):
+            elif tag.startswith("- "):  # original-only -> KEEP
+                merged.append(tag[2:])
+            elif tag.startswith("+ "):  # model-only -> INSERT
                 merged.append(tag[2:])
         if merged and not merged[-1].endswith("\n"):
             merged[-1] = merged[-1] + "\n"
@@ -826,9 +830,47 @@ def run_update_pipeline(
             _ev("diff.noop", file=path)
             continue
 
-            # Auto-repair if destructive: keep original and insert only model additions, then re-diff
+        # Auto-repair if destructive: anchor inserts for backend/api.py, else preserve+add
         if _is_destructive(diff_text, 0.20):
-            merged_body = _merge_preserving_only_additions(original, new_body)
+            import_line = "from backend.logging_utils import RequestLoggingMiddleware"
+            mw_line = "app.add_middleware(RequestLoggingMiddleware)"
+
+            if path == "backend/api.py" and (
+                import_line in new_body or mw_line in new_body
+            ):
+                # inline anchor insertion (no imports across files)
+                lines = original.splitlines(keepends=True)
+                out = []
+                inserted_import = import_line in original
+                inserted_mw = mw_line in original
+                # insert import after FastAPI import
+                for ln in lines:
+                    out.append(ln)
+                    if (
+                        not inserted_import
+                    ) and ln.strip() == "from fastapi import FastAPI":
+                        out.append(import_line + "\n")
+                        inserted_import = True
+                updated = "".join(out)
+                if not updated.endswith("\n"):
+                    updated += "\n"
+                # insert middleware after first app = FastAPI()
+                out2 = []
+                seen_app = False
+                for ln in updated.splitlines(keepends=True):
+                    out2.append(ln)
+                    if (
+                        (not inserted_mw)
+                        and (not seen_app)
+                        and ln.strip().startswith("app = FastAPI()")
+                    ):
+                        out2.append(mw_line + "\n")
+                        inserted_mw = True
+                        seen_app = True
+                merged_body = "".join(out2)
+            else:
+                merged_body = _merge_preserving_only_additions(original, new_body)
+
             repaired_diff = _make_unified_diff(path, merged_body)
             if repaired_diff.strip() and not _is_destructive(repaired_diff, 0.20):
                 _ev("diff.repaired", file=path, note="converted to insert-only")

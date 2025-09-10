@@ -765,21 +765,70 @@ def _deletion_ratio(unified: str) -> float:
 
 def _merge_preserving(original: str, model_new: str) -> str:
     """
-    Build a 'safe' merged text that preserves original and ONLY inserts
-    additions present in model_new. This yields a minimal, non-destructive update.
+    Preserve ALL original lines and insert ONLY the model's added lines.
+    Never delete original lines.
     """
     merged: list[str] = []
     a = original.splitlines(keepends=True)
     b = model_new.splitlines(keepends=True)
     for tag in difflib.ndiff(a, b):
-        if tag.startswith("  "):  # unchanged
+        if tag.startswith("  "):  # unchanged (from original)
             merged.append(tag[2:])
-        elif tag.startswith("+ "):  # addition from model
+        elif tag.startswith("- "):  # present only in original -> KEEP
             merged.append(tag[2:])
-        # ignore all '- ' deletions
+        elif tag.startswith("+ "):  # present only in model -> INSERT
+            merged.append(tag[2:])
     if merged and not merged[-1].endswith("\n"):
         merged[-1] = merged[-1] + "\n"
     return "".join(merged)
+
+
+def _apply_request_logging_anchors(original: str, model_new: str) -> str | None:
+    """
+    If the model_new contains the logging import/middleware, insert them
+    at stable anchors in the original file and return the updated text.
+    Otherwise return None.
+    """
+    import_line = "from backend.logging_utils import RequestLoggingMiddleware"
+    mw_line = "app.add_middleware(RequestLoggingMiddleware)"
+
+    if (import_line not in model_new) and (mw_line not in model_new):
+        return None
+
+    lines = original.splitlines(keepends=True)
+    out = []
+    inserted_import = import_line in original
+    inserted_mw = mw_line in original
+
+    # 1) insert import after 'from fastapi import FastAPI'
+    for ln in lines:
+        out.append(ln)
+        if (not inserted_import) and ln.strip() == "from fastapi import FastAPI":
+            out.append(import_line + "\n")
+            inserted_import = True
+
+    updated = "".join(out)
+    if not updated.endswith("\n"):
+        updated += "\n"
+
+    # 2) insert middleware after first 'app = FastAPI()'
+    out2 = []
+    seen_app = False
+    for ln in updated.splitlines(keepends=True):
+        out2.append(ln)
+        if (
+            (not inserted_mw)
+            and (not seen_app)
+            and ln.strip().startswith("app = FastAPI()")
+        ):
+            out2.append(mw_line + "\n")
+            inserted_mw = True
+            seen_app = True
+
+    result = "".join(out2)
+    if import_line in result and mw_line in result:
+        return result
+    return None
 
 
 def _synthesize_diff_from_disk(rel: str, new_text: str) -> str:
@@ -945,11 +994,20 @@ def repo_plan(payload: Dict[str, Any], request: Request):
                 original = p.read_text(encoding="utf-8")
             except FileNotFoundError:
                 original = ""
-            # preserve-only merge: original + additions
-            merged = _merge_preserving(original, new_text)
+
+            # 1) task-specific anchors first (for backend/api.py)
+            merged = None
+            if rel == "backend/api.py":
+                merged = _apply_request_logging_anchors(original, new_text)
+
+            # 2) fallback to preserve-all-original + add-only merge
+            if merged is None:
+                merged = _merge_preserving(original, new_text)
+
             repaired = _synthesize_diff_from_disk(rel, merged)
             if repaired.strip():
                 repaired_chunks.append(repaired)
+
         repaired_patch = "".join(repaired_chunks)
         if not repaired_patch.strip() or _deletion_ratio(repaired_patch) > 0.20:
             raise HTTPException(
@@ -959,11 +1017,6 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         return PlainTextResponse(
             repaired_patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
         )
-
-    # Non-destructive: return synthesized patch
-    return PlainTextResponse(
-        patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
-    )
 
 
 @repo_router.get("/runs/{run_id}/timeline")
