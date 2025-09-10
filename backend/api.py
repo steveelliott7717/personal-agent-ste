@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import asyncio
 import time
+import sys
 from backend.registry.capability_registry import CapabilityRegistry
 
 
@@ -14,7 +15,7 @@ from dotenv import load_dotenv
 from functools import lru_cache
 import logging
 import json
-import sys
+
 
 from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # models
@@ -46,6 +48,7 @@ from backend.agents.orchestrator import Orchestrator
 # ⬇️ moved in from main.py so nothing is lost
 from backend.routers import schema as schema_router
 from backend.agents.repo_agent import generate_artifact_from_task, propose_changes
+from backend.agents.repo_updater_agent import handle_repo_update
 
 # Load .env (Supabase keys, allowlists, etc.)
 load_dotenv()
@@ -213,6 +216,30 @@ try:
     from backend.agents.router_agent import route_request  # type: ignore
 except Exception:
     route_request = None
+
+if route_request:
+
+    class RouteRequestBody(BaseModel):
+        query: str
+        user_id: str = "local-user"
+
+    # This is the new endpoint for the router agent.
+    # It's placed at the root of the API for easy access.
+    @app.post("/route", tags=["router"])
+    async def handle_route_request(body: RouteRequestBody):
+        """
+        Main entry point for the intelligent router agent.
+        It receives a query and uses an LLM to dispatch it to the
+        best-suited agent, like your new repo_updater_agent.
+        """
+        try:
+            agent, result = route_request(query=body.query, user_id=body.user_id)
+            # The router_agent returns a tuple (agent_name, result_payload)
+            # We wrap this in a consistent response.
+            return {"ok": True, "agent": agent, "response": result}
+        except Exception as e:
+            logging.exception("Router agent failed")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------
@@ -646,16 +673,15 @@ def repo_plan(payload: Dict[str, Any], request: Request):
             mode="patch",
         )
         patch = art.get("patch") or art.get("content") or ""
-        from backend.utils.patch_sanitizer import (
-            sanitize_patch,
-            validate_patch_structure,
-        )
+        # The patch sanitizer was moved to backend.services.rms
+        from backend.services.rms import _extract_patch_from_text
 
-        patch, _warnings = sanitize_patch(patch)
-        ok, msg = validate_patch_structure(patch, path_prefix=prefix)
-        if not ok:
+        sanitized_patch = _extract_patch_from_text(patch)
+        msg = "Invalid patch structure"
+
+        if not sanitized_patch:
             # best-effort PowerShell fixer if available
-            from pathlib import Path as _Path
+            from pathlib import Path as _Path  # noqa: F811
             import subprocess
             import tempfile
 
@@ -663,7 +689,7 @@ def repo_plan(payload: Dict[str, Any], request: Request):
                 with tempfile.NamedTemporaryFile(
                     "w", encoding="utf-8", delete=False
                 ) as f_in:
-                    f_in.write(patch)
+                    f_in.write(patch)  # use original patch for fixing
                     in_path = f_in.name
                 out_path = in_path + ".out.patch"
                 script = (
@@ -688,13 +714,18 @@ def repo_plan(payload: Dict[str, Any], request: Request):
                         timeout=20,
                     )
                     if proc.returncode == 0 and _Path(out_path).exists():
-                        patch = _Path(out_path).read_text(encoding="utf-8")
-                        ok, msg = validate_patch_structure(patch, path_prefix=prefix)
+                        fixed_patch = _Path(out_path).read_text(encoding="utf-8")
+                        sanitized_patch = _extract_patch_from_text(fixed_patch)
+                        if not sanitized_patch:
+                            msg = "Invalid patch structure after fix attempt"
             except Exception:
                 pass
-        if not ok:
+
+        if not sanitized_patch:
             raise HTTPException(status_code=422, detail=f"Invalid patch: {msg}")
-        return PlainTextResponse(patch, media_type="text/x-patch; charset=utf-8")
+        return PlainTextResponse(
+            sanitized_patch, media_type="text/x-patch; charset=utf-8"
+        )
 
     out = propose_changes(
         task,
@@ -707,6 +738,79 @@ def repo_plan(payload: Dict[str, Any], request: Request):
         thread_n=thread_n,
     )
     return out
+
+
+@repo_router.post("/update")
+def repo_update_direct(payload: Dict[str, Any]):
+    """
+    Directly invoke the repo_updater_agent pipeline, bypassing the main router.
+    This is useful for CI/CD or direct calls when the intent is already known.
+    The payload should be the ChangeSpec JSON object.
+    """
+    try:
+        # The handler expects a JSON string, so we'll dump the payload.
+        query_string = json.dumps(payload)
+        result = handle_repo_update(query_string)  # This was correct, re-affirming
+        return {"ok": True, **result}
+    except Exception as e:
+        # Use the existing logger
+        logging.exception("Direct repo_update failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@repo_router.get("/runs/{run_id}/timeline")
+def get_run_timeline(run_id: uuid.UUID):
+    """
+    Retrieves the structured timeline of events for a specific agent run.
+    This provides a detailed audit trail for debugging and analysis.
+    """
+    try:
+        from backend.services.supabase_service import supabase
+
+        res = (
+            supabase.table("agent_runs")
+            .select("timeline")
+            .eq("id", str(run_id))
+            .single()
+            .execute()
+        )
+
+        if not res.data:
+            raise HTTPException(
+                status_code=404, detail=f"Run with ID '{run_id}' not found."
+            )
+
+        timeline = res.data.get("timeline", [])
+        return {"ok": True, "run_id": run_id, "timeline": timeline}
+    except HTTPException as e:
+        raise e  # Re-raise HTTPException to preserve status code
+    except Exception as e:
+        logging.exception(f"Failed to retrieve timeline for run_id={run_id}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@repo_router.post("/branch/cleanup")
+def repo_branch_cleanup(payload: Dict[str, Any]):
+    """
+    Endpoint to be triggered by a webhook (e.g., from a GitHub Action)
+    after a pull request has been merged. It cleans up the feature branch.
+    """
+    branch_name = payload.get("branch_name")
+    if not branch_name:
+        raise HTTPException(status_code=400, detail="Missing 'branch_name' in payload.")
+
+    try:
+        # Use the orchestrator to call the new verb
+        result = orchestrator.call_verb(
+            "repo.git.delete_branch",
+            {"branch_name": branch_name},
+            meta={},
+            correlation_id=f"cleanup-{branch_name}",
+            idempotency_key=f"cleanup-{branch_name}",
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @repo_router.post("/files")

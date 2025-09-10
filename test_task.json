@@ -1,0 +1,8 @@
+{
+    "task": "Add a new health check endpoint to the main API file",
+    "candidate_files": [
+        "backend/main.py"
+    ],
+    "branch": "feature/test-pipeline",
+    "commit": "HEAD"
+}

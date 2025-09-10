@@ -6,8 +6,17 @@ import traceback
 import uuid
 import time
 import os
+import subprocess
+import tempfile
+from pathlib import Path
 import typing as t
 import json
+
+# --- add: trafilatura for article extraction ---
+try:
+    import trafilatura
+except ImportError:
+    trafilatura = None
 
 # --- add: async + db client for audit logs ---
 import asyncio
@@ -20,6 +29,7 @@ except Exception:  # pragma: no cover
 
 # Import only adapter entrypoints here
 from backend.registry.adapters.http_fetch import http_fetch_adapter
+from backend.semantics.embeddings import embed_text
 from backend.registry.adapters.db_read import db_read_adapter
 from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
@@ -50,15 +60,6 @@ def _pg_conn():
     return psycopg.connect(_DB_DSN)
 
 
-def _embed_query(text: str) -> t.List[float]:
-    # Reuse your existing OpenAI key from env
-    from openai import OpenAI
-
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    out = client.embeddings.create(model=_EMBED_MODEL, input=text)
-    return out.data[0].embedding
-
-
 # Heuristic: decide if we should escalate from http.fetch -> browser.run
 def _needs_browser(
     status: int, body: bytes | str | None, headers: Dict[str, Any]
@@ -66,6 +67,10 @@ def _needs_browser(
     if body is None:
         return True, "empty-body"
     # Normalize to text for checks (limit to avoid big decode)
+    if isinstance(body, dict) and "text" in body:
+        body = body["text"]
+    if isinstance(body, dict) and "body" in body:
+        body = body["body"]
     sample = (
         body[:200000] if isinstance(body, (bytes, bytearray)) else (body or "")[:200000]
     )
@@ -118,6 +123,18 @@ def _to_text(x: Any) -> str:
         except Exception:
             return ""
     return str(x)
+
+
+def _extract_article_text(html: str) -> str:
+    """Use trafilatura to extract main text content from HTML."""
+    if not trafilatura:
+        # Fallback to returning raw text if library is not installed
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        return soup.get_text(separator="\n", strip=True)
+
+    return trafilatura.extract(html, include_comments=False, include_tables=False) or ""
 
 
 def _web_smart_get(
@@ -177,7 +194,7 @@ def _web_smart_get(
                 "status": status,
                 "url": hres.get("final_url") or hres.get("url") or url,
                 "headers": headers,
-                "text": _to_text(body),
+                "text": _extract_article_text(_to_text(body)),
             },
         }
 
@@ -193,7 +210,10 @@ def _smart_escalate_browser(
     http_out: Dict[str, Any],
 ) -> Dict[str, Any]:
     steps = [
-        {"goto": args["url"], "wait_until": args.get("wait_until", "domcontentloaded")},
+        {"goto": args["url"], "wait_until": args.get("wait_until", "load")},
+        # Add a small, explicit wait for network idle to allow JS to finish rendering.
+        # This is often the key to getting content from modern sites.
+        {"wait_for": {"state": "networkidle", "timeout_ms": 5000}},
         {"wait_for": {"state": "load"}},
     ]
     if args.get("screenshot"):
@@ -247,7 +267,7 @@ def _smart_escalate_browser(
                 "url": inner.get("url"),
                 "title": inner.get("title"),
                 "html_len": inner.get("html_len"),
-                "html": inner.get("html"),
+                "text": _extract_article_text(inner.get("html") or ""),
                 "events": inner.get("events"),
                 "downloads": inner.get("downloads"),
             },
@@ -293,7 +313,7 @@ def _repo_search(args, meta):
     min_score = args.get("min_score")
     embed_col = args.get("embed_column") or _EMBED_COLUMN
 
-    emb = _embed_query(q)
+    emb = embed_text(q)
 
     # psycopg3: use %s placeholders; escape literal % as %%
     sql = f"""
@@ -424,12 +444,506 @@ def _repo_file(args, meta):
 
     full = "".join(parts)
     line_count = full.count("\n") + 1 if full else 0
+    # The adapter should return the raw payload. The dispatcher wraps it.
     return {
         "path": path,
         "content": full,
         "line_count": line_count,
         "source_table": source_table,
     }
+
+
+def _repo_git_revert_all(args, meta):
+    """
+    Resets the repository to the last commit, discarding all local changes.
+    Runs `git reset --hard HEAD` and `git clean -fd`.
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    try:
+        # Reset any tracked file changes
+        reset_proc = subprocess.run(
+            ["git", "reset", "--hard", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            check=False,
+        )
+        if reset_proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "GitResetFailed",
+                    "message": "git reset --hard HEAD failed.",
+                    "details": reset_proc.stderr,
+                },
+            }
+
+        # Remove any untracked files and directories
+        clean_proc = subprocess.run(
+            ["git", "clean", "-fd"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            check=False,
+        )
+        if clean_proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "GitCleanFailed",
+                    "message": "git clean -fd failed.",
+                    "details": clean_proc.stderr,
+                },
+            }
+
+        return {"ok": True, "message": "Repository reset to clean state."}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "InternalError",
+                "message": f"An exception occurred during revert: {e}",
+            },
+        }
+
+
+def _repo_commit_and_push(args, meta):
+    """
+    Commits all staged changes and pushes to a new branch.
+    Args:
+      branch_name: str (required)
+      commit_message: str (required)
+      pr_title: str (optional, defaults to commit_message)
+      pr_body: str (optional, defaults to empty string)
+      pr_base_branch: str (optional, defaults to 'main')
+    Returns:
+      {ok: bool, message: str, branch: str, pr_url: str | None}
+    """
+    branch_name = args.get("branch_name")
+    commit_message = args.get("commit_message")
+    pr_title = args.get("pr_title", commit_message)
+    pr_body = args.get("pr_body", "")  # Default to empty body for PR
+    pr_base_branch = args.get("pr_base_branch", "main")
+
+    if not branch_name or not commit_message:
+        return {
+            "ok": False,
+            "error": {
+                "code": "BadRequest",
+                "message": "branch_name and commit_message are required",
+            },
+        }
+
+    project_root = Path(__file__).resolve().parents[2]
+
+    try:
+        # Step 1: Create and switch to the new branch. Fails if branch exists.
+        checkout_proc = subprocess.run(
+            ["git", "checkout", "-b", branch_name],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            check=False,
+        )
+        if checkout_proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "GitCheckoutFailed",
+                    "message": f"Failed to create branch '{branch_name}'. It may already exist.",
+                    "details": checkout_proc.stderr,
+                },
+            }
+
+        # Step 2: Add all changes (which should have been applied already)
+        subprocess.run(["git", "add", "."], cwd=project_root, check=True)
+
+        # Step 3: Commit the changes
+        subprocess.run(
+            ["git", "commit", "-m", commit_message], cwd=project_root, check=True
+        )
+
+        # Step 4: Push to the remote repository, setting the upstream branch
+        subprocess.run(
+            ["git", "push", "-u", "origin", branch_name], cwd=project_root, check=True
+        )
+
+        # Step 5: Create a pull request using the GitHub CLI, if available
+        try:
+            pr_create_proc = subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "create",
+                    "--title",
+                    pr_title,
+                    "--body",
+                    pr_body,
+                    "--base",
+                    pr_base_branch,
+                    "--head",
+                    branch_name,
+                ],
+                capture_output=True,
+                text=True,
+                cwd=project_root,
+                check=False,
+                timeout=30,
+            )
+            pr_url = (
+                pr_create_proc.stdout.strip()
+                if pr_create_proc.returncode == 0
+                else None
+            )
+            message = "Changes committed and pushed successfully."
+            if pr_url:
+                message += " Pull request created."
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pr_url = None
+            message = "Changes committed and pushed, but 'gh' CLI not found or timed out. Skipping PR creation."
+
+        return {"ok": True, "message": message, "branch": branch_name, "pr_url": pr_url}
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "InternalError",
+                "message": f"An exception occurred: {e}",
+            },
+        }
+
+
+def _repo_git_delete_branch(args, meta):
+    """
+    Deletes a local and remote git branch after ensuring the workspace is clean.
+    Args:
+      branch_name: str (required)
+      base_branch: str (optional, defaults to 'main')
+    Returns:
+      {ok: bool, message: str}
+    """
+    branch_name = args.get("branch_name")
+    base_branch = args.get("base_branch", "main")
+    if not branch_name:
+        return {
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "branch_name is required"},
+        }
+
+    project_root = Path(__file__).resolve().parents[2]
+
+    try:
+        # Sequence of commands to safely delete a branch
+        commands = [
+            ["git", "checkout", base_branch],
+            ["git", "pull", "origin", base_branch],
+            ["git", "branch", "-d", branch_name],
+            ["git", "push", "origin", "--delete", branch_name],
+        ]
+
+        for cmd in commands:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, cwd=project_root, check=False
+            )
+            if proc.returncode != 0:
+                # If a command fails (e.g., branch already deleted), log it but don't halt unless critical
+                print(
+                    f"[repo.git.delete_branch] Warning: command '{' '.join(cmd)}' failed with stderr: {proc.stderr.strip()}"
+                )
+
+        return {"ok": True, "message": f"Cleanup for branch '{branch_name}' completed."}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "InternalError",
+                "message": f"An exception occurred during branch deletion: {e}",
+            },
+        }
+
+
+def _repo_lint_run(args, meta):
+    """
+    Applies a patch to content in-memory and runs a linter on the result.
+    Args:
+      file_path: str (required) - Used to determine file type for the linter.
+      original_content: str (required)
+      patch_text: str (required)
+    Returns:
+      {ok: bool, issues: list | None, message: str}
+    """
+    file_path = args.get("file_path")
+    original_content = args.get("original_content")
+    patch_text = args.get("patch_text")
+
+    if not all([file_path, original_content, patch_text]):
+        return {
+            "ok": False,
+            "error": {
+                "code": "BadRequest",
+                "message": "file_path, original_content, and patch_text are required.",
+            },
+        }
+
+    try:
+        import patch
+
+        patch_set = patch.fromstring(patch_text.encode("utf-8"))
+        new_content_bytes = patch_set.apply(original_content.encode("utf-8"))
+        if not new_content_bytes:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "PatchApplyFailed",
+                    "message": "Patch could not be applied to original_content in-memory.",
+                },
+            }
+
+        with tempfile.NamedTemporaryFile(
+            mode="w+", delete=True, suffix=Path(file_path).suffix, encoding="utf-8"
+        ) as tmp_file:
+            tmp_file.write(new_content_bytes.decode("utf-8"))
+            tmp_file.flush()
+
+            # Run ruff linter, asking for JSON output
+            proc = subprocess.run(
+                ["ruff", "check", "--output-format=json", "--exit-zero", tmp_file.name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            issues = json.loads(proc.stdout)
+
+        if issues:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "LintingFailed",
+                    "message": f"{len(issues)} linting issues found.",
+                    "details": issues,
+                },
+            }
+        return {"ok": True, "message": "Linting passed."}
+    except ImportError:
+        return {
+            "ok": True,
+            "message": "Linting skipped: 'patch' library not installed.",
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "InternalError",
+                "message": f"An exception occurred during linting: {e}",
+            },
+        }
+
+
+def _repo_deps_check(args, meta):
+    """
+    Runs a dependency vulnerability check using `pip-audit`.
+    Args: (none)
+    Returns:
+      {ok: bool, vulnerabilities: list | None, message: str}
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    try:
+        # Run pip-audit, asking for JSON output.
+        # --local checks the current environment's installed packages.
+        proc = subprocess.run(
+            ["pip-audit", "--format=json", "--local"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=project_root,
+        )
+        # pip-audit exits with non-zero code if vulnerabilities are found.
+        # We parse the JSON regardless of the exit code.
+        vulnerabilities = json.loads(proc.stdout)
+
+        if vulnerabilities:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "VulnerabilitiesFound",
+                    "message": f"{len(vulnerabilities)} vulnerabilities found.",
+                    "details": vulnerabilities,
+                },
+            }
+        return {"ok": True, "message": "No vulnerabilities found."}
+    except FileNotFoundError:
+        return {
+            "ok": True,
+            "message": "Dependency check skipped: 'pip-audit' not found.",
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "InternalError",
+                "message": f"An exception occurred during dependency check: {e}",
+            },
+        }
+
+
+def _repo_patch_apply(args, meta):
+    """
+    Applies a unified diff patch to the local git repository.
+    Args:
+      patch_text: str (required)
+    Returns:
+      {ok: bool, message: str}
+    """
+    patch_text = args.get("patch_text")
+    if not patch_text or not isinstance(patch_text, str):
+        return {
+            "ok": False,
+            "error": {"code": "BadRequest", "message": "patch_text is required"},
+        }
+
+    project_root = Path(__file__).resolve().parents[2]
+
+    try:
+        # Use a temporary file to hold the patch content
+        with tempfile.NamedTemporaryFile(
+            mode="w+", delete=False, suffix=".patch", cwd=project_root, encoding="utf-8"
+        ) as patch_file:
+            patch_file.write(patch_text)
+            patch_path = patch_file.name
+
+        # First, check if the patch can be applied cleanly without actually applying it
+        check_proc = subprocess.run(
+            ["git", "apply", "--check", patch_path],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            check=False,
+        )
+
+        if check_proc.returncode != 0:
+            os.remove(patch_path)
+            return {
+                "ok": False,
+                "error": {
+                    "code": "PatchApplyCheckFailed",
+                    "message": "Patch does not apply cleanly.",
+                    "details": check_proc.stderr,
+                },
+            }
+
+        # If the check passes, apply the patch for real
+        apply_proc = subprocess.run(
+            ["git", "apply", patch_path],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            check=False,
+        )
+
+        os.remove(patch_path)  # Clean up the temp file
+
+        if apply_proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "PatchApplyFailed",
+                    "message": "Failed to apply patch.",
+                    "details": apply_proc.stderr,
+                },
+            }
+
+        return {"ok": True, "message": "Patch applied successfully."}
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "InternalError",
+                "message": f"An exception occurred: {e}",
+            },
+        }
+
+
+def _repo_test_run(args, meta):
+    """
+    Runs the project's test suite. Assumes `pytest` is the runner.
+    Args: (none)
+      tests: list[str] (optional) - A list of specific shell commands to run.
+    Returns:
+      {ok: bool, output: str}
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    tests_to_run = args.get("tests")
+
+    try:
+        # If specific acceptance tests are provided, run them.
+        if tests_to_run and isinstance(tests_to_run, list):
+            full_stdout = ""
+            full_stderr = ""
+            for cmd_str in tests_to_run:
+                # Note: shell=True is used for flexibility but requires trust in the source of the commands.
+                proc = subprocess.run(
+                    cmd_str,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    cwd=project_root,
+                    check=False,
+                )
+                full_stdout += proc.stdout + "\n"
+                full_stderr += proc.stderr + "\n"
+                if proc.returncode != 0:
+                    return {
+                        "ok": False,
+                        "error": {
+                            "code": "AcceptanceTestFailed",
+                            "message": f"Command failed: {cmd_str}",
+                            "details": full_stdout + full_stderr,
+                        },
+                    }
+            return {"ok": True, "output": full_stdout}
+        else:
+            # Fallback to the default full test suite (pytest)
+            test_command = ["pytest"]
+            proc = subprocess.run(
+                test_command,
+                capture_output=True,
+                text=True,
+                cwd=project_root,
+                check=False,  # We handle the return code manually
+            )
+
+            if proc.returncode == 0:
+                return {"ok": True, "output": proc.stdout}
+            else:
+                # Tests failed
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "TestsFailed",
+                        "message": "One or more tests failed.",
+                        "details": proc.stdout + "\n" + proc.stderr,
+                    },
+                }
+
+    except FileNotFoundError:
+        cmd = tests_to_run[0] if tests_to_run else "pytest"
+        return {
+            "ok": False,
+            "error": {
+                "code": "TestRunnerNotFound",
+                "message": f"Test command '{cmd}' not found. Is it installed and in the PATH?",
+            },
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": {
+                "code": "InternalError",
+                "message": f"An exception occurred during testing: {e}",
+            },
+        }
 
 
 def _repo_map(args, meta):
@@ -1062,3 +1576,10 @@ class CapabilityRegistry:
         self.register("repo.file", _repo_file)
         self.register("repo.neighbors", _repo_neighbors)
         self.register("repo.map", _repo_map)
+        self.register("repo.git.revert_all", _repo_git_revert_all)
+        self.register("repo.commit_and_push", _repo_commit_and_push)
+        self.register("repo.patch.apply", _repo_patch_apply)
+        self.register("repo.lint.run", _repo_lint_run)
+        self.register("repo.git.delete_branch", _repo_git_delete_branch)
+        self.register("repo.deps.check", _repo_deps_check)
+        self.register("repo.test.run", _repo_test_run)

@@ -5,6 +5,13 @@ import json
 import logging
 import time
 import importlib
+import sys
+from pathlib import Path
+
+# Add project root to sys.path to ensure consistent imports
+project_root = Path(__file__).resolve().parents[2]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # ✅ package-qualified imports
 from backend.services.supabase_service import supabase
@@ -62,6 +69,7 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
     rows = []
     try:
         res = supabase.table("agents").select("*").eq("status", "enabled").execute()
+        rows = getattr(res, "data", None) or []
         print(
             "[router] fetched agents:",
             [
@@ -74,8 +82,6 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
                 for r in rows
             ],
         )
-
-        rows = getattr(res, "data", None) or []
     except Exception:
         logger.exception("[router] failed to read agents table")
         rows = []
@@ -85,22 +91,36 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
         slug = (r.get("slug") or "").strip().lower()
         module_path = r.get("module_path") or f"backend.agents.{slug}_agent"
         callable_name = r.get("callable_name") or f"handle_{slug}"
-        if module_path.startswith("agents."):
+        # Normalize module path to be absolute from the project root.
+        # This handles cases where the DB stores "agents.meals_agent" instead of "backend.agents.meals_agent".
+        if not module_path.startswith("backend."):
             module_path = "backend." + module_path
         try:
-            mod = importlib.import_module(module_path)
+            handle = None
+            # Handle class-based agent pattern: "class:ClassName"
             if callable_name.startswith("class:"):
+                # Attempt to import the module first
+                mod = importlib.import_module(module_path)
                 cls_name = callable_name.split(":", 1)[1]
-                Cls = getattr(mod, cls_name)
-                inst = Cls()
-
-                def handle(q: str, _i=inst) -> dict | str:
-                    return _i.handle(q)
-
+                Cls = getattr(mod, cls_name, None)
+                if Cls and callable(Cls):
+                    # Instantiate the class and get its 'handle' method
+                    inst = Cls()
+                    handle = getattr(inst, "handle", None)
             else:
-                handle = getattr(mod, callable_name)
+                # Attempt to import the module first
+                mod = importlib.import_module(module_path)
+                # Handle simple function-based agent
+                handle = getattr(mod, callable_name, None)
+
+            if not callable(handle):
+                raise ImportError(
+                    f"Could not resolve a callable 'handle' function from '{module_path}.{callable_name}'"
+                )
+
             reg[slug] = {
                 "handle": handle,
+                "title": r.get("title") or slug.replace("_", " ").title(),
                 "desc": r.get("description") or slug,
                 "capabilities": r.get("capabilities") or [],
                 "namespaces": r.get("namespaces") or [slug],
@@ -120,7 +140,11 @@ def _load_registry(force: bool = False) -> Dict[str, Dict[str, Any]]:
 def _catalog() -> Dict[str, Any]:
     reg = _load_registry()
     return {
-        k: {"desc": v["desc"], "capabilities": v["capabilities"]}
+        k: {
+            "title": v.get("title"),
+            "desc": v["desc"],
+            "capabilities": v["capabilities"],
+        }
         for k, v in reg.items()
     }
 
@@ -131,6 +155,9 @@ ROUTER_SYSTEM = """You are the routing coordinator for a personal-agents app.
 You MUST choose an agent from AGENT_CATALOG when a user request is task-like or data-related
 and any catalog agent plausibly fits. Only use {"agent":"none", ...} for small-talk, greetings,
 or purely informational questions you can answer in one short sentence without calling an agent.
+
+The AGENT_CATALOG provides each agent's slug, title, description, and capabilities.
+Use all of this information to make the best choice.
 
 Return ONLY minified JSON in one of these schemas:
 
@@ -146,11 +173,13 @@ Return ONLY minified JSON in one of these schemas:
 
 Hard rules:
 - If at least one agent in AGENT_CATALOG plausibly matches the user task, DO NOT choose agent="none".
+- If an agent clearly matches the task but a key piece of information is missing (like a URL for a summarizer), use `clarify` to ask for it.
 - Prefer routing even if your confidence is moderate; use "clarify" only when you cannot pick between agents.
 - Use "rewrite" to turn vague user text into a crisp, actionable task for the chosen agent.
 
 Guidance (examples):
-- "show today's meals" -> route to the agent whose description/capabilities mention meals/meal planning/meal logs.
+- "summarize this article" -> agent="clarify", question="Of course, which article would you like me to summarize? Please provide the URL."
+- "show today's meals" -> route to the agent whose title, description, or capabilities mention meals/meal planning/meal logs.
 - "mark lunch done" -> route to that same meals agent; include a rewrite like "mark today's lunch complete".
 - "log today's workout" -> route to workouts agent.
 - "how much did I spend last week?" -> route to finance agent.
@@ -294,8 +323,6 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
         # Normal route
         agent = str(decision.get("agent") or "").strip().lower()
         if agent in reg:
-            text = decision.get("rewrite") or query
-
             # Log to routing memory for future retrieval
             try:
                 doc_id = (
@@ -304,7 +331,7 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
                 emb_upsert(
                     namespace="routing",
                     doc_id=doc_id,
-                    text=text,  # the post-rewrite text you routed on
+                    text=query,  # Always log the original query
                     metadata={
                         "reason": decision.get("reason"),
                         "confidence": decision.get("confidence"),
@@ -318,13 +345,16 @@ def route_request(query: str, user_id: str = "anon") -> Tuple[str, dict | str]:
 
             # Time the agent call, then log analytics
             _start = time.time()
-            result = reg[agent]["handle"](text)
+            # Use the rewritten query if the LLM provided one, otherwise use the original.
+            # This allows the router to pass more structured input to agents.
+            query_for_agent = decision.get("rewrite") or query
+            result = reg[agent]["handle"](query_for_agent)
             _latency_ms = int((time.time() - _start) * 1000)
 
             _log_decision(
                 agent_slug=agent,
                 user_id=user_id,
-                query_text=text,
+                query_text=query,
                 was_success=True,  # flip to False if you detect failures in result handling
                 latency_ms=_latency_ms,
                 extra={

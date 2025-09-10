@@ -5,7 +5,7 @@ import json
 import math
 
 from backend.services.supabase_service import supabase
-from backend.semantics.store import embed_text
+from backend.semantics.embeddings import embed_text
 
 
 def _to_vec(v: Any) -> List[float]:

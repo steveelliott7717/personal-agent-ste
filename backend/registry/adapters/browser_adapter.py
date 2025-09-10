@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import os
 import threading
 import time
@@ -228,6 +229,7 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
     ua = args.get("user_agent") or DEFAULT_UA
     viewport = args.get("viewport") or {"width": 1366, "height": 768}
     locale = args.get("locale") or "en-US"
+    headless = bool(args.get("headless", True))
     stealth = args.get("stealth") or {}
 
     # Downloads (screenshots / pdfs / file saves)
@@ -348,7 +350,7 @@ async def _with_browser(args: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
+            browser = await pw.chromium.launch(headless=headless)
 
             # Build context args (proxy, geo, tz, locale, UA, viewport, storage_state)
             context_kwargs = _build_context_kwargs(args, ua, viewport, locale)
@@ -703,6 +705,9 @@ def _run_coro_in_new_thread(coro):
     holder = {"result": None, "error": None}
 
     def runner():
+        # On Windows, Playwright needs subprocess support (Proactor policy).
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         try:
             holder["result"] = asyncio.run(coro)
         except Exception as e:

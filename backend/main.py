@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
 # Keep error texts in module-level names to avoid F821 in handlers.
 E_BACKEND_MSG: str | None = None
 E_TOP_MSG: str | None = None
+
+# On Windows, Playwright requires asyncio subprocess support.
+# SelectorEventLoopPolicy DOES NOT support subprocesses; Proactor does.
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        # Safe fallback: leave the default policy in place if this fails
+        pass
+
 
 try:
     from backend.api import app as _real_app  # type: ignore[attr-defined]

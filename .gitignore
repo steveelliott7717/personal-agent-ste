@@ -127,3 +127,7 @@ tools/ship.bat
 
 # Old artifacts
 artifacts/
+backend.zip
+settings.json
+payload.json
+curl
