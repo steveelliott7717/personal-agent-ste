@@ -552,6 +552,44 @@ async def call_agent_plan(
 # Mount the agents router canonically at /api/agents
 app.include_router(agents_router, prefix="/api/agents")
 
+
+# ---------------------------
+# Root /route (router entrypoint with fallback)
+# ---------------------------
+class RouteRequestBody(BaseModel):
+    query: str | dict
+    user_id: str = "api"
+
+
+@app.post("/route", tags=["router"])
+def handle_route_root(body: RouteRequestBody):
+    """
+    Canonical router entry: if the intelligent router is unavailable,
+    fall back to article summarizer so this endpoint never 404s.
+    """
+    # Prefer router if import succeeded above
+    if route_request is not None:
+        try:
+            q = json.dumps(body.query) if isinstance(body.query, dict) else body.query
+            agent, result = route_request(query=q, user_id=body.user_id)
+            return {"ok": True, "agent": agent, "response": result}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Fallback to direct summarizer
+    if not handle_article_summary:
+        raise HTTPException(
+            status_code=503, detail="Router unavailable and summarizer not importable"
+        )
+    return {
+        "ok": True,
+        "agent": "article_summarizer",
+        "response": handle_article_summary(
+            json.dumps(body.query) if isinstance(body.query, dict) else body.query
+        ),
+    }
+
+
 # Optional back-compat: also mount under {BASE}/api/agents if BASE is set
 if BASE and BASE.strip("/") and BASE.strip() != "/":
     app.include_router(agents_router, prefix=f"{BASE}/api/agents")
@@ -686,39 +724,6 @@ def _parse_files_artifact(s: str) -> dict[str, str]:
     return files
 
 
-def _parse_files_artifact(s: str) -> dict[str, str]:
-    """
-    Parse a FILES artifact:
-
-      BEGIN_FILE path/to/file
-      <entire new file content>
-      END_FILE
-
-    Returns: { "path/to/file": "<content>", ... }
-    """
-    files: dict[str, str] = {}
-    cur: str | None = None
-    buf: list[str] = []
-    for line in s.splitlines(keepends=True):
-        if line.startswith("BEGIN_FILE "):
-            if cur is not None:
-                files[cur] = "".join(buf)
-                buf.clear()
-            cur = line[len("BEGIN_FILE ") :].strip()
-            continue
-        if line.startswith("END_FILE"):
-            if cur is not None:
-                files[cur] = "".join(buf)
-                cur = None
-                buf.clear()
-            continue
-        if cur is not None:
-            buf.append(line)
-    if cur is not None:
-        files[cur] = "".join(buf)
-    return files
-
-
 def _synthesize_unified_patch(files: dict[str, str]) -> str:
     """
     Build a proper unified diff with valid @@ hunk ranges from on-disk content -> new file bodies.
@@ -750,188 +755,6 @@ repo_router = APIRouter(prefix=f"{BASE}/api/repo", tags=["repo"])
 @repo_router.get("/health")
 def repo_health():
     return {"ok": True, "model": os.getenv("CHAT_MODEL", "gpt-5")}
-
-
-@repo_router.post("/plan")
-def repo_plan(payload: Dict[str, Any], request: Request):
-    """
-    Plan a repo change and return either:
-      - format=files  -> FILES artifact (BEGIN_FILE/END_FILE)
-      - format=patch  -> a unified diff synthesized on the server from FILES
-    This avoids model-made diffs (which often have malformed @@ hunks).
-    """
-    task = (payload or {}).get("task")
-    if not task:
-        raise HTTPException(status_code=400, detail="Missing 'task'")
-
-    repo = payload.get("repo", "personal-agent-ste")
-    branch = payload.get("branch", "main")
-    prefix = payload.get("path_prefix", "backend/")
-    k = int(payload.get("k", 12))
-    session = payload.get("session")
-    thread_n = payload.get("thread_n")
-
-    fmt = (request.query_params.get("format") or "files").strip().lower()
-    if fmt not in {"files", "patch"}:
-        raise HTTPException(status_code=400, detail="format must be 'files' or 'patch'")
-
-    # ---------------------------
-    # 1) Return raw FILES artifact (unchanged)
-    # ---------------------------
-    if fmt == "files":
-        art = generate_artifact_from_task(
-            task,
-            repo=repo,
-            branch=branch,
-            path_prefix=prefix,
-            session=session,
-            mode="files",
-        )
-        if not art.get("ok"):
-            return PlainTextResponse(
-                str(art.get("content", "")),
-                status_code=422,
-                media_type="text/plain; charset=utf-8",
-            )
-        content = art.get("content", "")
-        content = _enforce_trailing_lf_per_file(content)
-        content = content.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
-        return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
-
-    # ---------------------------
-    # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
-    # ---------------------------
-    # ---------------------------
-    # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
-    # ---------------------------
-    # ---------------------------
-    # 2) Synthesize a patch from FILES (do NOT trust model-made diffs)
-    # ---------------------------
-    if fmt == "patch":
-        # Always ask generator for FILES, then synthesize a correct diff here
-        files_art = generate_artifact_from_task(
-            task,
-            repo=repo,
-            branch=branch,
-            path_prefix=prefix,
-            session=session,
-            mode="files",
-        )
-
-        # Normalize reply: some pipelines set ok:false but still fill 'content'
-        if not isinstance(files_art, dict):
-            return PlainTextResponse(
-                str(files_art), status_code=422, media_type="text/plain; charset=utf-8"
-            )
-
-        files_text = files_art.get("content") or ""
-        if not files_text:
-            # truly an error
-            err = str(files_art.get("error") or files_art)
-            return PlainTextResponse(
-                err, status_code=422, media_type="text/plain; charset=utf-8"
-            )
-
-        files_text = (
-            _enforce_trailing_lf_per_file(files_text)
-            .replace("\r\n", "\n")
-            .replace("\r", "\n")
-        )
-
-        # Defensive: reject any diff/fenced output from the model
-        if (
-            re.search(r"^(diff --git|--- a/|\+\+\+ b/|@@ )", files_text, flags=re.M)
-            or "```" in files_text
-            or "~~~" in files_text
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="Generator returned a diff/fenced output. Expected FILES artifact (BEGIN_FILE/END_FILE).",
-            )
-
-        # Parse FILES artifact; accept a minimal JSON fallback too
-        files = _parse_files_artifact(files_text)
-        if not files:
-            try:
-                obj = json.loads(files_text)
-                if (
-                    isinstance(obj, dict)
-                    and "file_path" in obj
-                    and "file_content" in obj
-                ):
-                    files = {obj["file_path"]: obj["file_content"]}
-            except Exception:
-                pass
-
-        if not files:
-            raise HTTPException(status_code=422, detail="No FILES artifacts found.")
-
-        # Reject likely *snippets*: if old file exists and the "new" body is much shorter,
-        # force the generator to resend full-file content instead of just the changed lines.
-        for rel, new_text in files.items():
-            p = Path(rel)
-            if p.exists():
-                try:
-                    old_text = p.read_text(encoding="utf-8")
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500, detail=f"Read failed for {rel}: {e}"
-                    )
-                # Heuristic: if old file is > 200 bytes and new_text is < 50% of it, it's probably a snippet.
-                if len(old_text) > 200 and len(new_text) < 0.5 * len(old_text):
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"FILES artifact for {rel} appears truncated. The generator must return the ENTIRE new file content, not a snippet.",
-                    )
-
-        # Build a proper unified diff from disk -> new file bodies
-        chunks: list[str] = []
-        for rel, new_text in sorted(files.items()):  # deterministic order
-            p = Path(rel)
-            try:
-                old_text = p.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                old_text = ""
-            diff = difflib.unified_diff(
-                old_text.splitlines(keepends=True),
-                new_text.splitlines(keepends=True),
-                fromfile=f"a/{rel}",
-                tofile=f"b/{rel}",
-                n=3,
-            )
-            chunk = "".join(diff)
-            if chunk:
-                chunks.append(chunk)
-
-        patch = "".join(chunks)
-        if not patch.strip():
-            # no-op vs disk; emit a harmless diff header for the first file
-            first = next(iter(sorted(files.keys())))
-            empty = "".join(
-                difflib.unified_diff(
-                    [], [], fromfile=f"a/{first}", tofile=f"b/{first}", n=3
-                )
-            )
-            patch = empty or f"--- a/{first}\n+++ b/{first}\n"
-
-        return PlainTextResponse(
-            patch.rstrip("\n") + "\n", media_type="text/x-patch; charset=utf-8"
-        )
-
-    # ---------------------------
-    # 3) Fallback: propose changes (unchanged)
-    # ---------------------------
-    out = propose_changes(
-        task,
-        repo=repo,
-        branch=branch,
-        commit="HEAD",
-        k=k,
-        path_prefix=prefix,
-        session=session,
-        thread_n=thread_n,
-    )
-    return out
 
 
 @repo_router.post("/plan")
@@ -1184,6 +1007,15 @@ async def on_shutdown():
 # ---------------------------
 @app.get(BASE + "/api/files/{path:path}")
 async def serve_file(path: str):
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(path)
+
+
+# Non-BASE alias for convenience
+@app.get("/api/files/{path:path}")
+async def serve_file_nobase(path: str):
     p = Path(path)
     if not p.exists() or not p.is_file():
         raise HTTPException(status_code=404, detail="file not found")
