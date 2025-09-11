@@ -38,6 +38,11 @@ from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
 from backend.registry.adapters.browser_adapter import browser_warmup_adapter
 from backend.registry.adapters.browser_adapter import browser_run_adapter
+from backend.registry.adapters.quality import (
+    quality_lint_adapter,
+    quality_test_adapter,
+    quality_deps_adapter,
+)
 
 _EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 _EMBED_COLUMN = os.getenv("EMBED_COLUMN", "embedding_1536")
@@ -839,20 +844,20 @@ def _repo_patch_apply(args, meta):
     if not repo_root.exists():
         return _err("InternalError", f"Repo root not found at {repo_root}")
 
-    if not shutil.which("git"):
-        return _err(
-            "GitNotFound", "The 'git' binary is not available in the container image"
-        )
+    # We may not have git in the container; only required when using patch_text or
+    # when we choose to synthesize & git-apply a patch. For files writes we don't need git.
+    has_git = shutil.which("git") is not None
 
-    # Confirm we're in a git work tree (commit/push later will need this anyway)
-    chk = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=repo_root,
-        text=True,
-        capture_output=True,
-    )
-    if chk.returncode != 0 or chk.stdout.strip() != "true":
-        return _err("NotAGitRepo", f"Directory is not a git repo: {repo_root}")
+    def _is_git_repo() -> bool:
+        if not has_git:
+            return False
+        r = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=repo_root,
+            text=True,
+            capture_output=True,
+        )
+        return r.returncode == 0 and r.stdout.strip() == "true"
 
     # -------- helpers --------
     def _normalize_newlines(text: str) -> str:
@@ -964,6 +969,42 @@ def _repo_patch_apply(args, meta):
         flush()
         return offenders
 
+    def _write_files_safely(
+        files: list[dict], allowed: list[str] | None = None
+    ) -> tuple[bool, str, list[str]]:
+        """
+        Write full file bodies to disk, enforcing allowed_paths. Returns (ok, msg, touched).
+        Each item: {"path": "backend/api.py", "content": "<full file text>\n"}
+        """
+        from pathlib import Path as _Path
+
+        touched: list[str] = []
+        for item in files:
+            rel = str((item or {}).get("path") or "").strip()
+            content = (item or {}).get("content")
+            if not rel or not isinstance(content, str):
+                return (False, f"Bad files item: {item!r}", touched)
+
+            # allowed_paths check
+            if allowed:
+                rp = rel.strip("/").replace("\\", "/")
+                if not any(
+                    rp == ap.rstrip("/") or rp.startswith(ap.rstrip("/") + "/")
+                    for ap in allowed
+                ):
+                    return (False, f"Path not allowed: {rel}", touched)
+
+            p = _Path(rel)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # normalize EOL to LF; ensure trailing newline
+            out = content.replace("\r\n", "\n").replace("\r", "\n")
+            if out and not out.endswith("\n"):
+                out += "\n"
+            p.write_text(out, encoding="utf-8")
+            touched.append(rel)
+
+        return (True, "applied", touched)
+
     # -------- args --------
     patch_text = args.get("patch_text")
     files_payload = args.get("files")  # [{"path": "...", "content": "..."}]
@@ -975,6 +1016,16 @@ def _repo_patch_apply(args, meta):
 
     # -------- path: files -> synthesize a correct diff --------
     if files_payload and isinstance(files_payload, list):
+        # --- Fast path: if the container doesn't have git or isn't a git repo, write files directly ---
+        if not _is_git_repo():
+            ok, msg, touched = _write_files_safely(files_payload, allowed_paths or None)
+            if not ok:
+                return _err("FilesApplyFailed", msg)
+            return {
+                "ok": True,
+                "result": {"status": msg, "touched": touched, "method": "files"},
+            }
+
         synthesized = []
         touched = []
         for item in files_payload:
@@ -1064,6 +1115,8 @@ def _repo_patch_apply(args, meta):
 
     # -------- path: patch_text -> validate & apply --------
     elif isinstance(patch_text, str) and patch_text.strip():
+        if not has_git or not _is_git_repo():
+            return _err("NotAGitRepo", f"Directory is not a git repo: {repo_root}")
         raw = _normalize_newlines(_strip_fences(patch_text))
 
         # Accept git preamble; slice to unified headers (--- a/…)
@@ -1894,7 +1947,6 @@ class CapabilityRegistry:
         self.register("repo.git.revert_all", _repo_git_revert_all)
         self.register("repo.commit_and_push", _repo_commit_and_push)
         self.register("repo.patch.apply", _repo_patch_apply)
-        self.register("repo.lint.run", _repo_lint_run)
         self.register("repo.git.delete_branch", _repo_git_delete_branch)
         self.register("repo.deps.check", _repo_deps_check)
         self.register("repo.test.run", _repo_test_run)

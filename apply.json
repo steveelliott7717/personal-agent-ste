@@ -1,0 +1,1 @@
+{"verb": "repo.patch.apply", "args": {"files": [{"path": "backend/api.py", "content": "from fastapi import FastAPI\nfrom backend.logging_utils import RequestLoggingMiddleware\n\napp = FastAPI()\napp.add_middleware(RequestLoggingMiddleware)"}], "allowed_paths": ["backend"]}}

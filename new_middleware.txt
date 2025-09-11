@@ -1,0 +1,2 @@
+# new_middleware.txt
+app.add_middleware(MyExampleMiddleware)

@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import os
 import uuid
 from datetime import datetime, timezone
@@ -9,7 +8,6 @@ import asyncio
 import time
 import sys
 from backend.registry.capability_registry import CapabilityRegistry
-
 
 from dotenv import load_dotenv
 from functools import lru_cache
@@ -53,7 +51,7 @@ import re
 
 # ⬇️ moved in from main.py so nothing is lost
 from backend.routers import schema as schema_router
-from backend.agents.repo_agent import generate_artifact_from_task, propose_changes
+from backend.agents.repo_agent import generate_artifact_from_task
 
 # Load .env (Supabase keys, allowlists, etc.)
 load_dotenv()
