@@ -1,5 +1,7 @@
 from __future__ import annotations
+from fastapi import FastAPI
 
+app = FastAPI()
 import os
 import uuid
 from datetime import datetime, timezone
@@ -9,6 +11,11 @@ import asyncio
 import time
 import sys
 from backend.registry.capability_registry import CapabilityRegistry
+
+
+@app.get("/ping")
+def ping():
+    return {"pong": True}
 
 
 from dotenv import load_dotenv
@@ -53,7 +60,7 @@ import re
 
 # ⬇️ moved in from main.py so nothing is lost
 from backend.routers import schema as schema_router
-from backend.agents.repo_agent import generate_artifact_from_task, propose_changes
+from backend.agents.repo_agent import generate_artifact_from_task
 
 # Load .env (Supabase keys, allowlists, etc.)
 load_dotenv()

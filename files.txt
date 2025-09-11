@@ -1,0 +1,7 @@
+BEGIN_FILE backend/api.py
+from fastapi import FastAPI
+from backend.logging_utils import RequestLoggingMiddleware
+
+app = FastAPI()
+app.add_middleware(RequestLoggingMiddleware)
+END_FILE

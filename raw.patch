@@ -1,0 +1,21 @@
+--- a/backend/api.py
++++ b/backend/api.py
+@@ -1,5 +1,7 @@
+ from __future__ import annotations
+-
++from fastapi import FastAPI
++
++app = FastAPI()
+ import os
+ import uuid
+ from datetime import datetime, timezone
+@@ -11,6 +13,9 @@
+ from backend.registry.capability_registry import CapabilityRegistry
+
+
++@app.get("/ping")
++def ping():
++    return {"pong": True}
+ from dotenv import load_dotenv
+ from functools import lru_cache
+ import logging
