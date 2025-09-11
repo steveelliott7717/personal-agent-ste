@@ -9,6 +9,7 @@ import time
 import sys
 from backend.registry.capability_registry import CapabilityRegistry
 from backend.services.jobs_curator_service import curate_jobs
+from backend.connectors.mcp_supabase import router as supabase_mcp_router
 
 from dotenv import load_dotenv
 from functools import lru_cache
@@ -249,6 +250,9 @@ async def version() -> str:
 async def root_redirect():
     return RedirectResponse(url=f"{BASE}/")
 
+
+# supabase mcp router
+app.include_router(supabase_mcp_router)
 
 # ---------------------------
 # Orchestrator & micro-plans
@@ -599,6 +603,17 @@ if BASE and BASE.strip("/") and BASE.strip() != "/":
 class ArticleSummarizeBody(BaseModel):
     url: str | None = None
     query: str | None = None
+
+
+class CurateIn(BaseModel):
+    run_id: str | None = None
+    limit: int | None = 250
+
+
+@app.post("/api/jobs/curate")
+def run_curation(payload: CurateIn = Body(...)):
+    out = curate_jobs(run_id=payload.run_id, normalized_limit=payload.limit or 250)
+    return out
 
 
 @app.post("/api/article/summarize", tags=["article"])
