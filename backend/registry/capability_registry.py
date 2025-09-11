@@ -1949,3 +1949,4 @@ class CapabilityRegistry:
         self.register("repo.git.delete_branch", _repo_git_delete_branch)
         self.register("repo.deps.check", _repo_deps_check)
         self.register("repo.test.run", _repo_test_run)
+        self.register("repo.lint.run", _repo_lint_run)

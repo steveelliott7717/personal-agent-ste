@@ -1,0 +1,12 @@
+{
+  "python": {
+    "lint": ["ruff check .", "black --check .", "mypy --ignore-missing-imports"],
+    "test": "pytest -q",
+    "deps": "pip-audit --format=json --local"
+  },
+  "node": {
+    "lint": ["npm run lint --silent || (eslint . && tsc --noEmit)"],
+    "test": "npm test --silent",
+    "deps": "npm audit --audit-level=high"
+  }
+}

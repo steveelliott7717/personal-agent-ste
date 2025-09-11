@@ -795,9 +795,12 @@ def run_update_pipeline(
             )
             return res.response_text if res.ok else ""
 
-        files_blob, final_mode = retry_artifact_generation(
-            _llm_caller, "files", user_prompt_for_llm
+        files_blob, final_mode, resolution_method = retry_artifact_generation(
+            _llm_caller, "files", user_prompt_for_llm, original_content=original
         )
+        if resolution_method == "anchor_repair":
+            _log_timeline_event(run_id, "anchor_repair_attempted", {"file": path})
+
         if not files_blob:
             _ev("executor.error", file=path, error="LLM returned empty after retries")
             continue

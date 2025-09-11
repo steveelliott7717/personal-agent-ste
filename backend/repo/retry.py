@@ -78,6 +78,7 @@ def retry_artifact_generation(
     Handles the retry loop for generating a FILES or PATCH artifact.
     Switches from PATCH to FILES mode on certain failures.
     Returns (final_output, final_mode, resolution_method).
+
     """
     policy = RetryPolicy()
     current_mode = initial_mode

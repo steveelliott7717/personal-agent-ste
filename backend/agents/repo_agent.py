@@ -151,7 +151,9 @@ def generate_artifact_from_task(
 
     # We don't pass original_content here, so snippet detection will be skipped.
     # This agent is less critical than the main updater pipeline.
-    text, final_mode, _ = retry_artifact_generation(_llm_caller, mode, user_prompt)
+    text, final_mode, _resolution_method = retry_artifact_generation(
+        _llm_caller, mode, user_prompt
+    )
 
     if final_mode == "files":
         try:
