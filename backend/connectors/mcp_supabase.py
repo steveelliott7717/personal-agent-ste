@@ -64,7 +64,7 @@ async def _call_repo_verb(verb: str, args: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/sse")
 async def mcp_sse(request: Request, authorization: str | None = Header(None)):
     # Simple bearer guard so the connector is not public
-    if CONNECTOR_TOKEN and authorization != f"Bearer {CONNECTOR_TOKEN}":
+    if CONNECTOR_TOKEN and authorization not in (None, f"Bearer {CONNECTOR_TOKEN}"):
         return Response(status_code=401)
 
     async def event_stream():
