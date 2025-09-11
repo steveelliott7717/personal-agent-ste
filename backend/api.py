@@ -9,6 +9,7 @@ import time
 import sys
 from backend.registry.capability_registry import CapabilityRegistry
 from backend.services.jobs_curator_service import curate_jobs
+from backend.connectors import mcp_supabase
 from backend.connectors.mcp_supabase import router as supabase_mcp_router
 
 from dotenv import load_dotenv
@@ -253,6 +254,7 @@ async def root_redirect():
 
 # supabase mcp router
 app.include_router(supabase_mcp_router)
+app.include_router(mcp_supabase.router)
 
 # ---------------------------
 # Orchestrator & micro-plans

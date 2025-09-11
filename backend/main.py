@@ -5,6 +5,7 @@ import sys
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
+
 # Keep error texts in module-level names to avoid F821 in handlers.
 E_BACKEND_MSG: str | None = None
 E_TOP_MSG: str | None = None

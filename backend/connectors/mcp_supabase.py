@@ -1,14 +1,18 @@
 # backend/connectors/mcp_supabase.py
-import os, json, asyncio, time
+import asyncio
+import json
+import os
+import time
 from typing import Any, Dict
+
 from fastapi import APIRouter, Request, Header, Response
 from fastapi.responses import StreamingResponse, JSONResponse
 
 # Import your registry dispatcher (adjust path if needed)
-from backend.registry.capability_registry import execute_capability
+from backend.registry.capability_registry import CapabilityRegistry
 
 # ENV
-CONNECTOR_TOKEN = os.getenv("SUPABASE_CONNECTOR_TOKEN")  # simple bearer for /sse
+CONNECTOR_TOKEN = os.getenv("SUPABASE_CONNECTOR_TOKEN")
 
 router = APIRouter(prefix="/connectors/supabase", tags=["connectors:supabase"])
 
@@ -48,16 +52,19 @@ TOOLS = [
 ]
 
 
-async def _call_repo_verb(verb: str, args: Dict[str, Any]) -> Dict[str, Any]:
+def _call_repo_verb(
+    verb: str, args: Dict[str, Any], meta: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Fast path: directly use your CapabilityRegistry dispatcher.
     This preserves logging, idempotency, retries, RLS, etc.
     """
-    # If your execute_capability is sync, wrap in threadpool; if it’s async, await it.
-    res = await execute_capability(verb, args)  # your repo returns a dict {ok:..., ...}
+    # The registry dispatcher is synchronous, so we call it directly.
+    registry = CapabilityRegistry()
+    res = registry.dispatch(verb, args, meta)
     # Normalize a little for MCP client ergonomics
     if not isinstance(res, dict):
-        return {"ok": False, "error": "unexpected return type from execute_capability"}
+        return {"ok": False, "error": "unexpected return type from registry.dispatch"}
     return res
 
 
@@ -94,8 +101,9 @@ async def mcp_sse(request: Request, authorization: str | None = Header(None)):
 # Convenience REST shims (used by ChatGPT custom connector “Actions” or by you for smoke tests)
 @router.post("/tool/db.read")
 async def tool_read(body: Dict[str, Any]):
+    meta = {"source": "mcp_supabase_connector"}
     try:
-        res = await _call_repo_verb("db.read", body or {})
+        res = _call_repo_verb("db.read", body or {}, meta)
         return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -103,8 +111,9 @@ async def tool_read(body: Dict[str, Any]):
 
 @router.post("/tool/db.write")
 async def tool_write(body: Dict[str, Any]):
+    meta = {"source": "mcp_supabase_connector"}
     try:
-        res = await _call_repo_verb("db.write", body or {})
+        res = _call_repo_verb("db.write", body or {}, meta)
         return JSONResponse(res)
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
