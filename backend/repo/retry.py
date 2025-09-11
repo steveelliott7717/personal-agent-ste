@@ -92,9 +92,16 @@ def retry_artifact_generation(
                 "malformed_diff", attempt + 1, current_mode, switching_to="files"
             )
             current_mode = "files"
+            attempt += 1
             continue  # Retry with the new mode
 
-        # If we've passed all checks for the current mode, it's valid.
+        # If we are in 'files' mode and the output is still a malformed diff, it's a failure.
+        if current_mode == "files" and _is_malformed_diff(last_output):
+            _log_retry("malformed_diff_in_files_mode", attempt + 1, current_mode)
+            attempt += 1
+            continue  # Try again in files mode
+
+        # If we've passed all checks for the current mode, the output is considered valid.
         return last_output, current_mode
 
         attempt += 1

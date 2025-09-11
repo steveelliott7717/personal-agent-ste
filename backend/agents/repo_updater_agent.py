@@ -5,6 +5,7 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.agents.orchestrator import Orchestrator
+from backend.repo.retry import retry_artifact_generation
 from backend.services.supabase_service import supabase
 from backend.llm.llm_runner import run_llm_agent
 from backend.registry.capability_registry import flatten_result
@@ -781,16 +782,26 @@ def run_update_pipeline(
             for cpath, cbody in ctx_map.items():
                 prompt_parts.append(f"### {cpath}\n{cbody}\n")
 
-        exec_res = run_llm_agent(
-            agent_slug="repo_updater_executor",
-            user_text="\n".join(prompt_parts),
-            run_id=run_id,
+        # Use the new retry logic instead of a direct LLM call
+        user_prompt_for_llm = "\n".join(prompt_parts)
+
+        def _llm_caller(system_prompt: str, user_prompt: str) -> str:
+            # The executor agent doesn't use a system prompt from settings, so we pass it directly.
+            res = run_llm_agent(
+                agent_slug="repo_updater_executor",
+                user_text=user_prompt,
+                system_prompt=system_prompt,
+                run_id=run_id,
+            )
+            return res.response_text if res.ok else ""
+
+        files_blob, final_mode = retry_artifact_generation(
+            _llm_caller, "files", user_prompt_for_llm
         )
-        if not exec_res.ok:
-            _ev("executor.error", file=path, error=exec_res.error)
+        if not files_blob:
+            _ev("executor.error", file=path, error="LLM returned empty after retries")
             continue
 
-        files_blob = _strip_markdown_json(exec_res.response_text)
         # Reject fenced or diff-looking payloads
         if (
             "```" in files_blob
