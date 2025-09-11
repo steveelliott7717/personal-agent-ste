@@ -7,12 +7,14 @@ from pathlib import Path
 
 # Ensure the backend is in the path
 project_root = Path(__file__).resolve().parents[1]
+original_path = sys.path[:]
 sys.path.insert(0, str(project_root))
 
-from backend.registry.anchors import (
-    find_anchor,
-    apply_anchor,
-)  # backend.repo.anchors in prompt, but registry.anchors is correct
+try:
+    from backend.registry.anchors import find_anchor, apply_anchor
+finally:
+    # Restore the original path to avoid side effects
+    sys.path[:] = original_path
 
 
 def main():

@@ -138,7 +138,11 @@ def retry_artifact_generation(
                         applied=applied_anchors,
                     )
                     # Return the repaired content, not the snippet
-                    return repaired_content, "files", "anchor_repair"
+                    return (
+                        repaired_content,
+                        "files",
+                        {"method": "anchor_repair", "anchors_used": applied_anchors},
+                    )
 
             # If repair fails, log it and continue the retry loop for a new LLM response
             _log_retry("anchor_repair_failed", attempt + 1, current_mode)
@@ -146,9 +150,9 @@ def retry_artifact_generation(
             continue
 
         # If we've passed all checks for the current mode, the output is considered valid.
-        return last_output, current_mode, "llm_direct"
+        return last_output, current_mode, {"method": "llm_direct"}
 
         attempt += 1
 
     # If all attempts fail, return the last output and mode.
-    return last_output, current_mode, "failed"
+    return last_output, current_mode, {"method": "failed"}
