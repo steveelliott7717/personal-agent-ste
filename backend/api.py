@@ -8,13 +8,14 @@ import asyncio
 import time
 import sys
 from backend.registry.capability_registry import CapabilityRegistry
+from backend.services.jobs_curator_service import curate_jobs
 
 from dotenv import load_dotenv
 from functools import lru_cache
 import logging
 
 
-from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
+from fastapi import FastAPI, HTTPException, Header, APIRouter, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     HTMLResponse,
@@ -26,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
+from starlette.background import BackgroundTasks
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -53,6 +55,7 @@ import re
 # ⬇️ moved in from main.py so nothing is lost
 from backend.routers import schema as schema_router
 from backend.agents.repo_agent import generate_artifact_from_task
+
 
 # Load .env (Supabase keys, allowlists, etc.)
 load_dotenv()
@@ -1136,6 +1139,17 @@ class JobsRunRequest(BaseModel):
     run_id: Optional[str] = None
     max_fetch_loops: int = 5
     shortlist_limit: int = 25
+
+
+class CurateIn(BaseModel):
+    run_id: str | None = None
+    limit: int | None = 250
+
+
+@jobs_router.post("/curate")
+def run_curation(payload: CurateIn = Body(...)):
+    out = curate_jobs(run_id=payload.run_id, normalized_limit=payload.limit or 250)
+    return out
 
 
 def run_jobs_pipeline_sync(req: JobsRunRequest, correlation_id: str):
