@@ -5,42 +5,14 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
+from backend.repo.retry import retry_artifact_generation
+
 try:
     from openai import OpenAI  # OpenAI SDK v1
 
     _openai = OpenAI()
 except Exception:
     _openai = None
-
-FILES_SYSTEM = (
-    "You return updated files, not a diff.\n\n"
-    "OUTPUT FORMAT (STRICT)\n"
-    "- For each file to write, emit exactly:\n"
-    "  BEGIN_FILE <path>\n"
-    "  <full ASCII content with LF newlines, ends with exactly one LF>\n"
-    "  END_FILE\n"
-    "- Nothing outside these blocks. No prose, JSON, or markdown fences.\n\n"
-    "SCOPE\n"
-    "- Edit ONLY files under PATH_PREFIX.\n"
-    "- Keep edits minimal and surgical. Do not reformat unrelated code.\n\n"
-    "FORBIDDEN\n"
-    "- Duplicate app creation/middleware/imports.\n"
-    "- Changing dotenv/CORS unless explicitly requested.\n"
-    "- Non-ASCII, CRLF, or code fences.\n\n"
-    "SELF-CHECK BEFORE ANSWERING\n"
-    "1) First non-empty line starts with 'BEGIN_FILE '.\n"
-    "2) Every BEGIN_FILE path starts with PATH_PREFIX.\n"
-    "3) ASCII-only, LF-only, exactly one trailing LF per file.\n"
-)
-
-PATCH_SYSTEM = (
-    "You output ONLY a single unified diff (git-apply ready). No prose, JSON, or markdown fences. ASCII+LF, one trailing LF.\n"
-    "Scope: edit only under PATH_PREFIX.\n"
-    "Rules:\n"
-    "- Modified files: header order diff/index/--- a/ +++ b/, hunks start @@, body lines start with space,'+','-','\\'.\n"
-    "- New files: --- /dev/null then +++ b/<path>, all body lines '+'.\n"
-    "- One section per file; no duplicate '+++'. All b/<path> start with PATH_PREFIX.\n"
-)
 
 
 def _ascii_lf(s: str) -> str:
@@ -172,11 +144,14 @@ def generate_artifact_from_task(
         raise ValueError("task must be a non-empty string")
     model = os.getenv(model_env, default_model)
     _ = _build_context(path_prefix)
-    header = f"PATH_PREFIX={path_prefix or ''}\nMODE={mode}\n\n"
-    system = FILES_SYSTEM if mode == "files" else PATCH_SYSTEM
-    text = _chat(model, system, header + "TASK\n" + task)
+    user_prompt = f"PATH_PREFIX={path_prefix or ''}\nMODE={mode}\n\nTASK\n{task}"
 
-    if mode == "files":
+    def _llm_caller(system_prompt: str, user_prompt: str) -> str:
+        return _chat(model, system_prompt, user_prompt)
+
+    text, final_mode = retry_artifact_generation(_llm_caller, mode, user_prompt)
+
+    if final_mode == "files":
         try:
             files = _parse_files_output(text, path_prefix=path_prefix)
         except Exception as e:

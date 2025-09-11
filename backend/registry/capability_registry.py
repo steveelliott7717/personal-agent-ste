@@ -38,6 +38,11 @@ from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
 from backend.registry.adapters.browser_adapter import browser_warmup_adapter
 from backend.registry.adapters.browser_adapter import browser_run_adapter
+from backend.registry.adapters.quality import (
+    quality_lint_adapter,
+    quality_test_adapter,
+    quality_deps_adapter,
+)
 
 _EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 _EMBED_COLUMN = os.getenv("EMBED_COLUMN", "embedding_1536")
@@ -1942,7 +1947,6 @@ class CapabilityRegistry:
         self.register("repo.git.revert_all", _repo_git_revert_all)
         self.register("repo.commit_and_push", _repo_commit_and_push)
         self.register("repo.patch.apply", _repo_patch_apply)
-        self.register("repo.lint.run", _repo_lint_run)
         self.register("repo.git.delete_branch", _repo_git_delete_branch)
         self.register("repo.deps.check", _repo_deps_check)
         self.register("repo.test.run", _repo_test_run)

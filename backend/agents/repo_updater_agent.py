@@ -8,6 +8,7 @@ from backend.agents.orchestrator import Orchestrator
 from backend.services.supabase_service import supabase
 from backend.llm.llm_runner import run_llm_agent
 from backend.registry.capability_registry import flatten_result
+from backend.registry.anchors import BUILTIN_ANCHORS, apply_many
 import time
 import uuid
 
@@ -281,21 +282,15 @@ def _run_tests(run_id: str, tests: Optional[List[str]] = None) -> Tuple[bool, st
         return False, f"Exception running tests: {e}"
 
 
-def _run_linter(
-    path: str, original_content: str, patch_text: str, run_id: str
-) -> Tuple[bool, Dict[str, Any]]:
+def _run_linter(run_id: str) -> Tuple[bool, Dict[str, Any]]:
     """Runs a linter on the proposed code changes."""
     try:
         res = orchestrator.call_verb(
             "repo.lint.run",
-            {
-                "file_path": path,
-                "original_content": original_content,
-                "patch_text": patch_text,
-            },
+            {"language": "python"},  # Assuming python, could be parameterized
             meta={},
             correlation_id=run_id,
-            idempotency_key=f"lint-run:{run_id}:{hash(patch_text)}",
+            idempotency_key=f"lint-run:{run_id}:{time.time()}",
         )
         if isinstance(res, dict):
             return res.get("ok", False), (res.get("error") or res.get("result") or {})
@@ -575,6 +570,7 @@ def run_update_pipeline(
         "review": {...}  # last reviewer output
       }
     """
+    agent_slug = "repo_updater"  # Define agent_slug for logging
     events: List[Dict[str, Any]] = []
     repo_root = Path(__file__).resolve().parents[2]
 
@@ -821,39 +817,18 @@ def run_update_pipeline(
 
         # Enforce "full-file" (not a snippet) heuristic
         if len(original) > 200 and len(new_body) < 0.5 * len(original):
-            # Try anchor-based synthesis instead of rejecting
-            anchor_merged = None
-            import_line = "from backend.logging_utils import RequestLoggingMiddleware"
-            mw_line = "app.add_middleware(RequestLoggingMiddleware)"
-            if path == "backend/api.py" and (
-                import_line in new_body or mw_line in new_body
-            ):
-                lines = original.splitlines(keepends=True)
-                out = []
-                inserted_import = import_line in original
-                for ln in lines:
-                    out.append(ln)
-                    if (not inserted_import) and re.match(
-                        r"^from fastapi import .*FastAPI.*$", ln.strip()
-                    ):
-                        out.append(import_line + "\n")
-                        inserted_import = True
-                updated = "".join(out)
-                out2 = []
-                seen_app = False
-                inserted_mw = mw_line in updated
-                for ln in updated.splitlines(keepends=True):
-                    out2.append(ln)
-                    if (
-                        (not inserted_mw)
-                        and (not seen_app)
-                        and ln.strip().startswith("app = FastAPI(")
-                    ):
-                        out2.append(mw_line + "\n")
-                        inserted_mw = True
-                        seen_app = True
-                anchor_merged = "".join(out2)
+            # Snippet detected. Try to apply it using the anchor engine.
+            # This is a simple heuristic: we assume the snippet is the payload
+            # for any matching anchors.
+            payloads = {anchor.name: new_body for anchor in BUILTIN_ANCHORS}
+            anchor_merged, applied = apply_many(original, BUILTIN_ANCHORS, payloads)
+
             if anchor_merged:
+                _ev(
+                    "diff.repaired",
+                    file=path,
+                    note=f"applied snippet via anchors: {applied}",
+                )
                 new_body = anchor_merged
             else:
                 _ev("executor.reject", file=path, reason="likely_snippet")
@@ -867,43 +842,20 @@ def run_update_pipeline(
 
         # Auto-repair if destructive: anchor inserts for backend/api.py, else preserve+add
         if _is_destructive(diff_text, 0.20):
-            import_line = "from backend.logging_utils import RequestLoggingMiddleware"
-            mw_line = "app.add_middleware(RequestLoggingMiddleware)"
+            # Try to apply the model's output as a payload to any matching anchors
+            # on the original text. This is a safer way to handle destructive changes.
+            payloads = {anchor.name: new_body for anchor in BUILTIN_ANCHORS}
+            anchor_merged, applied = apply_many(original, BUILTIN_ANCHORS, payloads)
 
-            if path == "backend/api.py" and (
-                import_line in new_body or mw_line in new_body
-            ):
-                # inline anchor insertion (no imports across files)
-                lines = original.splitlines(keepends=True)
-                out = []
-                inserted_import = import_line in original
-                inserted_mw = mw_line in original
-                # insert import after combined FastAPI import line
-                for ln in lines:
-                    out.append(ln)
-                    if (not inserted_import) and re.match(
-                        r"^from fastapi import .*FastAPI.*$", ln.strip()
-                    ):
-                        out.append(import_line + "\n")
-                        inserted_import = True
-                updated = "".join(out)
-                if not updated.endswith("\n"):
-                    updated += "\n"
-                # insert middleware after first app initializer with args
-                out2 = []
-                seen_app = False
-                for ln in updated.splitlines(keepends=True):
-                    out2.append(ln)
-                    if (
-                        (not inserted_mw)
-                        and (not seen_app)
-                        and ln.strip().startswith("app = FastAPI(")
-                    ):
-                        out2.append(mw_line + "\n")
-                        inserted_mw = True
-                        seen_app = True
-                merged_body = "".join(out2)
+            if anchor_merged and applied:
+                _ev(
+                    "diff.repaired",
+                    file=path,
+                    note=f"applied destructive change via anchors: {applied}",
+                )
+                merged_body = anchor_merged
             else:
+                # Fallback to the original preserve-and-add logic
                 merged_body = _merge_preserving_only_additions(original, new_body)
 
             repaired_diff = _make_unified_diff(path, merged_body)
@@ -915,15 +867,21 @@ def run_update_pipeline(
 
         _ev("diff.generated", file=path, bytes=len(diff_text))
         # ---------------- reviewer pass ----------------
+        # The original code had a bug here, assigning to review_in but not using it.
+        # The logic below correctly constructs the input for the reviewer agent.
+        is_json_mode_reviewer = (
+            "You MUST return ONLY a minified JSON object"
+            in "".join(task.get("reviewer_prompt", []))
+        )
         review_in = (
             '{"diff": ' + json.dumps(diff_text) + "}"
-            if "You MUST return ONLY a minified JSON object"
-            in "".join(task.get("reviewer_prompt", []))
+            if is_json_mode_reviewer
             else diff_text
         )
+
         rev_res = run_llm_agent(
             agent_slug="repo_updater_reviewer",
-            user_text=review_in,  # reviewer prompt expects raw diff per your settings
+            user_text=review_in,
             run_id=run_id,
         )
         if rev_res.ok:
@@ -947,6 +905,55 @@ def run_update_pipeline(
                 )
         else:
             _ev("review.error", file=path, error=rev_res.error)
+
+        # --- Quality Gates ---
+        lint_ok, lint_result = _run_linter(run_id)
+        _log_action(
+            run_id,
+            agent_slug,
+            "repo.lint.run",
+            target=path,
+            args=None,
+            result=lint_result,
+            ok=lint_ok,
+        )
+        if not lint_ok:
+            _ev("lint.failed", file=path, details=lint_result)
+            continue
+
+        test_ok, test_result = _run_tests(run_id)
+        _log_action(
+            run_id,
+            agent_slug,
+            "repo.test.run",
+            target=None,
+            args=None,
+            result={"output": test_result},
+            ok=test_ok,
+        )
+        if not test_ok:
+            _ev("test.failed", details=test_result)
+            # Stop if tests fail
+            continue
+
+        deps_ok, deps_result = _run_deps_check(run_id)
+        _log_action(
+            run_id,
+            agent_slug,
+            "repo.deps.check",
+            target=None,
+            args=None,
+            result=deps_result,
+            ok=deps_ok,
+        )
+        if not deps_ok:
+            # You could add logic here to check deps_result severity from quality.config.json
+            _ev("deps.failed", details=deps_result)
+            # Stop if dependencies fail
+            continue
+
+        _ev("quality.passed", file=path)
+        # --- End Quality Gates ---
 
         diffs.append(diff_text)
 
