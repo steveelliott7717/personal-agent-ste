@@ -42,8 +42,8 @@ from backend.registry.adapters.browser_adapter import (
 from backend.registry.adapters.browser_adapter import (
     browser_run_adapter,
 )  # Keep this import
-from backend.agents.jobs_curator import (
-    run_jobs_curator,
+from backend.agents.jobs_curator_agent import (
+    run_jobs_curator,  # The deterministic implementation
 )
 
 _EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
