@@ -826,55 +826,11 @@ def run_update_pipeline(
             _ev("executor.reject", file=path, reason="missing_file_body")
             continue
 
-        # Enforce "full-file" (not a snippet) heuristic
-        if len(original) > 200 and len(new_body) < 0.5 * len(original):
-            # Snippet detected. Try to apply it using the anchor engine.
-            # This is a simple heuristic: we assume the snippet is the payload
-            # for any matching anchors.
-            payloads = {anchor.name: new_body for anchor in BUILTIN_ANCHORS}
-            anchor_merged, applied = apply_many(original, BUILTIN_ANCHORS, payloads)
-
-            if anchor_merged:
-                _ev(
-                    "diff.repaired",
-                    file=path,
-                    note=f"applied snippet via anchors: {applied}",
-                )
-                new_body = anchor_merged
-            else:
-                _ev("executor.reject", file=path, reason="likely_snippet")
-                continue
-
         # Synthesize a correct unified diff
         diff_text = _make_unified_diff(path, new_body)
         if not diff_text.strip():
             _ev("diff.noop", file=path)
             continue
-
-        # Auto-repair if destructive: anchor inserts for backend/api.py, else preserve+add
-        if _is_destructive(diff_text, 0.20):
-            # Try to apply the model's output as a payload to any matching anchors
-            # on the original text. This is a safer way to handle destructive changes.
-            payloads = {anchor.name: new_body for anchor in BUILTIN_ANCHORS}
-            anchor_merged, applied = apply_many(original, BUILTIN_ANCHORS, payloads)
-
-            if anchor_merged and applied:
-                _ev(
-                    "diff.repaired",
-                    file=path,
-                    note=f"applied destructive change via anchors: {applied}",
-                )
-                merged_body = anchor_merged
-            else:
-                # Fallback to the original preserve-and-add logic
-                merged_body = _merge_preserving_only_additions(original, new_body)
-
-            repaired_diff = _make_unified_diff(path, merged_body)
-            if repaired_diff.strip() and not _is_destructive(repaired_diff, 0.20):
-                _ev("diff.repaired", file=path, note="converted to insert-only")
-                diff_text = repaired_diff
-            else:
-                _ev("diff.repair_failed", file=path)
 
         _ev("diff.generated", file=path, bytes=len(diff_text))
         # ---------------- reviewer pass ----------------

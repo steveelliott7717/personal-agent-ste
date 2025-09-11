@@ -6,8 +6,10 @@ import time
 import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Any, List, Tuple
+from typing import Optional
 
 from backend.repo.prompts import RMS_FILES_MODE, RMS_PATCH_MODE
+from backend.registry.anchors import BUILTIN_ANCHORS, apply_many
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,16 @@ def _is_malformed_diff(text: str) -> bool:
     return bool(has_headers and not has_hunks)
 
 
+def _is_snippet(original_content: Optional[str], new_content: str) -> bool:
+    """Heuristic to detect if the model returned a snippet instead of a full file."""
+    if not original_content or not new_content:
+        return False
+    # A snippet is likely if the original was large and the new content is much smaller.
+    return len(original_content) > 200 and len(new_content) < 0.5 * len(
+        original_content
+    )
+
+
 def _log_retry(reason: str, attempt: int, mode: str, **kwargs):
     """Placeholder for structured telemetry logging."""
     logger.warning(
@@ -60,10 +72,12 @@ def retry_artifact_generation(
     llm_call: Callable[[str, str], str],
     initial_mode: str,
     initial_user_prompt: str,
-) -> Tuple[str, str]:
+    original_content: Optional[str] = None,
+) -> Tuple[str, str, str]:
     """
     Handles the retry loop for generating a FILES or PATCH artifact.
     Switches from PATCH to FILES mode on certain failures.
+    Returns (final_output, final_mode, resolution_method).
     """
     policy = RetryPolicy()
     current_mode = initial_mode
@@ -101,10 +115,39 @@ def retry_artifact_generation(
             attempt += 1
             continue  # Try again in files mode
 
+        # Snippet detection and anchor-based repair for FILES mode
+        if current_mode == "files" and _is_snippet(original_content, last_output):
+            _log_retry(
+                "snippet_detected",
+                attempt + 1,
+                current_mode,
+                switching_to="anchor_repair",
+            )
+            if original_content:
+                # The snippet is the payload for the anchors
+                payloads = {anchor.name: last_output for anchor in BUILTIN_ANCHORS}
+                repaired_content, applied_anchors = apply_many(
+                    original_content, BUILTIN_ANCHORS, payloads
+                )
+                if applied_anchors:
+                    _log_retry(
+                        "anchor_repair_successful",
+                        attempt + 1,
+                        current_mode,
+                        applied=applied_anchors,
+                    )
+                    # Return the repaired content, not the snippet
+                    return repaired_content, "files", "anchor_repair"
+
+            # If repair fails, log it and continue the retry loop for a new LLM response
+            _log_retry("anchor_repair_failed", attempt + 1, current_mode)
+            attempt += 1
+            continue
+
         # If we've passed all checks for the current mode, the output is considered valid.
-        return last_output, current_mode
+        return last_output, current_mode, "llm_direct"
 
         attempt += 1
 
     # If all attempts fail, return the last output and mode.
-    return last_output, current_mode
+    return last_output, current_mode, "failed"

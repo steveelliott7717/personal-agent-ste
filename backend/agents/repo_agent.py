@@ -149,7 +149,9 @@ def generate_artifact_from_task(
     def _llm_caller(system_prompt: str, user_prompt: str) -> str:
         return _chat(model, system_prompt, user_prompt)
 
-    text, final_mode = retry_artifact_generation(_llm_caller, mode, user_prompt)
+    # We don't pass original_content here, so snippet detection will be skipped.
+    # This agent is less critical than the main updater pipeline.
+    text, final_mode, _ = retry_artifact_generation(_llm_caller, mode, user_prompt)
 
     if final_mode == "files":
         try:
