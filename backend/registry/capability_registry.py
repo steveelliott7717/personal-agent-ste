@@ -42,6 +42,9 @@ from backend.registry.adapters.browser_adapter import (
 from backend.registry.adapters.browser_adapter import (
     browser_run_adapter,
 )  # Keep this import
+from backend.agents.jobs_curator import (
+    run_jobs_curator,
+)
 
 _EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 _EMBED_COLUMN = os.getenv("EMBED_COLUMN", "embedding_1536")
@@ -1950,3 +1953,4 @@ class CapabilityRegistry:
         self.register("repo.deps.check", _repo_deps_check)
         self.register("repo.test.run", _repo_test_run)
         self.register("repo.lint.run", _repo_lint_run)
+        self.register("jobs.curator", run_jobs_curator)

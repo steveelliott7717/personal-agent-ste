@@ -42,6 +42,7 @@ from backend.models.messages import (
 # orchestrator (meta-agent)
 from backend.agents.orchestrator import Orchestrator
 from backend.agents.article_summarizer_agent import handle_article_summary
+from backend.agents.jobs_runner import _agent_loop, _run_notifier, _run_overseer
 from backend.logging_utils import RequestLoggingMiddleware
 
 import json
@@ -1124,6 +1125,150 @@ def repo_files(payload: Dict[str, Any]):
 
 
 app.include_router(repo_router)
+
+# ---------------------------
+# ⬇️ JOBS API (new runner)
+# ---------------------------
+jobs_router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+class JobsRunRequest(BaseModel):
+    run_id: Optional[str] = None
+    max_fetch_loops: int = 5
+    shortlist_limit: int = 25
+
+
+def run_jobs_pipeline_sync(req: JobsRunRequest, correlation_id: str):
+    """The synchronous implementation of the jobs pipeline runner."""
+    run_id = req.run_id or uuid.uuid4().hex
+    orchestrator = Orchestrator()
+
+    def _call_agent(agent_slug: str, user_text: str, run_id: str) -> Dict[str, Any]:
+        """Helper to run an agent via the LLM loop."""
+        return _agent_loop(agent_slug, user_text, run_id)
+
+    def _call_verb(verb: str, args: Dict[str, Any], run_id: str) -> Dict[str, Any]:
+        """Helper to call a deterministic verb via the orchestrator."""
+        meta = {"source": "jobs-runner"}
+        idem_key = f"{run_id}-{verb}-{json.dumps(args, sort_keys=True)}"
+        return orchestrator.call_verb(
+            verb, args, meta, correlation_id=run_id, idempotency_key=idem_key
+        )
+
+    def _update_run(patch: Dict[str, Any]):
+        try:
+            _call_verb(
+                "db.write",
+                {"table": "jobs_runs", "update": patch, "where": {"run_id": run_id}},
+                run_id,
+            )
+        except Exception:
+            pass  # best-effort
+
+    try:
+        # 1. Initialize run
+        _update_run({"status": "running", "run_id": run_id})
+
+        # 2. Discoverer
+        disc_out = _call_agent("jobs_discoverer", "Proceed with your task.", run_id)
+        discoveries = (disc_out.get("finish", {}) or {}).get("discoveries", 0)
+        _update_run({"discoveries": discoveries})
+
+        # 3. Fetcher (loop)
+        total_fetched = 0
+        for i in range(req.max_fetch_loops):
+            fetch_out = _call_agent("jobs_fetcher", "Proceed with your task.", run_id)
+            fetched_this_loop = (fetch_out.get("finish", {}) or {}).get("fetched", 0)
+            if fetched_this_loop == 0:
+                break  # Queue is likely empty
+            total_fetched += fetched_this_loop
+        _update_run({"fetched": total_fetched})
+
+        # 4. Extractor
+        extr_out = _call_agent("jobs_extractor", "Proceed with your task.", run_id)
+        extracted = (extr_out.get("finish", {}) or {}).get("extracted", 0)
+        _update_run({"extracted": extracted})
+
+        # 5. Scorer
+        score_out = _call_agent("jobs_scorer", "Proceed with your task.", run_id)
+        shortlist = (score_out.get("finish", {}) or {}).get("shortlist", [])
+        _update_run({"shortlist_count": len(shortlist)})
+
+        # 6. Curator (new)
+        curator_out = _call_verb(
+            "jobs.curator", {"run_id": run_id, "limit": 300}, run_id
+        )
+        upserted = ((curator_out.get("result") or {}).get("finish") or {}).get(
+            "upserted", 0
+        )
+        _update_run({"upserted": upserted})
+
+        # 7. Notifier
+        notifier_out = _run_notifier(shortlist[: req.shortlist_limit], run_id)
+        notified = ((notifier_out.get("finish", {}) or {}) or {}).get("sent", 0)
+        _update_run({"notified_count": notified})
+
+        # 8. Overseer
+        _run_overseer(
+            run_id,
+            disc_out,
+            {"finish": {"fetched": total_fetched}},
+            extr_out,
+            score_out,
+            notifier_out,
+        )
+
+        # 9. Finalize run
+        final_patch = {
+            "status": "succeeded",
+            "finished_at": "now()",
+        }
+        _update_run(final_patch)
+
+        return {
+            "run_id": run_id,
+            "status": "succeeded",
+            "discoveries": discoveries,
+            "fetched": total_fetched,
+            "extracted": extracted,
+            "upserted": upserted,
+            "notified": notified,
+        }
+
+    except Exception as e:
+        error_message = f"Pipeline failed: {e}"
+        _update_run(
+            {"status": "failed", "error": error_message, "finished_at": "now()"}
+        )
+        return {
+            "run_id": run_id,
+            "status": "failed",
+            "error": error_message,
+        }
+
+
+@jobs_router.post("/run")
+async def run_jobs_pipeline(
+    req: JobsRunRequest,
+    background_tasks: BackgroundTasks,
+    request: Request,
+):
+    """
+    Triggers the end-to-end jobs pipeline asynchronously.
+    """
+    correlation_id = getattr(request.state, "correlation_id", uuid.uuid4().hex)
+
+    # Run the pipeline in the background to avoid long-hanging HTTP requests.
+    background_tasks.add_task(run_jobs_pipeline_sync, req, correlation_id)
+
+    return {
+        "ok": True,
+        "message": "Jobs pipeline triggered successfully in the background.",
+        "run_id": req.run_id or "newly-generated",
+    }
+
+
+app.include_router(jobs_router)
 
 # ---------------------------
 # Schema router (moved here from main.py)
