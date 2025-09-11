@@ -36,13 +36,12 @@ from backend.semantics.embeddings import embed_text
 from backend.registry.adapters.db_read import db_read_adapter
 from backend.registry.adapters.db_write import db_write_adapter
 from backend.registry.adapters.notify_push import notify_push_adapter
-from backend.registry.adapters.browser_adapter import browser_warmup_adapter
-from backend.registry.adapters.browser_adapter import browser_run_adapter
-from backend.registry.adapters.quality import (
-    quality_lint_adapter,
-    quality_test_adapter,
-    quality_deps_adapter,
-)
+from backend.registry.adapters.browser_adapter import (
+    browser_warmup_adapter,
+)  # Keep this import
+from backend.registry.adapters.browser_adapter import (
+    browser_run_adapter,
+)  # Keep this import
 
 _EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 _EMBED_COLUMN = os.getenv("EMBED_COLUMN", "embedding_1536")

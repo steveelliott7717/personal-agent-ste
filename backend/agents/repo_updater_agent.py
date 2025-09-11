@@ -6,10 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from backend.agents.orchestrator import Orchestrator
 from backend.repo.retry import retry_artifact_generation
-from backend.services.supabase_service import supabase
+from backend.services.supabase_service import supabase  # Keep this import
 from backend.llm.llm_runner import run_llm_agent
-from backend.registry.capability_registry import flatten_result
-from backend.registry.anchors import BUILTIN_ANCHORS, apply_many
 import time
 import uuid
 

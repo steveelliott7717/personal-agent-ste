@@ -1,6 +1,6 @@
 # tests/test_quality_adapter.py
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import json
 from pathlib import Path
 

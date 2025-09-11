@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from dataclasses import dataclass
+from typing import Literal, Optional
 
 InsertMode = Literal["before", "after", "replace", "append_end"]
 
