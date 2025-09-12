@@ -7,10 +7,12 @@ from typing import Optional, List, Dict, Any
 import asyncio
 import time
 import sys
-from backend.registry.capability_registry import CapabilityRegistry
+from backend.registry.capability_registry import (
+    CapabilityRegistry,
+    register_builtin_capabilities,
+)
 from backend.services.jobs_curator_service import curate_jobs
-from backend.connectors import mcp_supabase
-from backend.connectors.mcp_supabase import router as supabase_mcp_router
+from backend.connectors.mcp_supabase import router as supabase_router
 
 from dotenv import load_dotenv
 from functools import lru_cache
@@ -126,7 +128,8 @@ app = FastAPI(title="Personal Agent API", version=VERSION)
 
 # Shared capability registry (used by /agents/verbs and /agents/verb)
 registry = CapabilityRegistry()
-app.state.registry = registry
+registry_builtin = register_builtin_capabilities(registry)
+app.state.registry_builtin = registry_builtin
 
 orchestrator = Orchestrator()
 
@@ -253,8 +256,7 @@ async def root_redirect():
 
 
 # supabase mcp router
-app.include_router(supabase_mcp_router)
-app.include_router(mcp_supabase.router)
+app.include_router(supabase_router)
 
 # ---------------------------
 # Orchestrator & micro-plans

@@ -42,12 +42,22 @@ from backend.registry.adapters.browser_adapter import (
 from backend.registry.adapters.browser_adapter import (
     browser_run_adapter,
 )  # Keep this import
-from backend.agents.jobs_curator_agent import (
-    run_jobs_curator,  # The deterministic implementation
-)
+
 
 _EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 _EMBED_COLUMN = os.getenv("EMBED_COLUMN", "embedding_1536")
+
+
+def register_builtin_capabilities(registry: "CapabilityRegistry") -> None:
+    """
+    Register capabilities that depend on agent modules.
+    Import is deferred to avoid circular imports at module import time.
+    """
+    # Local import breaks `registry -> agent -> registry` cycle
+    from backend.agents.jobs_curator_agent import run_jobs_curator  # type: ignore
+
+    # Safe to register now that the module finished importing
+    registry.register("jobs.curator", run_jobs_curator)
 
 
 # Postgres DSN (use the pooler if available)
@@ -1953,4 +1963,3 @@ class CapabilityRegistry:
         self.register("repo.deps.check", _repo_deps_check)
         self.register("repo.test.run", _repo_test_run)
         self.register("repo.lint.run", _repo_lint_run)
-        self.register("jobs.curator", run_jobs_curator)

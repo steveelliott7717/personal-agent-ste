@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import re
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from backend.registry.capability_registry import CapabilityRegistry, flatten_result
+from backend.registry.capability_registry import flatten_result
+
+if TYPE_CHECKING:
+    from backend.registry.capability_registry import CapabilityRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,8 @@ def run_jobs_curator(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, An
     Reads from jobs_normalized, enriches, and upserts into the final `jobs` table.
     This is a deterministic function using only the capability registry.
     """
+    from backend.registry.capability_registry import CapabilityRegistry
+
     registry = CapabilityRegistry()
     run_id = args.get("run_id")
     limit = int(args.get("limit", 200))

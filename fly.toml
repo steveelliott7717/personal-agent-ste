@@ -7,7 +7,27 @@ primary_region = "iad"
 [env]
   PORT = "8080"
 
+# ---------------- Processes ----------------
+[processes]
+  app = "bash -lc 'python -m uvicorn backend.api:app --host 0.0.0.0 --port 8080'"
+  exporter = "bash -lc 'supervisord -c /etc/supervisor/conf.d/supervisord.exporter.conf'"
+
+# VM for the exporter process (headless worker)
+[[vm]]
+  processes = ["exporter"]
+  size = "shared-cpu-1x"
+  memory_mb = 512
+
+# Bridge needs persistent state
+[[mounts]]
+  source = "bridge_data"
+  destination = "/data"
+  processes = ["exporter"]
+
+# ---------------- Services (web) ----------------
+# IMPORTANT: bind this service to the web ("app") process
 [[services]]
+  processes = ["app"]
   internal_port = 8080
   protocol = "tcp"
 
