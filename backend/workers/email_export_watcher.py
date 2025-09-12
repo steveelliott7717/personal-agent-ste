@@ -3,7 +3,8 @@ import os, re, time, ssl, email, imaplib, datetime as dt, requests, io, zipfile,
 from email.header import decode_header
 from typing import Optional, List
 from supabase import create_client
-
+import html
+import string
 
 # ---------- Config from env ----------
 IMAP_HOST = os.environ["IMAP_HOST"]
@@ -114,9 +115,61 @@ def find_download_url_from_msg(msg) -> Optional[str]:
 
 
 def download_zip(url: str) -> bytes:
-    r = requests.get(url, timeout=180, allow_redirects=True)
-    r.raise_for_status()
-    return r.content
+    """
+    Download the export ZIP. Some chatgpt.com links return 4xx to bare clients.
+    We retry with browser-like headers and short backoff.
+    """
+    import time
+
+    HEADERS = {
+        # Chrome-like UA
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        # Helps some CDNs on chatgpt.com
+        "Referer": "https://chatgpt.com/",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+
+    for attempt in range(1, 6):
+        try:
+            r = requests.get(url, timeout=180, allow_redirects=True, headers=HEADERS)
+            ct = (r.headers.get("Content-Type") or "").lower()
+            print(
+                f"[dbg] download attempt={attempt} status={r.status_code} ct={ct} len={len(r.content)}"
+            )
+
+            # Success path: any 2xx with non-html/octet-stream-ish is OK
+            if 200 <= r.status_code < 300:
+                # Sometimes it's application/octet-stream; that's fine.
+                if "text/html" in ct and len(r.content) < 1024:
+                    # tiny HTML often means error page; keep trying
+                    raise requests.HTTPError(f"html small body: {len(r.content)}")
+                return r.content
+
+            # 403/422 transient? Short backoff and retry
+            if r.status_code in (403, 422, 429, 503):
+                time.sleep(1.5 * attempt)
+                continue
+
+            # Any other 4xx/5xx -> raise
+            r.raise_for_status()
+
+        except Exception as e:
+            print(f"[dbg] download error attempt={attempt}: {e}")
+            time.sleep(1.0 * attempt)
+
+    # If we failed all attempts, surface a helpful error
+    raise RuntimeError(
+        "Failed to download export ZIP after headered retries. "
+        "If the link is old, request a fresh export email and try again."
+    )
 
 
 def upload_export_and_log(content: bytes, message_id: Optional[str]) -> str:
