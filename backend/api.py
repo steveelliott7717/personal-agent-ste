@@ -11,7 +11,6 @@ from backend.registry.capability_registry import (
     CapabilityRegistry,
     register_builtin_capabilities,
 )
-from backend.services.jobs_curator_service import curate_jobs
 from backend.connectors.mcp_supabase import router as supabase_router
 
 from dotenv import load_dotenv
@@ -19,7 +18,7 @@ from functools import lru_cache
 import logging
 
 
-from fastapi import FastAPI, HTTPException, Header, APIRouter, Request, Body
+from fastapi import FastAPI, HTTPException, Header, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     HTMLResponse,
@@ -614,20 +613,6 @@ class CurateIn(BaseModel):
     limit: int | None = 250
 
 
-@app.post("/api/article/summarize", tags=["article"])
-def api_article_summarize(body: ArticleSummarizeBody):
-    """
-    Direct entry to the article summarizer.
-    Accepts either {"url": "..."} or {"query": "..."} (query may contain a URL).
-    """
-    if body.url:
-        # pass as JSON string that the handler understands
-        return handle_article_summary(json.dumps({"url": body.url}))
-    if body.query:
-        return handle_article_summary(body.query)
-    raise HTTPException(status_code=400, detail="Provide 'url' or 'query'")
-
-
 @app.post(f"{BASE}/api/article/summarize", tags=["article"])
 def api_article_summarize_base(body: ArticleSummarizeBody):
     return api_article_summarize(body)
@@ -1152,11 +1137,6 @@ class JobsRunRequest(BaseModel):
     run_id: Optional[str] = None
     max_fetch_loops: int = 5
     shortlist_limit: int = 25
-
-
-class CurateIn(BaseModel):
-    run_id: str | None = None
-    limit: int | None = 250
 
 
 def run_jobs_pipeline_sync(req: JobsRunRequest, correlation_id: str):
