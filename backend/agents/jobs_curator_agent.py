@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import re
 import logging
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple
 
 from backend.registry.capability_registry import flatten_result
-
-if TYPE_CHECKING:
-    from backend.registry.capability_registry import CapabilityRegistry
 
 logger = logging.getLogger(__name__)
 

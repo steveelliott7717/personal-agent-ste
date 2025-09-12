@@ -614,12 +614,6 @@ class CurateIn(BaseModel):
     limit: int | None = 250
 
 
-@app.post("/api/jobs/curate")
-def run_curation(payload: CurateIn = Body(...)):
-    out = curate_jobs(run_id=payload.run_id, normalized_limit=payload.limit or 250)
-    return out
-
-
 @app.post("/api/article/summarize", tags=["article"])
 def api_article_summarize(body: ArticleSummarizeBody):
     """
@@ -1163,12 +1157,6 @@ class JobsRunRequest(BaseModel):
 class CurateIn(BaseModel):
     run_id: str | None = None
     limit: int | None = 250
-
-
-@jobs_router.post("/curate")
-def run_curation(payload: CurateIn = Body(...)):
-    out = curate_jobs(run_id=payload.run_id, normalized_limit=payload.limit or 250)
-    return out
 
 
 def run_jobs_pipeline_sync(req: JobsRunRequest, correlation_id: str):
