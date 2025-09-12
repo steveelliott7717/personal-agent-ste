@@ -116,58 +116,59 @@ def find_download_url_from_msg(msg) -> Optional[str]:
 
 def download_zip(url: str) -> bytes:
     """
-    Download the export ZIP. Some chatgpt.com links return 4xx to bare clients.
-    We retry with browser-like headers and short backoff.
+    Download the export ZIP from chatgpt.com estuary. Some edges 403/422 to bare clients.
+    We retry with browser-like headers and fallback to chat.openai.com if needed.
     """
     import time
+    import urllib.parse as up
 
+    # Chrome-like browser headers
     HEADERS = {
-        # Chrome-like UA
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/125.0.0.0 Safari/537.36"
         ),
-        "Accept": "*/*",
+        "Accept": "application/zip,application/octet-stream,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        # Helps some CDNs on chatgpt.com
         "Referer": "https://chatgpt.com/",
         "Connection": "keep-alive",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
+        # no cookies; link is signed
     }
 
+    def try_get(u: str, attempt: int):
+        r = requests.get(u, timeout=180, allow_redirects=True, headers=HEADERS)
+        ct = (r.headers.get("Content-Type") or "").lower()
+        print(
+            f"[dbg] dl attempt={attempt} url_host={up.urlparse(u).netloc} status={r.status_code} ct={ct} len={len(r.content)}"
+        )
+        return r
+
+    # Retry up to 5x; on persistent 403/422, swap host to chat.openai.com and try again
     for attempt in range(1, 6):
-        try:
-            r = requests.get(url, timeout=180, allow_redirects=True, headers=HEADERS)
-            ct = (r.headers.get("Content-Type") or "").lower()
-            print(
-                f"[dbg] download attempt={attempt} status={r.status_code} ct={ct} len={len(r.content)}"
-            )
+        r = try_get(url, attempt)
+        if 200 <= r.status_code < 300:
+            return r.content
 
-            # Success path: any 2xx with non-html/octet-stream-ish is OK
-            if 200 <= r.status_code < 300:
-                # Sometimes it's application/octet-stream; that's fine.
-                if "text/html" in ct and len(r.content) < 1024:
-                    # tiny HTML often means error page; keep trying
-                    raise requests.HTTPError(f"html small body: {len(r.content)}")
-                return r.content
+        if r.status_code in (403, 422, 429, 503):
+            # fallback host swap on first failure against chatgpt.com
+            parsed = up.urlparse(url)
+            if parsed.netloc == "chatgpt.com":
+                url_fallback = up.urlunparse(parsed._replace(netloc="chat.openai.com"))
+                r2 = try_get(url_fallback, attempt)
+                if 200 <= r2.status_code < 300:
+                    return r2.content
+                # if still blocked, continue retries
+            time.sleep(1.5 * attempt)
+            continue
 
-            # 403/422 transient? Short backoff and retry
-            if r.status_code in (403, 422, 429, 503):
-                time.sleep(1.5 * attempt)
-                continue
+        # Anything else: raise
+        r.raise_for_status()
 
-            # Any other 4xx/5xx -> raise
-            r.raise_for_status()
-
-        except Exception as e:
-            print(f"[dbg] download error attempt={attempt}: {e}")
-            time.sleep(1.0 * attempt)
-
-    # If we failed all attempts, surface a helpful error
     raise RuntimeError(
-        "Failed to download export ZIP after headered retries. "
+        "Failed to download export ZIP after headered retries (403/422). "
         "If the link is old, request a fresh export email and try again."
     )
 
