@@ -15,7 +15,7 @@ import time
 from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger("mcp.min")

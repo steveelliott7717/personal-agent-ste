@@ -2,8 +2,8 @@
 # Robust Gmail/IMAP watcher for ChatGPT export emails:
 # - Selects Gmail folders safely (quotes names with spaces/brackets)
 # - Finds latest unread export email from OpenAI
-# - Extracts the actual ZIP download URL from HTML (handles meta-refresh, JS redirects, relative hrefs)
-# - Downloads ZIP with host fallbacks (chatgpt.com -> chat.openai.com)
+# - Extracts the export URL from HTML (handles &amp;, relative hrefs, meta refresh, JS redirects)
+# - Tries HTTP first; if still HTML, falls back to Playwright to download with a real session
 # - Stores ZIP in Supabase Storage and upserts conversations into a table
 # - Marks the email as read (and optionally deletes) on success
 
@@ -15,15 +15,19 @@ import html
 import string
 import urllib.parse as up
 
+# Playwright fallback helper
+from backend.workers.export_browser import download_via_browser
+
 # ---------- Config from env ----------
 IMAP_HOST = os.environ["IMAP_HOST"]
 IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
 IMAP_SSL = os.environ.get("IMAP_SSL", "true").lower() == "true"
 IMAP_USER = os.environ["IMAP_USER"]
 IMAP_PASS = os.environ["IMAP_PASS"]
-IMAP_FOLDER = os.environ.get("IMAP_FOLDER", "INBOX")
+IMAP_FOLDER = os.environ.get("IMAP_FOLDER", "[Gmail]/All Mail")
 POLL_SECS = int(os.environ.get("POLL_SECS", "120"))
 
+# Sender/subject: be permissive; default to substring 'openai.com'
 SENDER = os.environ.get("EXPORT_SENDER", "openai.com").lower()
 SUBJECT_PHRASE = os.environ.get("EXPORT_SUBJECT_PHRASE", "export").lower()
 URL_REGEX = re.compile(r'https?://[^\s">]+', re.IGNORECASE)
@@ -100,7 +104,6 @@ def connect_imap():
     M.login(IMAP_USER, IMAP_PASS)
 
     candidates: List[str] = [IMAP_FOLDER, "[Gmail]/All Mail", "INBOX"]
-    # Try exact user-provided, then common Gmail variants, all quoted
     for box in [c for c in candidates if c]:
         if _select_quoted(M, box):
             return M
@@ -213,7 +216,7 @@ def download_zip(url: str) -> bytes:
         )
         return r
 
-    MAX_ATTEMPTS = 6
+    MAX_ATTEMPTS = 5
     RETRY_STATUSES = {403, 422, 429, 503}
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -246,7 +249,7 @@ def download_zip(url: str) -> bytes:
                     if 200 <= zr2.status_code < 300 and "text/html" not in zct2:
                         return zr2.content
 
-        # Direct host fallback
+        # Direct host fallback (original URL)
         need_alt = (r.status_code in RETRY_STATUSES) or ("text/html" in ct)
         parsed = up.urlparse(url)
         if need_alt and parsed.netloc in ("chatgpt.com", "chat.openai.com"):
@@ -273,10 +276,15 @@ def download_zip(url: str) -> bytes:
 
         time.sleep(1.25 * attempt)
 
-    raise RuntimeError(
-        "Failed to download export ZIP after parsing HTML and host fallbacks. "
-        "If the email link is old, trigger a fresh export and try again."
-    )
+    # LAST CHANCE: authenticated browser download with Playwright
+    tmp_path = "/data/pw_downloads/export_tmp.zip"
+    print("[dbg] falling back to Playwright browser download...")
+    download_via_browser(url, tmp_path)
+    with open(tmp_path, "rb") as f:
+        blob = f.read()
+    if not blob or len(blob) < 1024:
+        raise RuntimeError("Downloaded file is empty or too small.")
+    return blob
 
 
 def upload_export_and_log(content: bytes, message_id: Optional[str]) -> str:

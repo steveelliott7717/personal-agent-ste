@@ -619,7 +619,7 @@ class CurateIn(BaseModel):
 
 @app.post(f"{BASE}/api/article/summarize", tags=["article"])
 def api_article_summarize_base(body: ArticleSummarizeBody):
-    return api_article_summarize(body)
+    return handle_article_summary(body.dict())
 
 
 # ---------------------------

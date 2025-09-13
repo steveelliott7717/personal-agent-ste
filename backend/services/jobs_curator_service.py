@@ -144,7 +144,7 @@ def curate_jobs(
     batch_size = 200
     for i in range(0, len(upsert_rows), batch_size):
         batch = upsert_rows[i : i + batch_size]
-        res = (
+        (
             supabase.table("jobs")
             .upsert(batch, on_conflict="url", returning="minimal")
             .execute()
