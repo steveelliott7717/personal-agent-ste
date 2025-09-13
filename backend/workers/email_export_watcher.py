@@ -7,7 +7,19 @@
 # - Stores ZIP in Supabase Storage and upserts conversations into a table
 # - Marks the email as read (and optionally deletes) on success
 
-import os, re, time, ssl, email, imaplib, datetime as dt, requests, io, zipfile, json, hashlib
+import os
+import re
+import time
+import ssl
+import email
+import imaplib
+import datetime as dt
+import requests
+import io
+import zipfile
+import json
+import hashlib
+
 from email.header import decode_header
 from typing import Optional, List
 from supabase import create_client

@@ -1,7 +1,11 @@
 # backend/workers/export_browser.py
-import os, time, json, re, html, urllib.parse as up
+import os
+import time
+import json
+import urllib.parse as up  # keep this alias because it’s used for urlparse/urlunparse
+
 from pathlib import Path
-from playwright.sync_api import sync_playwright, Error as PwError
+from playwright.sync_api import sync_playwright
 
 PW_STATE_PATH = Path(os.environ.get("PW_STATE_PATH", "/data/pw_state.json"))
 SEED_TOKEN = os.environ.get("CHATGPT_SESSION_TOKEN", "")  # optional seed
