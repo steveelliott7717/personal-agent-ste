@@ -116,13 +116,13 @@ def find_download_url_from_msg(msg) -> Optional[str]:
 
 def download_zip(url: str) -> bytes:
     """
-    Download the export ZIP from chatgpt.com estuary. Some edges 403/422 to bare clients.
-    We retry with browser-like headers and fallback to chat.openai.com if needed.
+    Download the export ZIP from chatgpt.com estuary.
+    If the response is HTML, parse out the real .zip link and fetch that.
+    Falls back to chat.openai.com host if chatgpt.com refuses us.
     """
-    import time
-    import urllib.parse as up
+    import time, re, html, urllib.parse as up
+    from typing import Optional
 
-    # Chrome-like browser headers
     HEADERS = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -135,41 +135,96 @@ def download_zip(url: str) -> bytes:
         "Connection": "keep-alive",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
-        # no cookies; link is signed
     }
+
+    HREF_RE = re.compile(r'href=["\']([^"\']+\.zip[^"\']*)["\']', re.IGNORECASE)
 
     def try_get(u: str, attempt: int):
         r = requests.get(u, timeout=180, allow_redirects=True, headers=HEADERS)
         ct = (r.headers.get("Content-Type") or "").lower()
         print(
-            f"[dbg] dl attempt={attempt} url_host={up.urlparse(u).netloc} status={r.status_code} ct={ct} len={len(r.content)}"
+            f"[dbg] dl attempt={attempt} host={up.urlparse(u).netloc} status={r.status_code} ct={ct} len={len(r.content)}"
         )
         return r
 
-    # Retry up to 5x; on persistent 403/422, swap host to chat.openai.com and try again
+    def extract_zip_from_html(body: str) -> Optional[str]:
+        body = html.unescape(body)
+        m = HREF_RE.search(body)
+        if not m:
+            return None
+        candidate = m.group(1).strip()
+        # normalize relative URLs (if any)
+        if candidate.startswith("/"):
+            # assume same origin as chatgpt.com
+            candidate = up.urlunparse(
+                up.urlparse(url)._replace(
+                    path=candidate, query="", params="", fragment=""
+                )
+            )
+        return candidate
+
     for attempt in range(1, 6):
         r = try_get(url, attempt)
-        if 200 <= r.status_code < 300:
-            return r.content
+        ct = (r.headers.get("Content-Type") or "").lower()
 
+        if 200 <= r.status_code < 300:
+            # success if not HTML
+            if "text/html" not in ct:
+                return r.content
+
+            # HTML page: try to extract a .zip link and download that
+            zurl = extract_zip_from_html(r.text)
+            if zurl:
+                zr = try_get(zurl, attempt)
+                if (
+                    200 <= zr.status_code < 300
+                    and "text/html"
+                    not in (zr.headers.get("Content-Type") or "").lower()
+                ):
+                    return zr.content
+                # fallback host swap for the extracted URL too
+                parsed = up.urlparse(zurl)
+                if parsed.netloc == "chatgpt.com":
+                    zurl2 = up.urlunparse(parsed._replace(netloc="chat.openai.com"))
+                    zr2 = try_get(zurl2, attempt)
+                    if (
+                        200 <= zr2.status_code < 300
+                        and "text/html"
+                        not in (zr2.headers.get("Content-Type") or "").lower()
+                    ):
+                        return zr2.content
+
+        # on specific transient statuses, try host fallback then backoff
         if r.status_code in (403, 422, 429, 503):
-            # fallback host swap on first failure against chatgpt.com
             parsed = up.urlparse(url)
             if parsed.netloc == "chatgpt.com":
-                url_fallback = up.urlunparse(parsed._replace(netloc="chat.openai.com"))
-                r2 = try_get(url_fallback, attempt)
-                if 200 <= r2.status_code < 300:
+                alt = up.urlunparse(parsed._replace(netloc="chat.openai.com"))
+                r2 = try_get(alt, attempt)
+                if (
+                    200 <= r2.status_code < 300
+                    and "text/html"
+                    not in (r2.headers.get("Content-Type") or "").lower()
+                ):
                     return r2.content
-                # if still blocked, continue retries
+                # if alt still HTML, try parsing alt HTML too
+                if "text/html" in (r2.headers.get("Content-Type") or "").lower():
+                    zurl = extract_zip_from_html(r2.text)
+                    if zurl:
+                        zr = try_get(zurl, attempt)
+                        if (
+                            200 <= zr.status_code < 300
+                            and "text/html"
+                            not in (zr.headers.get("Content-Type") or "").lower()
+                        ):
+                            return zr.content
             time.sleep(1.5 * attempt)
             continue
 
-        # Anything else: raise
         r.raise_for_status()
 
     raise RuntimeError(
-        "Failed to download export ZIP after headered retries (403/422). "
-        "If the link is old, request a fresh export email and try again."
+        "Failed to download export ZIP after parsing HTML and host fallbacks. "
+        "If the email link is old, trigger a fresh export and try again."
     )
 
 
