@@ -12,6 +12,7 @@ from backend.registry.capability_registry import (
     register_builtin_capabilities,
 )
 from backend.connectors.mcp_supabase import router as supabase_router
+from backend.routers.shortcuts_ingest import router as shortcuts_router
 
 from dotenv import load_dotenv
 from functools import lru_cache
@@ -256,6 +257,9 @@ async def root_redirect():
 
 # supabase mcp router
 app.include_router(supabase_router)
+
+# shortcuts router
+app.include_router(shortcuts_router)
 
 # ---------------------------
 # Orchestrator & micro-plans
