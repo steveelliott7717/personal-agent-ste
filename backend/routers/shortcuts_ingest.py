@@ -14,7 +14,7 @@ HEALTH_TABLE = os.getenv("HEALTH_TABLE_NAME", "health_metrics")
 
 
 class StepsPayload(BaseModel):
-    day: str  # "YYYY-MM-DD"
+    date: str  # "YYYY-MM-DD"
     steps: int
     device_id: str | None = None  # optional
 
@@ -32,7 +32,7 @@ def ingest_steps(
     if token != INGEST_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    row = {"date": payload.day, "steps": payload.steps, "device_id": payload.device_id}
+    row = {"date": payload.date, "steps": payload.steps, "device_id": payload.device_id}
     # upsert into Supabase (create table beforehand)
     resp = supabase.table(HEALTH_TABLE).upsert(row, on_conflict="date").execute()
     return {"ok": True, "rows": getattr(resp, "data", [])}
