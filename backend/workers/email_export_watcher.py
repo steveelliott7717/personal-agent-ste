@@ -1,5 +1,6 @@
 # backend/workers/email_export_watcher.py
 # Robust Gmail/IMAP watcher for ChatGPT export emails:
+# - Selects Gmail folders safely (quotes names with spaces/brackets)
 # - Finds latest unread export email from OpenAI
 # - Extracts the actual ZIP download URL from HTML (handles meta-refresh, JS redirects, relative hrefs)
 # - Downloads ZIP with host fallbacks (chatgpt.com -> chat.openai.com)
@@ -23,7 +24,6 @@ IMAP_PASS = os.environ["IMAP_PASS"]
 IMAP_FOLDER = os.environ.get("IMAP_FOLDER", "INBOX")
 POLL_SECS = int(os.environ.get("POLL_SECS", "120"))
 
-# Be permissive: default to substring 'openai.com' so it matches noreply@tm.openai.com too.
 SENDER = os.environ.get("EXPORT_SENDER", "openai.com").lower()
 SUBJECT_PHRASE = os.environ.get("EXPORT_SUBJECT_PHRASE", "export").lower()
 URL_REGEX = re.compile(r'https?://[^\s">]+', re.IGNORECASE)
@@ -74,6 +74,23 @@ def decode_subj(raw: Optional[str]) -> str:
     return out
 
 
+def _select_quoted(M, mailbox: str) -> bool:
+    # Quote mailbox names with spaces/brackets for Gmail (e.g. "[Gmail]/All Mail")
+    mbx = (
+        mailbox
+        if (mailbox.startswith('"') and mailbox.endswith('"'))
+        else f'"{mailbox}"'
+    )
+    try:
+        typ, _ = M.select(mbx)
+        if typ == "OK":
+            print(f"[imap] selected mailbox: {mbx}")
+            return True
+    except Exception as e:
+        print(f"[imap] select {mbx} failed: {e}")
+    return False
+
+
 def connect_imap():
     if IMAP_SSL:
         M = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
@@ -81,22 +98,13 @@ def connect_imap():
         M = imaplib.IMAP4(IMAP_HOST, IMAP_PORT)
         M.starttls(ssl_context=ssl.create_default_context())
     M.login(IMAP_USER, IMAP_PASS)
-    # Try desired folder; if it fails (Gmail naming oddities), attempt common alternates.
-    typ, _ = M.select(IMAP_FOLDER)
-    if typ != "OK":
-        for alt in (
-            "INBOX",
-            "[Gmail]/All Mail",
-            "[Gmail]/All Mail",
-            "[Gmail]/All Mail",
-        ):
-            typ, _ = M.select(alt)
-            if typ == "OK":
-                print(f"[info] fallback-selected folder: {alt}")
-                break
-        else:
-            raise RuntimeError(f"Could not select IMAP folder: '{IMAP_FOLDER}'")
-    return M
+
+    candidates: List[str] = [IMAP_FOLDER, "[Gmail]/All Mail", "INBOX"]
+    # Try exact user-provided, then common Gmail variants, all quoted
+    for box in [c for c in candidates if c]:
+        if _select_quoted(M, box):
+            return M
+    raise RuntimeError(f"Could not select IMAP folder; tried: {candidates}")
 
 
 def extract_urls(payload, charset: Optional[str]) -> List[str]:
@@ -107,19 +115,12 @@ def extract_urls(payload, charset: Optional[str]) -> List[str]:
             text = ""
     else:
         text = payload or ""
-
-    # Find raw candidates
     candidates = [u for u in URL_REGEX.findall(text) if u.startswith("https://")]
-
     cleaned: List[str] = []
     for u in candidates:
-        # 1) Unescape HTML entities (e.g., &amp;)
         u = html.unescape(u)
-        # 2) Strip trailing junk
         u = u.rstrip(")\"' ;" + string.whitespace)
         cleaned.append(u)
-
-    # Prefer likely export links (contain .zip and estuary/content)
     cleaned.sort(
         key=lambda u: (".zip" in u, "estuary/content" in u, "openai" in u, len(u)),
         reverse=True,
@@ -128,24 +129,17 @@ def extract_urls(payload, charset: Optional[str]) -> List[str]:
 
 
 def _normalize_relative(base_url: str, candidate: str) -> str:
-    """
-    Turn '/backend-api/estuary/content?...' into 'https://host/backend-api/estuary/content?...'
-    while preserving the candidate's own query string.
-    """
     base = up.urlparse(base_url)
     cand = up.urlparse(candidate)
-    # Join with base while preserving candidate query
+    # Keep candidate's query string; use base host/scheme
     return up.urlunparse((base.scheme, base.netloc, cand.path, "", cand.query, ""))
 
 
 def _extract_zip_from_html(page_html: str, base_url: str) -> Optional[str]:
-    """
-    Try several strategies to extract a real ZIP link from an HTML landing page.
-    """
-    body = html.unescape(page_html)
+    body = html.unescape(page_html or "")
 
     # 1) <a href="...zip...">
-    m = re.search(r'href=["\']([^"\']+?\.zip[^"\']*)["\']', body, re.IGNORECASE)
+    m = re.search(r'href=["\']([^"\']+?\.zip[^"\']*)["\']', body, re.I)
     if m:
         href = m.group(1).strip()
         return _normalize_relative(base_url, href) if href.startswith("/") else href
@@ -154,35 +148,27 @@ def _extract_zip_from_html(page_html: str, base_url: str) -> Optional[str]:
     m = re.search(
         r'http-equiv=["\']refresh["\'][^>]*content=["\'][^"\']*url=([^"\']+?\.zip[^"\']*)["\']',
         body,
-        re.IGNORECASE,
+        re.I,
     )
     if m:
         href = m.group(1).strip()
         return _normalize_relative(base_url, href) if href.startswith("/") else href
 
-    # 3) JS redirects: location.href = "....zip...." or location.assign("....zip....")
+    # 3) JS redirects: location.href / location.assign("...zip...")
     m = re.search(
-        r'location(?:\.href|\.assign)\((["\'])([^"\']+?\.zip[^"\']*)\1\)',
-        body,
-        re.IGNORECASE,
+        r'location(?:\.href|\.assign)\((["\'])([^"\']+?\.zip[^"\']*)\1\)', body, re.I
     )
     if m:
         href = m.group(2).strip()
         return _normalize_relative(base_url, href) if href.startswith("/") else href
 
-    # 4) Any estuary content link (absolute), even if '.zip' is omitted (some variants)
+    # 4) any estuary content link (absolute or relative) as fallback
     m = re.search(
-        r'["\'](https?://[^"\']*?/backend-api/estuary/content[^"\']*?)["\']',
-        body,
-        re.IGNORECASE,
+        r'["\'](https?://[^"\']*?/backend-api/estuary/content[^"\']*?)["\']', body, re.I
     )
     if m:
         return m.group(1).strip()
-
-    # 5) Any estuary content link (relative)
-    m = re.search(
-        r'["\'](/backend-api/estuary/content[^"\']*?)["\']', body, re.IGNORECASE
-    )
+    m = re.search(r'["\'](/backend-api/estuary/content[^"\']*?)["\']', body, re.I)
     if m:
         return _normalize_relative(base_url, m.group(1).strip())
 
@@ -190,13 +176,7 @@ def _extract_zip_from_html(page_html: str, base_url: str) -> Optional[str]:
 
 
 def find_download_url_from_msg(msg) -> Optional[str]:
-    """
-    Returns the first plausible URL from the message body; we will
-    still treat HTML landing pages by parsing out the real ZIP URL.
-    """
-
     def pick(urls: List[str]) -> Optional[str]:
-        # Prefer explicit .zip but fall back to first candidate
         for u in urls:
             if ".zip" in u:
                 return u
@@ -220,14 +200,8 @@ def find_download_url_from_msg(msg) -> Optional[str]:
 
 
 def download_zip(url: str) -> bytes:
-    """
-    Download the export ZIP from chatgpt.com estuary.
-    - Follows redirects
-    - If the response is HTML, parse out the real .zip link (handles relative, meta-refresh, JS redirects)
-    - Falls back to chat.openai.com host if chatgpt.com refuses us
-    """
     session = requests.Session()
-    session.headers.update(BASE_HEADERS)
+    session.headers.update({**BASE_HEADERS})
 
     def try_get(u: str, attempt: int, label: str = "") -> requests.Response:
         r = session.get(u, timeout=180, allow_redirects=True)
@@ -245,12 +219,12 @@ def download_zip(url: str) -> bytes:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         r = try_get(url, attempt)
 
-        # Fast path: got a non-HTML payload
+        # Non-HTML: treat as ZIP payload
         ct = (r.headers.get("Content-Type") or "").lower()
         if 200 <= r.status_code < 300 and "text/html" not in ct:
             return r.content
 
-        # HTML page: try to extract a .zip or estuary link
+        # HTML landing: try extract .zip and fetch
         if "text/html" in ct and r.text:
             zurl = _extract_zip_from_html(r.text, url)
             if zurl:
@@ -258,8 +232,7 @@ def download_zip(url: str) -> bytes:
                 zct = (zr.headers.get("Content-Type") or "").lower()
                 if 200 <= zr.status_code < 300 and "text/html" not in zct:
                     return zr.content
-
-                # host swap for the extracted URL too
+                # host swap for extracted link
                 parsed = up.urlparse(zurl)
                 alt_host = (
                     "chat.openai.com"
@@ -273,7 +246,7 @@ def download_zip(url: str) -> bytes:
                     if 200 <= zr2.status_code < 300 and "text/html" not in zct2:
                         return zr2.content
 
-        # Host fallback (original URL), on specific transient statuses or persistent HTML
+        # Direct host fallback
         need_alt = (r.status_code in RETRY_STATUSES) or ("text/html" in ct)
         parsed = up.urlparse(url)
         if need_alt and parsed.netloc in ("chatgpt.com", "chat.openai.com"):
@@ -298,7 +271,6 @@ def download_zip(url: str) -> bytes:
                     if 200 <= zr.status_code < 300 and "text/html" not in zct:
                         return zr.content
 
-        # Backoff
         time.sleep(1.25 * attempt)
 
     raise RuntimeError(
@@ -329,7 +301,6 @@ def upload_export_and_log(content: bytes, message_id: Optional[str]) -> str:
         .execute()
     )
     export_id = ins.data[0]["id"]
-    # optional notification
     try:
         supa.table("notifications_log").insert(
             {
@@ -345,12 +316,10 @@ def upload_export_and_log(content: bytes, message_id: Optional[str]) -> str:
 
 
 def parse_conversations_from_zip(zbytes: bytes) -> List[dict]:
-    """Return a list of conversation dicts from typical ChatGPT export zips."""
     convs: List[dict] = []
     with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
         names = z.namelist()
-
-        # 1) conversations.json (array)
+        # conversations.json (array)
         for name in names:
             if name.lower().endswith("conversations.json"):
                 try:
@@ -359,8 +328,7 @@ def parse_conversations_from_zip(zbytes: bytes) -> List[dict]:
                         convs.extend(data)
                 except Exception:
                     pass
-
-        # 2) conversations/*.json (one per file)
+        # conversations/*.json (one per file)
         for name in names:
             low = name.lower()
             if (
@@ -376,8 +344,7 @@ def parse_conversations_from_zip(zbytes: bytes) -> List[dict]:
                         convs.extend(obj)
                 except Exception:
                     pass
-
-        # 3) jsonl (rare)
+        # jsonl (rare)
         for name in names:
             low = name.lower()
             if low.endswith(".jsonl"):
@@ -388,8 +355,7 @@ def parse_conversations_from_zip(zbytes: bytes) -> List[dict]:
                             convs.append(json.loads(line))
                 except Exception:
                     pass
-
-    # De-dup simple
+    # de-dup
     seen = set()
     uniq = []
     for c in convs:
@@ -408,7 +374,6 @@ def parse_conversations_from_zip(zbytes: bytes) -> List[dict]:
 
 
 def upsert_conversations(export_id: str, convs: List[dict]) -> int:
-    """Upsert conversations into public.chatgpt_conversations."""
     rows = []
     for c in convs:
         conv_id = (
@@ -418,20 +383,21 @@ def upsert_conversations(export_id: str, convs: List[dict]) -> int:
                 json.dumps(c, sort_keys=True, default=str).encode()
             ).hexdigest()
         )
-        title = c.get("title")
         rows.append(
-            {"export_id": export_id, "conv_id": conv_id, "title": title, "raw": c}
+            {
+                "export_id": export_id,
+                "conv_id": conv_id,
+                "title": c.get("title"),
+                "raw": c,
+            }
         )
-
-    # Batch in chunks (Supabase REST limit ~ 1000 rows)
     CHUNK = 500
     total = 0
     for i in range(0, len(rows), CHUNK):
-        batch = rows[i : i + CHUNK]
         supa.table("chatgpt_conversations").upsert(
-            batch, on_conflict="export_id,conv_id"
+            rows[i : i + CHUNK], on_conflict="export_id,conv_id"
         ).execute()
-        total += len(batch)
+        total += len(rows[i : i + CHUNK])
     return total
 
 
@@ -471,13 +437,11 @@ def process_message(mail, num) -> bool:
         (msg.get("Message-Id") or msg.get("Message-ID") or "").strip().strip("<>")
     )
 
-    # Sender / subject checks (permissive by design)
     if SENDER not in from_addr:
         return False
     if SUBJECT_PHRASE and SUBJECT_PHRASE not in subj:
         print(f"[info] subject didn't match hint (subj='{subj}') — continuing")
 
-    # Find download link and pull the ZIP
     url = find_download_url_from_msg(msg)
     if not url:
         print("[warn] no URL found in export email")
@@ -486,13 +450,9 @@ def process_message(mail, num) -> bool:
     try:
         blob = download_zip(url)
         export_id = upload_export_and_log(blob, message_id or None)
-
-        # Parse conversations and upsert
         convs = parse_conversations_from_zip(blob)
         count = upsert_conversations(export_id, convs)
         print(f"[ok] stored export {export_id}; conversations upserted={count}")
-
-        # Mark email read (and optionally delete)
         mail.store(num, "+FLAGS", "\\Seen")
         if DELETE_EMAIL_AFTER_SUCCESS:
             mail.store(num, "+FLAGS", "\\Deleted")
@@ -508,10 +468,11 @@ def main():
     while True:
         try:
             M = connect_imap()
-            # Only unread messages from the sender (so we don't reprocess)
+            # UNSEEN first to avoid reprocessing
             typ, data = M.search(None, "UNSEEN", "FROM", f'"{SENDER}"')
-            if typ == "OK":
-                ids = data[0].split() if data and data[0] else []
+            ids = data[0].split() if (typ == "OK" and data and data[0]) else []
+            if ids:
+                print(f"[imap] candidate messages: {len(ids)} (tail): {ids[-5:]}")
                 for num in ids:
                     try:
                         process_message(M, num)
@@ -524,7 +485,6 @@ def main():
         loop += 1
         if CLEANUP_DAYS > 0 and loop % max(CLEANUP_EVERY_N_LOOPS, 1) == 0:
             cleanup_old_exports(CLEANUP_DAYS)
-
         time.sleep(POLL_SECS)
 
 
