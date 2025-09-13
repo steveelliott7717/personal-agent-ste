@@ -1,5 +1,5 @@
 {
-  "generated_at": "2025-09-10T01:08:23Z",
+  "generated_at": "2025-09-13T01:04:25Z",
   "tables": {
     "public.agent_actions": [
       "id",
@@ -59,11 +59,7 @@
       "args_json",
       "result_json",
       "correlation_id",
-      "created_at",
-      "run_id",
-      "step",
-      "role",
-      "content"
+      "created_at"
     ],
     "public.agent_logs_2025_07": [
       "trace_id",
@@ -270,11 +266,7 @@
       "args_json",
       "result_json",
       "correlation_id",
-      "created_at",
-      "run_id",
-      "step",
-      "role",
-      "content"
+      "created_at"
     ],
     "public.agent_logs_p2025_10": [
       "trace_id",
@@ -287,11 +279,7 @@
       "args_json",
       "result_json",
       "correlation_id",
-      "created_at",
-      "run_id",
-      "step",
-      "role",
-      "content"
+      "created_at"
     ],
     "public.agent_messages": [
       "id",
@@ -338,6 +326,24 @@
       "version",
       "created_at",
       "updated_at"
+    ],
+    "public.chatgpt_conversations": [
+      "id",
+      "export_id",
+      "conv_id",
+      "title",
+      "created_at",
+      "raw"
+    ],
+    "public.chatgpt_exports": [
+      "id",
+      "created_at",
+      "email_message_id",
+      "storage_bucket",
+      "storage_path",
+      "size_bytes",
+      "sha256",
+      "notes"
     ],
     "public.conv_config": [
       "session",
