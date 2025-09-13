@@ -1,10 +1,18 @@
 # backend/workers/email_export_watcher.py
+# Robust Gmail/IMAP watcher for ChatGPT export emails:
+# - Finds latest unread export email from OpenAI
+# - Extracts the actual ZIP download URL from HTML (handles meta-refresh, JS redirects, relative hrefs)
+# - Downloads ZIP with host fallbacks (chatgpt.com -> chat.openai.com)
+# - Stores ZIP in Supabase Storage and upserts conversations into a table
+# - Marks the email as read (and optionally deletes) on success
+
 import os, re, time, ssl, email, imaplib, datetime as dt, requests, io, zipfile, json, hashlib
 from email.header import decode_header
 from typing import Optional, List
 from supabase import create_client
 import html
 import string
+import urllib.parse as up
 
 # ---------- Config from env ----------
 IMAP_HOST = os.environ["IMAP_HOST"]
@@ -15,21 +23,15 @@ IMAP_PASS = os.environ["IMAP_PASS"]
 IMAP_FOLDER = os.environ.get("IMAP_FOLDER", "INBOX")
 POLL_SECS = int(os.environ.get("POLL_SECS", "120"))
 
-# Search behavior
-IMAP_ONLY_UNSEEN = os.environ.get("IMAP_ONLY_UNSEEN", "true").lower() == "true"
-FALLBACK_SEARCH_SINCE = (
-    os.environ.get("FALLBACK_SEARCH_SINCE", "true").lower() == "true"
-)
-SEARCH_SINCE_DAYS = int(os.environ.get("SEARCH_SINCE_DAYS", "3"))
-
-SENDER = os.environ.get(
-    "EXPORT_SENDER", "noreply@openai.com"
-)  # set to 'openai.com' to loosen
-SUBJECT_PHRASE = os.environ.get("EXPORT_SUBJECT_PHRASE", "export")
+# Be permissive: default to substring 'openai.com' so it matches noreply@tm.openai.com too.
+SENDER = os.environ.get("EXPORT_SENDER", "openai.com").lower()
+SUBJECT_PHRASE = os.environ.get("EXPORT_SUBJECT_PHRASE", "export").lower()
 URL_REGEX = re.compile(r'https?://[^\s">]+', re.IGNORECASE)
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE"]
+SUPABASE_KEY = os.environ[
+    "SUPABASE_SERVICE_ROLE"
+]  # SERVICE ROLE key required for writes
 BUCKET = os.environ.get("SUPABASE_BUCKET", "chatgpt_exports")
 
 DELETE_EMAIL_AFTER_SUCCESS = (
@@ -37,6 +39,22 @@ DELETE_EMAIL_AFTER_SUCCESS = (
 )
 CLEANUP_DAYS = int(os.environ.get("CLEANUP_DAYS", "0"))
 CLEANUP_EVERY_N_LOOPS = int(os.environ.get("CLEANUP_EVERY_N_LOOPS", "3600"))
+
+# HTTP defaults
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/125.0.0.0 Safari/537.36"
+)
+BASE_HEADERS = {
+    "User-Agent": UA,
+    "Accept": "application/zip,application/octet-stream,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://chatgpt.com/",
+    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
 
 supa = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -56,17 +74,6 @@ def decode_subj(raw: Optional[str]) -> str:
     return out
 
 
-def _try_select(mail, box: str) -> bool:
-    try:
-        typ, _ = mail.select(box)
-        if typ == "OK":
-            print(f"[imap] selected mailbox: {box}")
-            return True
-    except Exception as e:
-        print(f"[imap] select '{box}' failed: {e}")
-    return False
-
-
 def connect_imap():
     if IMAP_SSL:
         M = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
@@ -74,41 +81,22 @@ def connect_imap():
         M = imaplib.IMAP4(IMAP_HOST, IMAP_PORT)
         M.starttls(ssl_context=ssl.create_default_context())
     M.login(IMAP_USER, IMAP_PASS)
-
-    # Build a robust candidate list of mailboxes to try.
-    candidates: List[str] = []
-    if IMAP_FOLDER:
-        candidates.append(IMAP_FOLDER)
-    # Common Gmail variants
-    candidates += ["[Gmail]/All Mail", "[Gmail]/All Mail", "All Mail", "INBOX"]
-
-    # Also inspect server mailboxes for localized "All Mail" equivalents
-    try:
-        typ, boxes = M.list()
-        if typ == "OK" and boxes:
-            for b in boxes:
-                line = b.decode(errors="ignore")
-                # Typical format: (<flags>) "<delim>" "Box Name"
-                # Get the last quoted token as the name
-                name = line.split(' "/" ')[-1].strip().strip('"')
-                if "all" in name.lower() and "mail" in name.lower():
-                    candidates.insert(1, name)
-    except Exception as e:
-        print(f"[imap] list failed (non-fatal): {e}")
-
-    # Deduplicate, preserve order
-    seen = set()
-    ordered = [c for c in candidates if not (c in seen or seen.add(c))]
-
-    for box in ordered:
-        if _try_select(M, box):
-            return M
-
-    # Last resort: INBOX
-    if _try_select(M, "INBOX"):
-        return M
-
-    raise RuntimeError(f"Could not select any mailbox from candidates: {ordered}")
+    # Try desired folder; if it fails (Gmail naming oddities), attempt common alternates.
+    typ, _ = M.select(IMAP_FOLDER)
+    if typ != "OK":
+        for alt in (
+            "INBOX",
+            "[Gmail]/All Mail",
+            "[Gmail]/All Mail",
+            "[Gmail]/All Mail",
+        ):
+            typ, _ = M.select(alt)
+            if typ == "OK":
+                print(f"[info] fallback-selected folder: {alt}")
+                break
+        else:
+            raise RuntimeError(f"Could not select IMAP folder: '{IMAP_FOLDER}'")
+    return M
 
 
 def extract_urls(payload, charset: Optional[str]) -> List[str]:
@@ -120,12 +108,14 @@ def extract_urls(payload, charset: Optional[str]) -> List[str]:
     else:
         text = payload or ""
 
+    # Find raw candidates
     candidates = [u for u in URL_REGEX.findall(text) if u.startswith("https://")]
 
     cleaned: List[str] = []
     for u in candidates:
-        # Decode any HTML entities (&amp; → &), then strip trailing junk
+        # 1) Unescape HTML entities (e.g., &amp;)
         u = html.unescape(u)
+        # 2) Strip trailing junk
         u = u.rstrip(")\"' ;" + string.whitespace)
         cleaned.append(u)
 
@@ -137,8 +127,76 @@ def extract_urls(payload, charset: Optional[str]) -> List[str]:
     return cleaned
 
 
+def _normalize_relative(base_url: str, candidate: str) -> str:
+    """
+    Turn '/backend-api/estuary/content?...' into 'https://host/backend-api/estuary/content?...'
+    while preserving the candidate's own query string.
+    """
+    base = up.urlparse(base_url)
+    cand = up.urlparse(candidate)
+    # Join with base while preserving candidate query
+    return up.urlunparse((base.scheme, base.netloc, cand.path, "", cand.query, ""))
+
+
+def _extract_zip_from_html(page_html: str, base_url: str) -> Optional[str]:
+    """
+    Try several strategies to extract a real ZIP link from an HTML landing page.
+    """
+    body = html.unescape(page_html)
+
+    # 1) <a href="...zip...">
+    m = re.search(r'href=["\']([^"\']+?\.zip[^"\']*)["\']', body, re.IGNORECASE)
+    if m:
+        href = m.group(1).strip()
+        return _normalize_relative(base_url, href) if href.startswith("/") else href
+
+    # 2) <meta http-equiv="refresh" content="0;url=...zip...">
+    m = re.search(
+        r'http-equiv=["\']refresh["\'][^>]*content=["\'][^"\']*url=([^"\']+?\.zip[^"\']*)["\']',
+        body,
+        re.IGNORECASE,
+    )
+    if m:
+        href = m.group(1).strip()
+        return _normalize_relative(base_url, href) if href.startswith("/") else href
+
+    # 3) JS redirects: location.href = "....zip...." or location.assign("....zip....")
+    m = re.search(
+        r'location(?:\.href|\.assign)\((["\'])([^"\']+?\.zip[^"\']*)\1\)',
+        body,
+        re.IGNORECASE,
+    )
+    if m:
+        href = m.group(2).strip()
+        return _normalize_relative(base_url, href) if href.startswith("/") else href
+
+    # 4) Any estuary content link (absolute), even if '.zip' is omitted (some variants)
+    m = re.search(
+        r'["\'](https?://[^"\']*?/backend-api/estuary/content[^"\']*?)["\']',
+        body,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()
+
+    # 5) Any estuary content link (relative)
+    m = re.search(
+        r'["\'](/backend-api/estuary/content[^"\']*?)["\']', body, re.IGNORECASE
+    )
+    if m:
+        return _normalize_relative(base_url, m.group(1).strip())
+
+    return None
+
+
 def find_download_url_from_msg(msg) -> Optional[str]:
+    """
+    Returns the first plausible URL from the message body; we will
+    still treat HTML landing pages by parsing out the real ZIP URL.
+    """
+
     def pick(urls: List[str]) -> Optional[str]:
+        # Prefer explicit .zip but fall back to first candidate
         for u in urls:
             if ".zip" in u:
                 return u
@@ -164,91 +222,88 @@ def find_download_url_from_msg(msg) -> Optional[str]:
 def download_zip(url: str) -> bytes:
     """
     Download the export ZIP from chatgpt.com estuary.
-    If the response is HTML, parse out the real .zip link and fetch that.
-    Falls back to chat.openai.com host if chatgpt.com refuses us.
+    - Follows redirects
+    - If the response is HTML, parse out the real .zip link (handles relative, meta-refresh, JS redirects)
+    - Falls back to chat.openai.com host if chatgpt.com refuses us
     """
-    import urllib.parse as up
+    session = requests.Session()
+    session.headers.update(BASE_HEADERS)
 
-    HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/zip,application/octet-stream,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://chatgpt.com/",
-        "Connection": "keep-alive",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-    }
-    HREF_RE = re.compile(r'href=["\']([^"\']+\.zip[^"\']*)["\']', re.IGNORECASE)
-
-    def try_get(u: str, attempt: int):
-        r = requests.get(u, timeout=180, allow_redirects=True, headers=HEADERS)
+    def try_get(u: str, attempt: int, label: str = "") -> requests.Response:
+        r = session.get(u, timeout=180, allow_redirects=True)
         ct = (r.headers.get("Content-Type") or "").lower()
+        host = up.urlparse(u).netloc
+        lab = f" {label}" if label else ""
         print(
-            f"[dbg] dl attempt={attempt} host={up.urlparse(u).netloc} status={r.status_code} ct={ct} len={len(r.content)}"
+            f"[dbg] dl attempt={attempt} host={host} status={r.status_code} ct={ct} len={len(r.content)}{lab}"
         )
         return r
 
-    def extract_zip_from_html(body: str) -> Optional[str]:
-        body = html.unescape(body or "")
-        m = HREF_RE.search(body)
-        if not m:
-            return None
-        candidate = m.group(1).strip()
-        if candidate.startswith("/"):
-            parsed = up.urlparse(url)
-            candidate = f"{parsed.scheme}://{parsed.netloc}{candidate}"
-        return candidate
+    MAX_ATTEMPTS = 6
+    RETRY_STATUSES = {403, 422, 429, 503}
 
-    for attempt in range(1, 6):
+    for attempt in range(1, MAX_ATTEMPTS + 1):
         r = try_get(url, attempt)
-        ct = (r.headers.get("Content-Type") or "").lower()
 
-        if 200 <= r.status_code < 300:
-            if "text/html" not in ct:
-                return r.content
-            # HTML page; try to pull out the .zip href and fetch it
-            zurl = extract_zip_from_html(r.text)
+        # Fast path: got a non-HTML payload
+        ct = (r.headers.get("Content-Type") or "").lower()
+        if 200 <= r.status_code < 300 and "text/html" not in ct:
+            return r.content
+
+        # HTML page: try to extract a .zip or estuary link
+        if "text/html" in ct and r.text:
+            zurl = _extract_zip_from_html(r.text, url)
             if zurl:
-                zr = try_get(zurl, attempt)
+                zr = try_get(zurl, attempt, label="(extracted)")
                 zct = (zr.headers.get("Content-Type") or "").lower()
                 if 200 <= zr.status_code < 300 and "text/html" not in zct:
                     return zr.content
-                # Try host fallback for zurl
+
+                # host swap for the extracted URL too
                 parsed = up.urlparse(zurl)
-                if parsed.netloc == "chatgpt.com":
-                    zurl2 = up.urlunparse(parsed._replace(netloc="chat.openai.com"))
-                    zr2 = try_get(zurl2, attempt)
+                alt_host = (
+                    "chat.openai.com"
+                    if parsed.netloc == "chatgpt.com"
+                    else ("chatgpt.com" if parsed.netloc == "chat.openai.com" else None)
+                )
+                if alt_host:
+                    zurl2 = up.urlunparse(parsed._replace(netloc=alt_host))
+                    zr2 = try_get(zurl2, attempt, label="(extracted-alt-host)")
                     zct2 = (zr2.headers.get("Content-Type") or "").lower()
                     if 200 <= zr2.status_code < 300 and "text/html" not in zct2:
                         return zr2.content
 
-        # On transient statuses, try host fallback then backoff
-        if r.status_code in (403, 422, 429, 503):
-            parsed = up.urlparse(url)
-            if parsed.netloc == "chatgpt.com":
-                alt = up.urlunparse(parsed._replace(netloc="chat.openai.com"))
-                r2 = try_get(alt, attempt)
-                ct2 = (r2.headers.get("Content-Type") or "").lower()
-                if 200 <= r2.status_code < 300 and "text/html" not in ct2:
-                    return r2.content
-                if "text/html" in ct2:
-                    zurl = extract_zip_from_html(r2.text)
-                    if zurl:
-                        zr = try_get(zurl, attempt)
-                        zct = (zr.headers.get("Content-Type") or "").lower()
-                        if 200 <= zr.status_code < 300 and "text/html" not in zct:
-                            return zr.content
-            time.sleep(1.5 * attempt)
-            continue
+        # Host fallback (original URL), on specific transient statuses or persistent HTML
+        need_alt = (r.status_code in RETRY_STATUSES) or ("text/html" in ct)
+        parsed = up.urlparse(url)
+        if need_alt and parsed.netloc in ("chatgpt.com", "chat.openai.com"):
+            alt = up.urlunparse(
+                parsed._replace(
+                    netloc=(
+                        "chat.openai.com"
+                        if parsed.netloc == "chatgpt.com"
+                        else "chatgpt.com"
+                    )
+                )
+            )
+            r2 = try_get(alt, attempt, label="(alt-host)")
+            ct2 = (r2.headers.get("Content-Type") or "").lower()
+            if 200 <= r2.status_code < 300 and "text/html" not in ct2:
+                return r2.content
+            if "text/html" in ct2 and r2.text:
+                zurl = _extract_zip_from_html(r2.text, alt)
+                if zurl:
+                    zr = try_get(zurl, attempt, label="(alt-host-extracted)")
+                    zct = (zr.headers.get("Content-Type") or "").lower()
+                    if 200 <= zr.status_code < 300 and "text/html" not in zct:
+                        return zr.content
 
-        r.raise_for_status()
+        # Backoff
+        time.sleep(1.25 * attempt)
 
     raise RuntimeError(
-        "Failed to download export ZIP after parsing HTML and host fallbacks. If the email link is old, trigger a fresh export and try again."
+        "Failed to download export ZIP after parsing HTML and host fallbacks. "
+        "If the email link is old, trigger a fresh export and try again."
     )
 
 
@@ -274,7 +329,7 @@ def upload_export_and_log(content: bytes, message_id: Optional[str]) -> str:
         .execute()
     )
     export_id = ins.data[0]["id"]
-    # Optional notification
+    # optional notification
     try:
         supa.table("notifications_log").insert(
             {
@@ -403,26 +458,9 @@ def cleanup_old_exports(days: int):
         print("[cleanup][err] listing:", e)
 
 
-def _already_ingested(message_id: Optional[str]) -> bool:
-    if not message_id:
-        return False
-    try:
-        res = (
-            supa.table("chatgpt_exports")
-            .select("id")
-            .eq("email_message_id", message_id)
-            .limit(1)
-            .execute()
-        )
-        return bool(res.data)
-    except Exception as e:
-        print("[warn] precheck for duplicate failed:", e)
-        return False
-
-
 def process_message(mail, num) -> bool:
     typ, data = mail.fetch(num, "(RFC822)")
-    if typ != "OK" or not data or not data[0]:
+    if typ != "OK":
         return False
     raw = data[0][1]
     msg = email.message_from_bytes(raw)
@@ -438,17 +476,6 @@ def process_message(mail, num) -> bool:
         return False
     if SUBJECT_PHRASE and SUBJECT_PHRASE not in subj:
         print(f"[info] subject didn't match hint (subj='{subj}') — continuing")
-
-    # Avoid duplicate ingestion if we've already stored this message_id
-    if _already_ingested(message_id):
-        print(
-            f"[info] already ingested message_id={message_id}; marking read and skipping"
-        )
-        try:
-            mail.store(num, "+FLAGS", "\\Seen")
-        except Exception:
-            pass
-        return True
 
     # Find download link and pull the ZIP
     url = find_download_url_from_msg(msg)
@@ -466,54 +493,14 @@ def process_message(mail, num) -> bool:
         print(f"[ok] stored export {export_id}; conversations upserted={count}")
 
         # Mark email read (and optionally delete)
-        try:
-            mail.store(num, "+FLAGS", "\\Seen")
-        except Exception:
-            pass
+        mail.store(num, "+FLAGS", "\\Seen")
         if DELETE_EMAIL_AFTER_SUCCESS:
-            try:
-                mail.store(num, "+FLAGS", "\\Deleted")
-                mail.expunge()
-            except Exception:
-                pass
+            mail.store(num, "+FLAGS", "\\Deleted")
+            mail.expunge()
         return True
     except Exception as e:
         print("[err] processing failed:", e)
         return False
-
-
-def _search_messages(mail):
-    # Prefer UNSEEN to avoid reprocessing, then fall back to SINCE N days if nothing is unseen
-    ids: List[bytes] = []
-    if IMAP_ONLY_UNSEEN:
-        try:
-            typ, data = mail.search(None, "UNSEEN", "FROM", f'"{SENDER}"')
-            if typ == "OK":
-                ids = data[0].split() if data and data[0] else []
-        except Exception as e:
-            print("[imap] UNSEEN search failed:", e)
-
-    if not ids and FALLBACK_SEARCH_SINCE:
-        since = (dt.datetime.utcnow() - dt.timedelta(days=SEARCH_SINCE_DAYS)).strftime(
-            "%d-%b-%Y"
-        )
-        try:
-            typ, data = mail.search(None, "SINCE", since, "FROM", f'"{SENDER}"')
-            if typ == "OK":
-                ids = data[0].split() if data and data[0] else []
-        except Exception as e:
-            print("[imap] SINCE search failed:", e)
-
-    # Last resort: FROM only (can be noisy)
-    if not ids and not IMAP_ONLY_UNSEEN and not FALLBACK_SEARCH_SINCE:
-        try:
-            typ, data = mail.search(None, "FROM", f'"{SENDER}"')
-            if typ == "OK":
-                ids = data[0].split() if data and data[0] else []
-        except Exception as e:
-            print("[imap] FROM-only search failed:", e)
-
-    return ids
 
 
 def main():
@@ -521,16 +508,15 @@ def main():
     while True:
         try:
             M = connect_imap()
-            ids = _search_messages(M)
-            if ids:
-                print(
-                    f"[imap] candidate messages: {len(ids)} (showing last 5): {ids[-5:]}"
-                )
-            for num in ids:
-                try:
-                    process_message(M, num)
-                except Exception as e:
-                    print("[err] per-message:", e)
+            # Only unread messages from the sender (so we don't reprocess)
+            typ, data = M.search(None, "UNSEEN", "FROM", f'"{SENDER}"')
+            if typ == "OK":
+                ids = data[0].split() if data and data[0] else []
+                for num in ids:
+                    try:
+                        process_message(M, num)
+                    except Exception as e:
+                        print("[err] per-message:", e)
             M.logout()
         except Exception as e:
             print("[err] imap loop:", e)

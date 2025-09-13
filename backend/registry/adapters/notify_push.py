@@ -88,6 +88,49 @@ def notify_push_adapter(args: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str,
             "body": body,
         }
 
+    elif provider == "pushover":
+        user_key = args.get("user_key") or os.getenv("PUSHOVER_USER_KEY")
+        api_token = args.get("api_token") or os.getenv("PUSHOVER_API_TOKEN")
+        if not user_key or not api_token:
+            raise ValueError("notify.push: missing Pushover user key or API token")
+        payload = {
+            "token": api_token,
+            "user": user_key,
+            "message": message,
+        }
+        # Add optional parameters if provided
+        for param in ["title", "sound", "priority", "url", "url_title", "device"]:
+            if param in args and args[param]:
+                payload[param] = args[param]
+        data = urllib.parse.urlencode(payload).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.pushover.net/1/messages.json",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_ms / 1000.0) as resp:
+                status = int(resp.getcode() or 0)
+                body = resp.read().decode("utf-8", errors="ignore")[:500]
+        except urllib.error.HTTPError as e:
+            status = int(e.code or 0)
+            body = e.read().decode("utf-8", errors="ignore")[:500]
+        # Extract message request ID from Pushover’s response, if present
+        try:
+            response_json = json.loads(body)
+            request_id = response_json.get("request")
+        except Exception:
+            request_id = None
+        message_id = request_id or f"pushover-{int(time.time()*1000)}"
+        return {
+            "message_id": message_id,
+            "provider": provider,
+            "status": status,
+            "echoed": {"level": level, "meta": extra},
+            "body": body,
+        }
+
     raise ValueError(
-        f"notify.push: unsupported provider '{provider}' (try 'slack.webhook')"
+        f"notify.push: unsupported provider '{provider}' (try 'slack.webhook' or 'pushover')"
     )
